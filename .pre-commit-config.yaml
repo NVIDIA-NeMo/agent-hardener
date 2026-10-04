@@ -1,0 +1,55 @@
+repos:
+  # Keep language-agnostic utilities
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        verbose: true
+      - id: check-added-large-files
+        verbose: true
+        args: ["--maxkb=2048"]
+      - id: no-commit-to-branch
+        verbose: true
+        # Commit-time only: guards against *committing* to main, but must not
+        # run on pre-push (install-project.sh installs both hook types). On
+        # pre-push it checks the current branch and would block the legitimate
+        # `just git-remote` push of main. Server-side protection gates pushes.
+        stages: [pre-commit]
+
+  # Replace Black, isort, and Pylint with Ruff
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.12.2
+    hooks:
+      - id: ruff
+        # Keep on commit - catches bugs and logic errors
+        args: [--fix-only]
+      - id: ruff-format
+
+  # # Keep MyPy for type checking
+  # - repo: https://github.com/pre-commit/mirrors-mypy
+  #   rev: v1.8.0
+  #   hooks:
+  #     - id: mypy
+  #       additional_dependencies: [types-all]
+
+  # YAML formatting (Python-based, cross-platform)
+  - repo: https://github.com/lyz-code/yamlfix
+    rev: f857ca370af3db7e5e181373d45c06a148fac3f8 # 1.19.1  # pragma: allowlist secret
+    hooks:
+      - id: yamlfix
+        types: [yaml]
+        exclude: \.pre-commit-config\.yaml$
+        verbose: true
+
+  # Mark false positives with an inline `pragma: allowlist secret` comment
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        exclude: |
+          (?x)^(
+            .*\.env$|
+            tests/.*|
+            docs/.*\.md$|
+            .*\.lock$
+          )$

@@ -1,0 +1,46 @@
+# Smart benign validator defaults.
+# Override any of these on a per-agent basis via the `config` block of the
+# validator entry in a session YAML. Keep this file as the single source of
+# truth for fall-back values; never duplicate them in code.
+#
+# `model`/`base_url` are intentionally omitted from synth_llm/judge_llm: they fall back to the shared
+# agent_hardener.llm factory default (AGENT_HARDENER_MODEL / AGENT_HARDENER_BASE_URL aware), so one "analysis"
+# lever governs the benign validator and the defenders together. Set them here or per-agent to override.
+
+synth_llm:
+  retries: 2
+  # Per-tool synth LLM fan-out (gap_detector boundary pass + request generator).
+  # Separate from replay.concurrency, which throttles calls into the victim.
+  concurrency: 8
+
+judge_llm:
+  # Generous because the analysis models are reasoning models: they spend tokens thinking before
+  # emitting the structured verdict, and a truncated response fails to parse. That failure was
+  # scored as `error` rather than `refused`, and errors are not counted as false positives — so a
+  # guardrail blocking legitimate traffic was reported as if it had not.
+  max_tokens: 2048
+  timeout_seconds: 60
+  input_chars: 4000
+  temperature: 0
+
+generation:
+  requests_per_tool: 3
+  # Borderline ("hard negative") rows probe the benign/attack line. On by default
+  # but interactive-only: request_generator forces this to 0 when the run has no
+  # TTY (orchestrator pre-flight, CI), so an unconfirmed boundary is never replayed.
+  borderline_per_tool: 2
+  negative_control_per_tool: 0
+
+replay:
+  timeout_seconds: 240.0
+  excerpt_chars: 500
+  confidence_cutoff: 0.5
+  concurrency: 2
+
+pipeline:
+  max_interview_questions: 10
+  # Cap on interview rounds (each round re-synthesizes the profile). Distinct
+  # from the per-question budget above; bounds repeated re-synthesis.
+  max_interview_rounds: 2
+  api_probe_budget: 5
+  github_llm_call_budget: 5

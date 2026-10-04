@@ -1,0 +1,73 @@
+# Agent Hardener agent manifest. Describe your Relay-connected agent here; Agent Hardener derives the victim
+# target and injects the default attacker/defender/validator suite. Run with:
+#   agent-hardener run --config examples/agent-hardener.yaml --env-file .env
+#
+# Secrets live in .env (never here); list their env-var names under `agent.secrets`.
+#
+# ─── What Agent Hardener requires of your agent ─────────────────────────────────────────────────────
+# 1. It is connected to NeMo Relay: attach the middleware AND call nemo_relay.plugin.initialize()
+#    at startup, e.g.
+#        agent = create_agent(..., middleware=[NemoRelayMiddleware()])
+#        await nemo_relay.plugin.initialize(nemo_relay.plugin.PluginConfig())
+#    Agent Hardener reads Relay's ATOF stream to see which tools an attack actually reached, and
+#    delivers guardrails as Relay plugin config. The initialize() call is what activates them —
+#    without it a delivered guardrail is inert, so the run is failed up front rather than reported
+#    as clean.
+# 2. It exposes an HTTP endpoint. OpenAI-compatible /v1/chat/completions needs no configuration;
+#    another shape works too (see `endpoint:` below).
+# 3. You own the image and the launch command. Agent Hardener hardens the agent you ship rather than
+#    building a variant of it.
+
+agent:
+  name: finance
+  project_dir: ../agents-lab                              # your agent project
+  dockerfile: deploy/finance/Dockerfile                   # your image
+  start_command: /app/.venv/bin/python -m finance.serve   # how it is launched in the sandbox
+  binaries: ["/app/.venv/bin/**"]                         # processes allowed to egress
+  port: 8000
+  relay_artifacts: artifacts/relay                        # where it writes events.atof.jsonl
+  secrets:                                                # env-var names defined in --env-file
+  - INFERENCE_API_KEY     # pragma: allowlist secret      # the first secret is used as the inference API key
+  env:
+    FINANCE_BACKEND_URL: http://host.docker.internal:8086
+
+  # Your image must carry a 'sandbox' user/group, iproute2, a writable /etc/nemo-relay/ (Agent Hardener
+  # uploads each round's guardrails there as the sandbox user), and whatever start_command needs on
+  # the DEFAULT PATH — `openshell sandbox exec` does not propagate image ENV. Use a wrapper script,
+  # not a symlink, if you install into a venv: Python locates a venv relative to its own executable,
+  # so a symlink misses pyvenv.cfg and falls back to the system site-packages. Agent Hardener appends an
+  # aiohttp egress shim and the guardrail plugin itself, so your traffic honours the sandbox proxy
+  # and the guardrails a round generates can actually run.
+  # See examples/relay-victim/ for a worked image.
+
+  # Egress: Agent Hardener scans your project's code and config for the hosts your agent calls and
+  # allowlists them. Add any it can't infer (runtime/SDK URLs) here:
+  # egress: ["api.tavily.com", "https://my-tool.example.com"]
+  # discover_egress: false   # turn off the automatic scan and rely only on `egress`
+
+  # Optional: enable the guardrails defender for a specific tool.
+  # guardrails_tool: transfer_funds
+
+backends:
+- name: finance
+  compose_file: ../agents-lab/services/finance_backend/docker-compose.yaml
+  health_url: http://127.0.0.1:8086/health   # optional: wait for this URL before starting the swarm
+  ports: [8086]
+  # compose_project: my-project               # optional: docker compose -p project name
+
+# ─── Choosing models ────────────────────────────────────────────────────────────────────────────
+# Agent Hardener has three model groups; each keeps its built-in default unless you override it.
+#
+#   • Attack   (garak red-team + detector) — set in the `garak:` block, or via GARAK_* env vars.
+#   • Analysis (defenders + benign validator) — the SHARED default model. Override for the whole run:
+#         AGENT_HARDENER_MODEL=nvidia/nemotron-3-super-120b-a12b
+#         AGENT_HARDENER_BASE_URL=https://integrate.api.nvidia.com/v1
+#   • Agent    (the victim's own LLM) — configured inside your agent, not here.
+#
+# Credentials come from the environment (never this file): INFERENCE_API_KEY for the analysis models,
+# NIM_API_KEY for garak (Agent Hardener mirrors INFERENCE_API_KEY into it).
+
+# Optional advanced: deep-merge overrides onto the expanded SessionConfig.
+# overrides:
+#   run:
+#     rounds: 3

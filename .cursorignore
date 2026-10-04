@@ -1,0 +1,10 @@
+# .cursorignore — extends .gitignore (Cursor honors .gitignore too), so this file
+# lists ONLY what .gitignore does not: files tracked by git that are noise as AI context.
+
+# AI/tool configs — not useful as AI context.
+.claude/
+.codex/
+.cruft.json
+
+# Lockfile: tracked by git (see #uv.lock in .gitignore), but noise for AI context.
+uv.lock

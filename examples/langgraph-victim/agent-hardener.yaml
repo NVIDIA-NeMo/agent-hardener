@@ -1,0 +1,33 @@
+# War-game this agent:
+#   agent-hardener run --config examples/langgraph-victim/agent-hardener.yaml --env-file .env
+#
+# `agent-hardener init` can auto-detect most of this from a project directory; it is written out here so
+# the fields a BYO victim has to get right are visible rather than implied.
+agent:
+  name: langgraph-victim
+  project_dir: .
+  dockerfile: Dockerfile
+  # A hand-built LangGraph graph. Not a victim kind — every victim is built and launched the same
+  # way — but the run needs it to know this harness can be guarded at all (claude/codex cannot).
+  harness: langgraph
+  # The author's answer to "do this agent's tool calls pass through Relay?". Here that is
+  # ToolNode(..., awrap_tool_call=...) in agent.py. The run still verifies it from real attack
+  # traffic — this only records who said so.
+  relay_integration_confirmed: true
+  # Spelled out in full because `openshell sandbox exec` does not propagate the image's ENV: PATH is
+  # not visible to it, so relying on a bare `python` would start nothing.
+  start_command: /usr/local/bin/python /app/server.py
+  # Which processes may egress. Agent Hardener cannot infer an image's layout, and this glob is what
+  # scopes the sandbox's egress rules.
+  binaries: ["/usr/local/bin/python*"]
+  port: 8000
+  # A HOST path, not a container one: the victim always writes ATOF to the fixed sandbox path
+  # (agent_hardener.relay_plugin.victim.SANDBOX_ARTIFACTS_DIR), and this is only where Agent Hardener lands
+  # the copy it pulls out. Keep it relative — it resolves under the cwd. An absolute
+  # /home/sandbox/... is used verbatim on the host and fails on macOS, where /home is autofs:
+  # `[Errno 45] Operation not supported: '/home/sandbox'`.
+  relay_artifacts: artifacts/relay
+  secrets:
+  - INFERENCE_API_KEY     # pragma: allowlist secret
+  # No guardrails_tool: the defender targets whatever tool each attack actually reached, so both
+  # bash_executor and python_executor get guarded as attacks land on them.

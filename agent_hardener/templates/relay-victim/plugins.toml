@@ -1,0 +1,56 @@
+# Seed NeMo Relay plugin configuration for a war-game victim.
+#
+# Uploaded to /etc/nemo-relay/plugins.toml inside the sandbox — the one layer NeMo Fabric accepts
+# plugin config from, so the same delivery works for a BYO image and a packaged Fabric agent. The
+# victim applies it by calling nemo_relay.plugin.initialize(), which every Relay-connected agent
+# does anyway; nothing Agent-Hardener-specific is required of the agent's code.
+#
+# Two components live here.
+#
+# 1. observability — turns on the ATOF stream Agent Hardener reads to learn which tool an attack
+#    reached. Configured here rather than in the victim because AtofConfig.enabled defaults to
+#    false, and an agent that configures a sink but forgets the flag emits nothing at all, which is
+#    indistinguishable from having no Relay.
+#
+# 2. adaptive — inert here (observe_only), and present for one harness only: Hermes routes tool
+#    calls through Relay only when managed_tool_enabled() is true, which needs this component. Every
+#    other harness ignores it, so it is seeded unconditionally rather than branching the template.
+#
+# 3. agent_hardener.pre_tool_verifier — appended by the guardrails defender, one entry per attack.
+#    Absent here on purpose: the war-game starts from an unguarded victim so the attackers can
+#    establish a baseline, exactly as it starts from a permissive OpenShell policy.
+#
+# Not [[plugins.dynamic]]: dynamic plugins activate from CLI-managed lifecycle state that a file
+# upload cannot supply ("Python worker activation requires a lifecycle-managed environment_ref").
+version = 1
+
+[[components]]
+kind = "observability"
+enabled = true
+
+[components.config]
+# Schema 3, not 4. NeMo Platform images pin nemo-relay 0.7.3 (the Fabric adapters cap it at <0.8),
+# which rejects 4 outright — and Relay fails the whole initialize(), so the guardrail component in
+# this same file never registers and the victim runs unguarded with nothing in the log but a debug
+# line. 0.8 still accepts 3, so 3 is the version that works on both.
+version = 3
+
+[components.config.atof]
+enabled = true
+
+[[components.config.atof.sinks]]
+type = "file"
+# Matches agent_hardener.relay_plugin.victim.SANDBOX_ARTIFACTS_DIR. Under /home/sandbox because every
+# policy template already grants that read-write, so telemetry needs no Landlock exception.
+output_directory = "/home/sandbox/.agent-hardener/relay"
+filename = "events.atof.jsonl"
+mode = "append"
+
+[[components]]
+kind = "adaptive"
+enabled = true
+
+[components.config.tool_parallelism]
+# observe_only: Relay wraps tool execution without changing how calls are scheduled. Wrapping is the
+# point — it is what puts a guardrail intercept in the path under Hermes.
+mode = "observe_only"

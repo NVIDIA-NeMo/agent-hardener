@@ -1,0 +1,74 @@
+version: 1
+
+# Starting policy for a relay victim. OpenShell is default-deny with NO allow-all (a bare `*` and TLD
+# wildcards like `*.com` are rejected as unsafe); endpoints take a concrete host or a `*.sub.domain`
+# wildcard. So this lists the agent's known egress; Agent Hardener also auto-derives more hosts from the
+# agent's workflow/code and injects them (relay_victim_discovered_egress), and the host-backend block
+# (relay_victim_backends) is injected from the manifest. The repair defender hardens all of this.
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+  - /usr
+  - /lib
+  - /lib64
+  - /etc
+  - /proc
+  - /dev/urandom
+  - /app
+  # Every NeMo Fabric image lives here — the venv, the agent config, the MCP servers — so a
+  # platform-packaged victim cannot even start its interpreter without it: Python reads
+  # /workspace/.venv/pyvenv.cfg during site initialization and dies with PermissionError.
+  - /workspace
+  - /var/log
+  read_write:
+  # Agent Hardener uploads each round's guardrails here, so it has to be writable even though /etc is
+  # read-only above (Landlock grants a subpath its own rights). This is deliberate and specific:
+  # it is the delivery channel for the mitigations the defenders generate.
+  - /etc/nemo-relay
+  - /sandbox
+  - /tmp
+  - /var/tmp
+  - /home/sandbox
+  # Fabric's declared environment dirs, relative to /workspace. Read-only above is enough to start,
+  # but an agent that writes an artifact or scratch file needs these.
+  - /workspace/artifacts
+  - /workspace/workspace
+  - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  relay_victim_egress:
+    name: relay-victim-egress
+    endpoints:
+    - host: "*.nvidia.com"
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      access: full
+    binaries:
+    - path: /app/project/.venv/bin/**
+    - path: /usr/local/bin/python*
+    - path: /usr/bin/python*
+
+  relay_victim_host_telemetry:
+    name: relay-victim-host-telemetry
+    endpoints:
+    - host: host.docker.internal
+      port: 4318
+      allowed_ips:
+      - "172.17.0.1/32"
+    - host: host.docker.internal
+      port: 6006
+      allowed_ips:
+      - "172.17.0.1/32"
+    binaries:
+    - path: /app/project/.venv/bin/**
+    - path: /usr/local/bin/python*
+    - path: /usr/bin/python*

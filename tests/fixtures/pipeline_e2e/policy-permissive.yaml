@@ -1,0 +1,26 @@
+version: 1
+
+network_policies:
+  vulnerable_shell_github_api:
+    name: vulnerable-shell-github-api
+    description: Permissive shell egress used by the fast pipeline E2E fixture.
+    binaries:
+    - path: /usr/bin/curl
+    - path: /usr/bin/wget
+    endpoints:
+    - host: api.github.com
+      port: 443
+      protocol: rest
+      access: full
+
+filesystem_policy:
+  read_only:
+  - /app
+  - /usr
+  read_write:
+  - /tmp
+  include_workdir: true
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox

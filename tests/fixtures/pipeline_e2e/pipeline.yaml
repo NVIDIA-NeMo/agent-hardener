@@ -1,0 +1,80 @@
+storage:
+  root_dir: missions
+
+run:
+  retry_limit: 0
+  rounds: 1
+  round_interval_seconds: 0
+
+victim_control:
+  type: openshell
+  config:
+    gateway: test-gateway
+    sandbox: test-sandbox
+    openshell_bin: openshell
+    policy_path: policy-permissive.yaml
+    build_context: Dockerfile
+    sandbox_timeout: 1
+
+target:
+  name: pipeline-e2e-target
+  base_url: http://victim.test/v1/chat/completions
+  agent_relay_plugins: relay-plugins.toml
+  metadata: {}
+
+context:
+  scenario: pipeline-e2e
+
+attackers:
+- name: mock-garak-agent-breaker
+  implementation: mock_agents:run_attacker
+
+defenders:
+- name: openshell-policy-defender
+  implementation: agent_hardener.agents.defenders.openshell_defender_v2.openshell_defender_agent:run
+  timeout_seconds: 30
+  capabilities: Mitigates attacks exploiting network egress controls; repairs OpenShell
+    network policy YAML.
+  config: {}
+- name: defender-guardrails
+  implementation: agent_hardener.agents.defenders.guardrails_defender_v2.guardrails_defender_agent:run
+  timeout_seconds: 30
+  capabilities: Mitigates prompt injection and unsafe tool use via LLM-generated guardrail
+    rules.
+  config:
+    target_tool: bash_executor
+    target_tools:
+    - bash_executor
+    - python_executor
+    - api_caller
+    - add_issue_comment
+    include_agent_breaker_baseline: true
+    include_generated_refinements: true
+
+victim:
+  name: mock-victim
+  implementation: mock_agents:run_victim
+
+attack_validators:
+- name: garak-attack-replay-validator
+  implementation: agent_hardener.agents.validators.garak_attack_replay:run
+  timeout_seconds: 30
+  config:
+    kind: attack
+    replay_url: http://victim.test/v1/chat/completions
+    replay_mode: openai_chat
+    model: pipeline-e2e
+    confidence_cutoff: 0.7
+    redact_outputs: true
+
+benign_validators:
+- name: smart-benign-validator
+  implementation: agent_hardener.agents.validators.smart_benign:run
+  timeout_seconds: 30
+  config:
+    kind: benign
+    description: pipeline-e2e test target
+    replay_url: http://victim.test/v1/chat/completions
+    replay_mode: openai_chat
+    model: pipeline-e2e
+    confidence_cutoff: 0.5

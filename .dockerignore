@@ -1,0 +1,84 @@
+# Git
+.git
+.gitignore
+.github
+
+# Local secrets and run artifacts
+.env
+.env.*
+.agent-hardener/
+htmlcov/
+coverage.xml
+.coverage
+*.coverage
+*.log
+*.tmp
+
+# Docker
+.dockerignore
+
+# IDE
+.claude
+.codex
+.cursor
+.cursorignore
+.idea
+.vscode
+
+# AI tool config
+.claude/
+.codex/
+.plans/
+
+# Secrets & credentials — never copy into the build context / image layers.
+# (.dockerignore does NOT read .gitignore, so these must be listed explicitly.)
+.env
+.env.*
+!.env.example
+**/.env
+**/.env.*
+secrets.*
+**/secrets.*
+*.pem
+*.key
+*.crt
+*.cer
+*.der
+*.p12
+*.pfx
+*.keystore
+id_rsa
+id_ed25519
+.netrc
+.pypirc
+.npmrc
+.aws/
+.ssh/
+.gcp/
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# C extensions
+*.so
+
+# Virtual environment
+.venv
+venv
+venv/
+
+.DS_Store
+.AppleDouble
+.LSOverride
+._*

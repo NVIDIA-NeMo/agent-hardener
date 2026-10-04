@@ -1,0 +1,82 @@
+version: 1
+
+# Relay-victim OpenShell policy. The agent runs inside the sandbox; its backends run on the
+# host, and the `relay_victim_backends` egress block is injected at runtime from the manifest's
+# backend allowlist (agent_hardener/openshell/policy_egress.py). Binary globs assume the generic image
+# venv at /app/project/.venv.
+
+filesystem_policy:
+  include_workdir: true
+  read_only:
+  - /usr
+  - /lib
+  - /lib64
+  - /etc
+  - /proc
+  - /dev/urandom
+  - /app
+  # Every NeMo Fabric image lives here; without it the victim's interpreter cannot read
+  # /workspace/.venv/pyvenv.cfg and dies before the agent starts.
+  - /workspace
+  - /var/log
+  read_write:
+  # Agent Hardener uploads each round's guardrails here, so it has to be writable even though /etc is
+  # read-only above (Landlock grants a subpath its own rights). This is deliberate and specific:
+  # it is the delivery channel for the mitigations the defenders generate.
+  - /etc/nemo-relay
+  - /sandbox
+  - /tmp
+  - /home/sandbox
+  # Fabric's declared environment dirs, relative to /workspace.
+  - /workspace/artifacts
+  - /workspace/workspace
+  - /dev/null
+
+landlock:
+  compatibility: best_effort
+
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+network_policies:
+  relay_victim_dns:
+    name: relay-victim-dns
+    endpoints:
+    - host: 10.43.0.10
+      port: 53
+      allowed_ips:
+      - "10.43.0.10/32"
+    binaries:
+    - path: /app/project/.venv/bin/**
+    - path: /usr/local/bin/python*
+    - path: /usr/bin/python*
+
+  relay_victim_inference:
+    name: relay-victim-inference
+    endpoints:
+    - host: integrate.api.nvidia.com
+      port: 443
+      protocol: rest
+      enforcement: enforce
+      access: full
+    binaries:
+    - path: /app/project/.venv/bin/**
+    - path: /usr/local/bin/python*
+    - path: /usr/bin/python*
+
+  relay_victim_host_telemetry:
+    name: relay-victim-host-telemetry
+    endpoints:
+    - host: host.docker.internal
+      port: 4318
+      allowed_ips:
+      - "172.17.0.1/32"
+    - host: host.docker.internal
+      port: 6006
+      allowed_ips:
+      - "172.17.0.1/32"
+    binaries:
+    - path: /app/project/.venv/bin/**
+    - path: /usr/local/bin/python*
+    - path: /usr/bin/python*

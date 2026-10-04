@@ -1,0 +1,29 @@
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+      grpc:
+        endpoint: 0.0.0.0:4317
+
+processors:
+  batch:
+    send_batch_size: 100
+    timeout: 5s
+
+exporters:
+  file:
+    path: /otellogs/llm_spans.json
+    format: json
+
+  otlp/phoenix:
+    endpoint: host.docker.internal:6006
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [file, otlp/phoenix]

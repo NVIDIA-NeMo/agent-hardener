@@ -1,0 +1,42 @@
+version: 1
+name: relay-victim
+description: Protected service assumptions for the relay-victim policy-repair agent.
+
+# Endpoints the policy-repair agent must never remove (the agent needs them to function). Host
+# backends declared in the manifest are protected dynamically; these are the always-on basics.
+protected_endpoints:
+  relay_victim_inference:
+  - host: integrate.api.nvidia.com
+    port: 443
+    preserve_allowed_ips: true
+    reason: NVIDIA inference API required by the agent workflow.
+    # Keep the agent's model channel reachable even when a repair narrows this egress to an
+    # allowlist; without it the victim is locked out of its own inference and returns nothing.
+    required_rules:
+    - allow:
+        method: POST
+        path: /v1/chat/completions
+  relay_victim_host_telemetry:
+  - host: host.docker.internal
+    port: 4318
+    preserve_allowed_ips: true
+    reason: Host OpenTelemetry collector endpoint.
+  - host: host.docker.internal
+    port: 6006
+    preserve_allowed_ips: true
+    reason: Host Phoenix telemetry endpoint.
+
+protected_binaries:
+  relay_victim_inference:
+  - /app/project/.venv/bin/**
+  - /usr/local/bin/python*
+  - /usr/bin/python*
+  relay_victim_host_telemetry:
+  - /app/project/.venv/bin/**
+  - /usr/local/bin/python*
+  - /usr/bin/python*
+
+allowed_operations:
+- set_endpoint_access
+- set_endpoint_rules
+- remove_endpoint

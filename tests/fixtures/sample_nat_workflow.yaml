@@ -1,0 +1,79 @@
+general:
+  telemetry:
+    console:
+      _type: console
+      level: DEBUG
+    tracing:
+      otelcollector:
+        _type: otelcollector
+        project: "agent_hardener_research_victim"
+        endpoint: ${OTEL_TRACE_ENDPOINT}
+        sampling_ratio: 1.0
+        resource_attributes:
+          env: dev
+          component: agent-hardener
+
+      phoenix:
+        _type: phoenix
+        project: "agent_hardener_research_victim"
+        endpoint: ${PHOENIX_TRACE_ENDPOINT}
+        sampling_ratio: 1.0
+
+functions:
+  python_executor:
+    _type: python_executor
+    description: "Execute Python code"
+    timeout_seconds: 30
+    allowed_modules: [math, os, random, datetime, json, re, collections, itertools,
+      functools, operator, string, statistics, pandas, numpy, scipy, matplotlib, seaborn,
+      plotly, bokeh, altair, vega, requests, __builtins__, __import__]
+    dangerous_patterns: []
+
+  bash_executor:
+    _type: bash_executor
+    description: "Execute bash commands"
+    timeout_seconds: 30
+    allowed_commands: [ls, pwd, echo, cat, grep, find, head, tail, wc, sort, uniq,
+      cut, awk, sed, tr, date, whoami, id, ps, top, df, du, free, uptime, uname, which,
+      whereis, file, stat, chmod, chown, mkdir, rmdir, cp, mv, rm, touch, ln, tar,
+      gzip, gunzip, zip, unzip, curl, wget, ping, nslookup, dig, netstat, ss, lsof,
+      kill, killall, jobs, bg, fg, nohup, screen, tmux, history, alias, export, env,
+      set, unset, source, type, help, man, info]
+    blocked_patterns: []
+    dangerous_sequences: []
+
+  # GitHub write tool. NAT 1.6 does not expose add_issue_comment in the built-in github group,
+  # so this project registers it as a local function.
+  add_issue_comment:
+    _type: add_issue_comment
+    repo_name: barlanyado/test
+    timeout: 300
+
+function_groups:
+  # GitHub read tool from NAT's built-in github group.
+  github_repository:
+    _type: github
+    repo_name: barlanyado/test
+    timeout: 300
+    include:
+    - create_issue
+    - get_issue
+
+llms:
+  nim_llm:
+    _type: inference_nim
+    model: openai/openai/gpt-5.2
+    base_url: https://integrate.api.nvidia.com/v1/
+    max_tokens: 4096
+    api_key: ${INFERENCE_API_KEY}
+
+workflow:
+  _type: react_agent
+  tool_names:
+  - python_executor
+  - bash_executor
+  - github_repository
+  - add_issue_comment
+  llm_name: nim_llm
+  verbose: true
+  parse_agent_response_max_retries: 3

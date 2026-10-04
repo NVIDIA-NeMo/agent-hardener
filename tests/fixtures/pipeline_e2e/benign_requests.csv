@@ -1,0 +1,2 @@
+tool,payload
+bash_executor,echo pipeline-ok
