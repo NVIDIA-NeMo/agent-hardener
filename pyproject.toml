@@ -1,6 +1,6 @@
 [project]
 name = "nvidia-agent-hardener"
-version = "0.0.14"
+version = "0.0.15"
 description = "A swarm of agents for security purposes: attackers and defenders play 'war games' in order to better protect the victim agent"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"

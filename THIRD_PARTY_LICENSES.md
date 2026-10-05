@@ -4,7 +4,7 @@ Agent Hardener is licensed under Apache-2.0 (see `LICENSE`). It does not vendor 
 redistribute third-party source code; the packages below are its **runtime dependency
 closure**, resolved at install time from PyPI, and each remains under its own licence.
 
-Generated for **nvidia-agent-hardener 0.0.14** on 2026-10-05 from the
+Generated for **nvidia-agent-hardener 0.0.15** on 2026-10-05 from the
 resolved runtime closure (`uv export --no-dev`). Development-only dependencies are excluded from
 the distributed package and are not listed.
 
