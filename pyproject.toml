@@ -10,8 +10,6 @@ license-files = ["LICENSE", "NOTICE", "THIRD_PARTY_LICENSES.md"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
-    # Rejected by public PyPI's classifier validation — guards against an accidental upload.
-    "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
