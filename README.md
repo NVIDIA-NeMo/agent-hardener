@@ -10,6 +10,8 @@ The current main demo protects a NAT research agent running inside an OpenShell 
 - OpenShell victim-control that applies policy updates, uploads workflow updates, and restarts the victim.
 - Attack and benign validators that prove the defended agent blocks the attacks without breaking normal requests.
 
+See [AGENT_CARD.md](AGENT_CARD.md) for the agent transparency card: intended use, limitations, evaluation results and safety considerations.
+
 ## Contributions
 
 This project is currently not accepting contributions.
