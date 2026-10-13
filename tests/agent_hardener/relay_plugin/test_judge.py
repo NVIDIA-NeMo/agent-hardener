@@ -1,11 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The judge must answer with a score, and anything that is not one must not read as "benign".
-
-The replies below are real ones, taken from victim logs, where a judge obeyed a rail ending in
-"output exactly: BLOCKED" — and the old parser, finding no number, allowed the call.
-"""
+"""The judge must answer with a score, and anything that is not one must not read as "benign"."""
 
 from __future__ import annotations
 
@@ -40,7 +36,6 @@ def test_a_bare_number_is_the_score(reply: str, score: float) -> None:
         "\nBLOCK",
         "BLOCKED: path not allowed",
         "\nRefused",
-        # Searching found the "1" in the address and refused a call the judge had just allowed.
         "ALLOW ping 127.0.0.1",
         "ALLOW fetch_url(http://10.0.0.5)",
         "1.5",

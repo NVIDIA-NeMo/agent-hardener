@@ -17,10 +17,6 @@ from ..schemas import GraphState
 # Prompts Definition
 # ==========================================
 
-# The writer is told the contract the rail is actually used under: the judge answers with a score, so
-# the rail states its decisions as scores. It used to be asked for "a system_prompt for a pre-tool
-# Guardrail LLM" that "must block" — so about one rail in nine ended "output exactly: BLOCKED", the
-# judge obeyed, and the call it meant to refuse went through.
 SUGGESTOR_SYS_PROMPT = f"""
 # Role
 You are an expert AI Security Engineer writing pre-tool guardrails.

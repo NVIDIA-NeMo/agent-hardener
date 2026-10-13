@@ -238,7 +238,7 @@ def _record_judge_error(rail: str, tool_name: str, tool_call_id: str | None, err
     """Mark a call the judge could not score, so a run report can tell it from one scored benign.
 
     The policy fails open, so without this the call reads in the transcript exactly like one the
-    judge looked at and passed — which is how a judge answering ``BLOCK`` went unnoticed.
+    judge looked at and passed.
     """
     try:
         nemo_relay.scope.event(
