@@ -87,7 +87,9 @@ def test_a_failing_judge_allows_rather_than_refuses() -> None:
     Failing closed would turn a transient inference error into an agent that refuses every call,
     which reads in the report as a guardrail so effective it broke the agent.
     """
-    assert not decide(_rail(), "transfer_funds", {"amount": 9999}, _RaisingJudge()).refuse
+    decision = decide(_rail(), "transfer_funds", {"amount": 9999}, _RaisingJudge())
+    assert not decision.refuse
+    assert decision.judge_error, "an unscored call must not read as one the judge scored benign"
 
 
 def test_odd_argument_shapes_still_reach_the_judge() -> None:

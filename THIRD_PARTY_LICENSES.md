@@ -47,7 +47,7 @@ Every dependency is under a permissive or weak-copyleft licence. **There are no 
 | `markupsafe` | 3.0.3 | BSD-3-Clause |
 | `mdit-py-plugins` | 0.6.1 | MIT |
 | `mdurl` | 0.1.2 | MIT |
-| `nemo-relay` | 0.9.0rc1 | Apache-2.0 |
+| `nemo-relay` | 0.10.0 | Apache-2.0 |
 | `openai` | 2.41.1 | Apache-2.0 |
 | `opentelemetry-api` | 1.41.1 | Apache-2.0 |
 | `opentelemetry-exporter-otlp-proto-common` | 1.41.1 | Apache-2.0 |
