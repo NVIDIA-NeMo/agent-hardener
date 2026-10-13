@@ -43,6 +43,11 @@ def judge_endpoint() -> str:
     return os.environ.get("AGENT_HARDENER_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 
 
+#: Judge scores at or above this refuse. One value for the rail the defender deploys and for the
+#: scoring contract its prompts describe.
+DEFAULT_GUARDRAIL_THRESHOLD = 0.7
+
+
 class JudgeModel(BaseModel):
     """The LLM that decides whether a tool call is the attack or ordinary use."""
 
@@ -66,7 +71,7 @@ class Guardrail(BaseModel):
     system_instructions: str = Field(min_length=1)
     action: Literal["refusal"] = "refusal"
     #: Judge scores at or above this refuse. Higher is more permissive.
-    threshold: float = Field(default=0.7, ge=0.0, le=1.0)
+    threshold: float = Field(default=DEFAULT_GUARDRAIL_THRESHOLD, ge=0.0, le=1.0)
     #: The attack that motivated this guardrail, so the run report and Studio can pair them.
     attack_id: str | None = None
 

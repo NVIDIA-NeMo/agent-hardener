@@ -34,6 +34,9 @@ class Decision:
 
     refuse: bool
     reason: str = ""
+    #: Set when the judge could not score the call, which is then allowed. Kept apart from an allowed
+    #: call the judge *did* score, because a report must not count one as the other.
+    judge_error: str = ""
 
 
 def decide(rail: Guardrail, tool_name: str, args: Any, judge: SafetyJudge) -> Decision:
@@ -60,14 +63,14 @@ def decide(rail: Guardrail, tool_name: str, args: Any, judge: SafetyJudge) -> De
         return Decision(refuse=False)
     try:
         score = judge.score(rail.system_instructions, tool_name, _render_args(args))
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "agent-hardener guardrail %s could not score a %s call; allowing it rather than refusing "
             "every call on a transient judge failure",
             rail.name,
             tool_name,
         )
-        return Decision(refuse=False)
+        return Decision(refuse=False, judge_error=f"{type(exc).__name__}: {exc}"[:500])
     if score < rail.threshold:
         return Decision(refuse=False)
     return Decision(refuse=True, reason=_refusal(rail, tool_name, score))

@@ -22,7 +22,12 @@ from typing import TYPE_CHECKING, Any
 import tomli_w
 
 from agent_hardener.llm import DEFAULT_MODEL
-from agent_hardener.relay_plugin.config import PLUGIN_KIND, GuardrailsComponentConfig, judge_endpoint
+from agent_hardener.relay_plugin.config import (
+    DEFAULT_GUARDRAIL_THRESHOLD,
+    PLUGIN_KIND,
+    GuardrailsComponentConfig,
+    judge_endpoint,
+)
 
 from ..schemas import DefenderOutput, GraphState
 
@@ -96,7 +101,7 @@ def _append_guardrail(document: dict[str, Any], state: GraphState) -> str:
         "name": name,
         "target_tool": state.original_input.attacked_tool,
         "action": "refusal",
-        "threshold": 0.7,
+        "threshold": DEFAULT_GUARDRAIL_THRESHOLD,
         "system_instructions": state.draft_instruction,
     }
     attack_id = state.original_input.context.get("attack_id")

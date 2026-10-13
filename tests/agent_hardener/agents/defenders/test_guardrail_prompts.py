@@ -14,6 +14,9 @@ import ast
 import re
 from pathlib import Path
 
+from agent_hardener.agents.defenders.guardrails_defender_v2.nodes import custom_guardrails_generator as gen
+from agent_hardener.relay_plugin.judge import JUDGE_SYSTEM_PROMPT
+
 GENERATOR = (
     Path(__file__).resolve().parents[4]
     / "agent_hardener/agents/defenders/guardrails_defender_v2/nodes/custom_guardrails_generator.py"
@@ -58,3 +61,12 @@ def test_every_prompt_placeholder_is_supplied_by_its_call_site() -> None:
     for name, supplied in calls:
         required = set(re.findall(r"\{(\w+)\}", templates[name]))
         assert not (required - supplied), f"{name}.format() is missing {sorted(required - supplied)}"
+
+
+# The judge answers with a number, so the writer is told to state a rail's decisions as scores.
+
+
+def test_the_writer_is_told_the_contract_the_judge_runs_under() -> None:
+    assert JUDGE_SYSTEM_PROMPT in gen.SUGGESTOR_SYS_PROMPT
+    assert "Scoring" in gen.SUGGESTOR_SYS_PROMPT
+    assert "{threshold}" in gen.GRADER_USER_PROMPT

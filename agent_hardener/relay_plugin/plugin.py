@@ -160,6 +160,8 @@ def _intercept(rail: Guardrail, judge: SafetyJudge, blocked_message: str) -> Cal
 
     async def intercept(context: nemo_relay.ToolExecutionContext, next_call: Any) -> Any:
         decision = decide(rail, context.tool_name, context.args, judge)
+        if decision.judge_error:
+            _record_judge_error(rail.name, context.tool_name, context.tool_call_id, decision.judge_error)
         if decision.refuse:
             _latch(blocked_message)
             return nemo_relay.ToolExecutionInterceptOutcome(
@@ -230,6 +232,21 @@ def _record_latch() -> None:
         nemo_relay.scope.event("agent_hardener.latched")
     except Exception:
         logger.debug("agent-hardener could not record the latch event", exc_info=True)
+
+
+def _record_judge_error(rail: str, tool_name: str, tool_call_id: str | None, error: str) -> None:
+    """Mark a call the judge could not score, so a run report can tell it from one scored benign.
+
+    The policy fails open, so without this the call reads in the transcript exactly like one the
+    judge looked at and passed — which is how a judge answering ``BLOCK`` went unnoticed.
+    """
+    try:
+        nemo_relay.scope.event(
+            "agent_hardener.judge_error",
+            data={"guardrail": rail, "tool_name": tool_name, "tool_call_id": tool_call_id, "error": error},
+        )
+    except Exception:
+        logger.debug("agent-hardener could not record the judge error event", exc_info=True)
 
 
 def _latched_tool(blocked_message: str) -> Callable[..., Any]:

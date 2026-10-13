@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 from agent_hardener.relay_plugin.config import PLUGIN_KIND
-from agent_hardener.relay_plugin.plugin import AgentHardenerGuardrailPlugin
+from agent_hardener.relay_plugin.plugin import AgentHardenerGuardrailPlugin, _record_judge_error
 
 nemo_relay = pytest.importorskip("nemo_relay")
 
@@ -142,6 +142,46 @@ def test_an_unguarded_tool_still_runs(relay_plugin: None) -> None:
     # An unguarded tool passes straight through the intercept and actually runs.
     _report, outcome = _drive(_config(), body)
     assert outcome is not None
+
+
+class _UnscoringJudge:
+    def score(self, instructions: str, tool_name: str, args: str) -> float:
+        del instructions, tool_name, args
+        msg = "the guardrail judge returned no score: 'BLOCK'"
+        raise ValueError(msg)
+
+
+def test_an_unscored_call_runs_and_is_marked(relay_plugin: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Failing open is kept, but visibly: the run must be able to tell it from a call scored benign."""
+    del relay_plugin
+    monkeypatch.setattr("agent_hardener.relay_plugin.plugin.LlmSafetyJudge", lambda _config: _UnscoringJudge())
+    marks: list[tuple[str, Any]] = []
+    monkeypatch.setattr(nemo_relay.scope, "event", lambda name, **kwargs: marks.append((name, kwargs.get("data"))))
+    called: list[Any] = []
+
+    async def transfer_funds(args: Any) -> Any:
+        called.append(args)
+        return nemo_relay.ToolExecutionResult({"moved": True})
+
+    async def body() -> Any:
+        return await nemo_relay.tools.execute("transfer_funds", {"amount": 9999}, transfer_funds)
+
+    _drive(_config(), body)
+
+    assert called == [{"amount": 9999}]
+    [(name, data)] = marks
+    assert name == "agent_hardener.judge_error"
+    assert data["guardrail"] == "custom_guardrail_1"
+    assert "BLOCK" in data["error"]
+
+
+def test_a_failing_judge_error_mark_never_reaches_the_tool_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    def broken(*_args: Any, **_kwargs: Any) -> None:
+        msg = "no active scope"
+        raise RuntimeError(msg)
+
+    monkeypatch.setattr(nemo_relay.scope, "event", broken)
+    _record_judge_error("custom_guardrail_1", "transfer_funds", None, "boom")
 
 
 def test_an_invalid_guardrail_set_blocks_initialisation(relay_plugin: None) -> None:
