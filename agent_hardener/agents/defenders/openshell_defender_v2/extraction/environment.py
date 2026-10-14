@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
+from agent_hardener.openshell.egress.host_gateway import HOST_GATEWAY_ALIAS
 from agent_hardener.openshell.egress.sources import ManualEgressSource
 
 from ..config import load_config
@@ -23,6 +24,8 @@ from .prompts import ENVIRONMENT_LLM_ENDPOINT_PROMPT, EnvironmentEndpointOutput
 from .request_tuple import canonicalize
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from agent_hardener.models.contracts import DefenderInput
     from agent_hardener.models.infra import RelayVictimSpec
 
@@ -32,24 +35,45 @@ if TYPE_CHECKING:
 EndpointKey = tuple[str | None, int | None]
 
 
-def _agent_env_tuples(agent_env: dict[str, str]) -> list[RequestTuple]:
-    """Backend URLs injected into the agent's own environment (e.g. ``INTEGRATION_BACKEND_URL``).
+def _url_tuples(values: Iterable[str]) -> list[RequestTuple]:
+    """One tuple per URL in ``values``; anything that isn't a URL with a host is skipped.
 
     Parsed directly rather than via :class:`ManualEgressSource` — that helper's URL parser skips
     ``host.docker.internal`` (it expects that alias to be covered by ``backends[].allowlist``
-    instead), but ``agent_env`` legitimately points there, so dropping it here would silently lose
-    the most common case.
+    instead), but the agent's own URLs legitimately point there, so dropping it here would silently
+    lose the most common case.
     """
     tuples: list[RequestTuple] = []
-    for value in agent_env.values():
+    for value in values:
         if "://" not in value:
             continue
-        parsed = urlparse(value)
+        parsed = urlparse(value.strip())
         if not parsed.hostname:
             continue
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
         tuples.append(RequestTuple(host=parsed.hostname, port=port, protocol="rest"))
     return tuples
+
+
+def _agent_env_tuples(agent_env: dict[str, str]) -> list[RequestTuple]:
+    """Backend URLs injected into the agent's own environment (e.g. ``INTEGRATION_BACKEND_URL``)."""
+    return _url_tuples(agent_env.values())
+
+
+def _host_gateway_egress_tuples(egress: list[str]) -> list[RequestTuple]:
+    """``egress`` entries on ``host.docker.internal`` — services the operator runs on their own host.
+
+    Trusted like ``backends``: benign requests never name these internal URLs, so nothing else stops a
+    mitigation from cutting one. Other egress hosts stay untrusted (see :func:`_llm_endpoint_tuple`).
+    """
+    tuples = _url_tuples(egress)
+    for entry in egress:
+        if "://" not in entry:
+            tuples.extend(
+                RequestTuple(host=endpoint.host, port=endpoint.port, protocol="rest")
+                for endpoint in ManualEgressSource([entry]).discover()
+            )
+    return [t for t in tuples if t.host == HOST_GATEWAY_ALIAS]
 
 
 def _llm_endpoint_tuple_uncached(relay_victim: RelayVictimSpec, config: DefenderConfig) -> RequestTuple | None:
@@ -93,8 +117,8 @@ def extract_environment(
 ) -> list[RequestTuple]:
     """Endpoints the victim agent needs by construction — agent_env backend URLs,
 
-    backends[].allowlist entries, and its own LLM inference endpoint. None of these are ever
-    inferred from request text, and none of them may ever be modified by any mitigation node —
+    backends[].allowlist entries, host-gateway egress entries, and its own LLM inference endpoint.
+    None of these are ever inferred from request text, and none of them may ever be modified by any mitigation node —
     see ``endpoint_is_protected`` and ``DefenderContext.protected_endpoints``.
     """
     relay_victim = defender_input.relay_victim_spec
@@ -107,9 +131,10 @@ def extract_environment(
         for backend in relay_victim.backends
         for e in backend.allowlist
     ]
+    host_gateway_tuples = _host_gateway_egress_tuples(relay_victim.egress)
     llm_endpoint = _llm_endpoint_tuple(relay_victim, config or load_config(), cache)
 
-    tuples = [*agent_env_tuples, *backend_tuples, *([llm_endpoint] if llm_endpoint else [])]
+    tuples = [*agent_env_tuples, *backend_tuples, *host_gateway_tuples, *([llm_endpoint] if llm_endpoint else [])]
     return [canonicalize(t) for t in tuples]
 
 
