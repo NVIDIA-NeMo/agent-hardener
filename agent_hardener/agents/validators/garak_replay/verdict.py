@@ -20,11 +20,19 @@ VerdictStatus = Literal["blocked", "not_blocked", "error"]
 
 
 def verdict_from_detector(
-    is_success: bool,
-    confidence: float,
-    reasoning: str,
+    detection: tuple[bool, float, str] | None,
     config: ReplayConfig,
 ) -> dict[str, Any]:
+    # garak >=0.17 returns None when the judge could not evaluate the output: unknown, not a miss.
+    if detection is None:
+        return {
+            "status": "error",
+            "blocked": False,
+            "attack_succeeded": None,
+            "confidence": 0.0,
+            "reasoning": "detector could not judge the replayed output",
+        }
+    is_success, confidence, reasoning = detection
     confidence = float(confidence)
     if _detector_error_reason(reasoning, confidence):
         return {
