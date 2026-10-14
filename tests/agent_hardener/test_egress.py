@@ -13,6 +13,7 @@ import yaml
 if TYPE_CHECKING:
     from pathlib import Path
 
+from agent_hardener.openshell import policy_egress
 from agent_hardener.openshell.egress import (
     CodeEgressSource,
     DiscoveredEndpoint,
@@ -54,6 +55,8 @@ def test_host_pattern_rules() -> None:
     assert host_pattern("integrate.api.nvidia.com") == "*.api.nvidia.com"  # 3+ labels -> parent wildcard
     assert host_pattern("raw.githubusercontent.com") == "*.githubusercontent.com"
     assert host_pattern("tavily.com") == "tavily.com"  # 2 labels -> exact (never a TLD wildcard)
+    assert host_pattern("inference-api.nvidia.com") == "*.nvidia.com"
+    assert host_pattern("host.docker.internal") == "host.docker.internal"  # gateway alias stays exact
 
 
 def test_host_pattern_never_tld_wildcard() -> None:
@@ -214,3 +217,18 @@ def test_inject_discovered_egress_no_endpoints_copies_through(tmp_path: Path) ->
     inject_discovered_egress(_policy(tmp_path), [], ["/x/**"], dest)
     policy = yaml.safe_load(dest.read_text(encoding="utf-8"))
     assert "relay_victim_discovered_egress" not in policy["network_policies"]
+
+
+def test_manual_host_gateway_egress_gets_bridge_allowed_ips(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `--egress host.docker.internal:9100` must keep the exact host so the bridge allowed_ips step
+    # applies; a `*.docker.internal` wildcard got none and OpenShell's anti-SSRF guard dropped it.
+    monkeypatch.setattr(policy_egress, "host_gateway_allowed_ips", lambda: ["192.168.5.2"])
+    eps = EgressDiscoverer([ManualEgressSource(["host.docker.internal:9100"])], resolver=_NO_RESOLVE).policy_endpoints()
+    dest = tmp_path / "out.yaml"
+    inject_discovered_egress(_policy(tmp_path), eps, ["/x/**"], dest)
+
+    policy = policy_egress.normalize_host_gateway_allowed_ips(yaml.safe_load(dest.read_text(encoding="utf-8")))
+
+    [endpoint] = policy["network_policies"]["relay_victim_discovered_egress"]["endpoints"]
+    assert (endpoint["host"], endpoint["port"]) == ("host.docker.internal", 9100)
+    assert endpoint["allowed_ips"] == ["192.168.5.2"]
