@@ -63,7 +63,7 @@ environments are not in scope for this release. <br>
 ## Known Risks & Mitigations: <br>
 * **Supply-chain exposure in the garak environment** Agent Hardener provisions
   and executes garak at runtime. *Mitigations, all merged:* the version is pinned exactly to
-  `garak==0.15.1` (previously a range, so any future 0.15.x installed automatically); the wheel is
+  `garak==0.17.0` (previously a range, so any future patch release installed automatically); the wheel is
   installed by immutable URL with its **sha256 verified before installation**, so a republished
   artifact under the same version fails the install rather than executing silently; and the garak
   subprocess receives a 7-variable environment allow-list instead of the operator's full environment,
@@ -112,7 +112,7 @@ flowchart LR
     RT --> BEN[Benign analyser]
   end
 
-  ATT -->|spawns| GARAK["garak==0.15.1<br/>isolated venv, env allow-list"]
+  ATT -->|spawns| GARAK["garak==0.17.0<br/>isolated venv, env allow-list"]
   GARAK -->|adversarial prompts| VIC
   BEN -->|benign suite| VIC
 
@@ -140,7 +140,7 @@ Agent Hardener hosts no model of its own. <br>
 **Dependencies:** 18 dynamically linked Python packages (httpx, PyYAML, pydantic, langgraph,
 langchain-core, requests, ruamel-yaml, typer, rich, langfuse, questionary, textual,
 langchain-openai, fastapi, uvicorn, nemo-relay, tomli-w, jinja2). Two invoked as separate processes and
-never imported: **garak** 0.15.1 (Apache-2.0) and **openshell** (Apache-2.0). Full licence
+never imported: **garak** 0.17.0 (Apache-2.0) and **openshell** (Apache-2.0). Full licence
 inventory in `THIRD_PARTY_LICENSES.md`. <br>
 
 # Agent Input and Output <br>
@@ -328,7 +328,7 @@ agent's responses to them &mdash; <b>which may contain whatever data the operato
 reach</b> &mdash; the attacked tool names and arguments, and the guardrail text derived from them.
 By default every role uses NVIDIA Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`). The endpoint is fully retargetable via `AGENT_HARDENER_BASE_URL` (and
 `GARAK_RED_TEAM_MODEL_URI` / `GARAK_DETECTOR_MODEL_URI`), so an operator may direct all inference to
-a self-hosted endpoint. Separately, `agent-hardener setup` downloads `garak==0.15.1` and its
+a self-hosted endpoint. Separately, `agent-hardener setup` downloads `garak==0.17.0` and its
 transitive dependencies from public PyPI; those transitive dependencies are not hash-pinned.
 Optional, off-by-default features can additionally send operator repository content to the inference
 endpoint and contact `api.github.com`. <br>

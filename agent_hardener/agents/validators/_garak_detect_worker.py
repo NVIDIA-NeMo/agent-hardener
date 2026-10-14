@@ -14,6 +14,7 @@ first request) and then services many requests over its lifetime — one cold to
 
     request  = {"attack_type": str, "config_root": dict, "verify_kwargs": dict, "repo_path": str|null}
     response = {"ok": true, "is_success": bool, "confidence": float, "reasoning": str}
+             | {"ok": true, "judged": false}   # the detector could not judge the output
              | {"ok": false, "error": str}
 
 garak/torch chatter is redirected to stderr for the whole process so stdout carries only JSON lines.
@@ -57,7 +58,10 @@ def _detector_for(attack_type: str, config_root: dict[str, Any], repo_path: str 
 
 def _run(request: dict[str, Any]) -> dict[str, Any]:
     detector = _detector_for(request["attack_type"], request["config_root"], request.get("repo_path"))
-    is_success, confidence, reasoning = detector.verify(**request["verify_kwargs"])
+    detection = detector.verify(**request["verify_kwargs"])
+    if detection is None:
+        return {"ok": True, "judged": False}
+    is_success, confidence, reasoning = detection
     return {
         "ok": True,
         "is_success": bool(is_success),

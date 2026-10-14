@@ -26,7 +26,7 @@ GARAK_PYTHON_ENVVAR = "AGENT_HARDENER_GARAK_PYTHON"
 # every `setup` free to pull a future 0.15.x the moment it is published — the cheap half of the
 # supply-chain risk, since it needs a maintainer-account takeover rather than a registry compromise.
 # Bumping this is a deliberate commit: check the upstream changelog before moving it.
-GARAK_VERSION = "0.15.1"
+GARAK_VERSION = "0.17.0"
 GARAK_SPEC = f"garak=={GARAK_VERSION}"
 
 # Installed by immutable URL with its hash, so a republished artifact under the same version fails
@@ -35,10 +35,10 @@ GARAK_SPEC = f"garak=={GARAK_VERSION}"
 # pinning remains a separate item. Update all three constants together when bumping the version —
 # take the values from https://pypi.org/pypi/garak/<version>/json.
 GARAK_WHEEL_URL = (
-    "https://files.pythonhosted.org/packages/33/55/"
-    "ec8a0083bea2238768444f05d62ab274bda6c1aac3d6d99dc54882e01880/garak-0.15.1-py3-none-any.whl"
+    "https://files.pythonhosted.org/packages/98/4c/"
+    "1c05b1a85821e1891f406f75c6b86e700f84252b50b123993cc8ec4a2271/garak-0.17.0-py3-none-any.whl"
 )
-GARAK_WHEEL_SHA256 = "c420e2f339662ace10b05dcd113e66dce7eaf918910c6128a2f4618dcac92431"  # pragma: allowlist secret
+GARAK_WHEEL_SHA256 = "9a67e6298e4d7025358fecafa9d473c77ff70acdae103aa5251ad60fca3db145"  # pragma: allowlist secret
 # PEP 508 direct reference: uv verifies the fragment hash before installing.
 GARAK_PINNED_SPEC = f"garak @ {GARAK_WHEEL_URL}#sha256={GARAK_WHEEL_SHA256}"
 # Pinned deliberately: garak pulls torch>=2.6.0, whose wheels are per-Python-version. Letting the

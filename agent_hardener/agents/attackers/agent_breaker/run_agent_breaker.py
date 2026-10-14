@@ -117,6 +117,35 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+# Attempt notes the AgentBreaker judge needs on replay. garak's hitlog keeps only `triggers`, so they
+# are copied in from the report's attempt entries to keep the hitlog self-contained.
+JUDGE_CONTEXT_KEYS = ("agent_purpose", "tool_description")
+
+
+def _judge_context_by_attempt(report: Path) -> dict[str, dict[str, str]]:
+    context: dict[str, dict[str, str]] = {}
+    for entry in _read_jsonl(report):
+        notes = entry.get("notes")
+        if entry.get("entry_type") != "attempt" or not isinstance(notes, dict):
+            continue
+        values = {key: str(notes.get(key) or "") for key in JUDGE_CONTEXT_KEYS}
+        if any(values.values()):
+            context[str(entry.get("uuid"))] = values
+    return context
+
+
+def enrich_hitlog(hitlog: Path, report: Path | None) -> list[dict[str, Any]]:
+    """Add the judge context from ``report`` to each hitlog row, rewriting the file in place."""
+    rows = _read_jsonl(hitlog)
+    context = _judge_context_by_attempt(report) if report else {}
+    if not context:
+        return rows
+    for row in rows:
+        row.update(context.get(str(row.get("attempt_id")), {}))
+    hitlog.write_text("".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows), encoding="utf-8")
+    return rows
+
+
 def _latest(report_dir: Path, prefix: str, suffix: str) -> Path | None:
     """Newest ``<prefix>*<suffix>`` file garak produced under ``report_dir``."""
     candidates = sorted(report_dir.glob(f"{prefix}*{suffix}"), key=lambda path: path.stat().st_mtime)
@@ -189,7 +218,7 @@ async def run_agent_breaker_scan(
     report = _latest(report_dir_path, report_prefix, ".report.jsonl")
     return ScanResult(
         return_code=return_code,
-        hits=_read_jsonl(hitlog) if hitlog else [],
+        hits=enrich_hitlog(hitlog, report) if hitlog else [],
         config_path=str(resolved_path),
         report_path=str(report) if report else None,
         hitlog_path=str(hitlog) if hitlog else None,

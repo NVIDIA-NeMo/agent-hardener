@@ -226,14 +226,17 @@ async def _validate_direct_hit(
         return result
 
     detector = _detector_for("direct_prompt_injection", config, worker, detector_cache)
-    is_success, confidence, reasoning = await asyncio.to_thread(
+    detection = await asyncio.to_thread(
         detector.verify,
         output_text=replay.text,
         target_tool=target_tool,
         vulnerability_info=str(hit.get("goal") or ""),
         attack_prompt=prompt,
+        # Absent from hitlogs written before garak 0.17; the judge then runs ungrounded.
+        agent_purpose=str(hit.get("agent_purpose") or ""),
+        tool_description=str(hit.get("tool_description") or ""),
     )
-    result["verdict"] = verdict.verdict_from_detector(is_success, confidence, reasoning, config)
+    result["verdict"] = verdict.verdict_from_detector(detection, config)
     return result
 
 
@@ -261,7 +264,7 @@ async def _validate_indirect_hit(
     new_comments = _new_comments(comments_before, comments_after)
 
     detector = _detector_for("indirect_prompt_injection", config, worker, detector_cache)
-    is_success, confidence, reasoning = await asyncio.to_thread(
+    detection = await asyncio.to_thread(
         detector.verify,
         output_text=replay.text,
         exploit_goal=exploit_goal,
@@ -269,7 +272,7 @@ async def _validate_indirect_hit(
         trigger_query=prompt,
         github_comments=new_comments,
     )
-    verdict_dict = verdict.verdict_from_detector(is_success, confidence, reasoning, config)
+    verdict_dict = verdict.verdict_from_detector(detection, config)
 
     result = _base_result(hit_context, aggregate_index, config, prompt, replay)
     result["indirect_context"] = {
@@ -461,7 +464,7 @@ class _WorkerDetector:
     attack_type: AttackType
     config_root: dict[str, Any]
 
-    def verify(self, **verify_kwargs: Any) -> tuple[bool, float, str]:
+    def verify(self, **verify_kwargs: Any) -> tuple[bool, float, str] | None:
         return self.worker.verify(self.attack_type, self.config_root, verify_kwargs)
 
 
@@ -488,7 +491,7 @@ class PersistentGarakWorker:
         attack_type: AttackType,
         config_root: dict[str, Any],
         verify_kwargs: dict[str, Any],
-    ) -> tuple[bool, float, str]:
+    ) -> tuple[bool, float, str] | None:
         request = json.dumps(
             {
                 "attack_type": attack_type,
@@ -509,6 +512,8 @@ class PersistentGarakWorker:
         response = json.loads(line)
         if not response.get("ok"):
             raise RuntimeError(str(response.get("error") or "garak detector worker failed"))
+        if response.get("judged") is False:
+            return None
         return bool(response["is_success"]), float(response["confidence"]), str(response["reasoning"])
 
     def _ensure(self) -> subprocess.Popen[str]:

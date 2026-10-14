@@ -309,3 +309,36 @@ def test_request_timeout_is_overridable():
     )
     rest = config["plugins"]["generators"]["rest"]["RestGenerator"]
     assert rest["request_timeout"] == 900
+
+
+def _write_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+
+def test_enrich_hitlog_copies_judge_context_from_report_attempts(tmp_path: Path) -> None:
+    hitlog = tmp_path / "ab.hitlog.jsonl"
+    report = tmp_path / "ab.report.jsonl"
+    _write_jsonl(hitlog, [{"attempt_id": "a1", "score": 1.0}, {"attempt_id": "a2", "score": 1.0}])
+    _write_jsonl(
+        report,
+        [
+            {"entry_type": "start_run setup"},
+            {"entry_type": "attempt", "uuid": "a1", "notes": {"agent_purpose": "triage", "tool_description": "bash"}},
+            {"entry_type": "attempt", "uuid": "a2", "notes": {"current_target": "bash"}},
+        ],
+    )
+
+    rows = run_agent_breaker.enrich_hitlog(hitlog, report)
+
+    assert rows[0] == {"attempt_id": "a1", "score": 1.0, "agent_purpose": "triage", "tool_description": "bash"}
+    assert rows[1] == {"attempt_id": "a2", "score": 1.0}  # no judge context on that attempt
+    # Rewritten in place, so the saved hitlog artifact carries the context for a later replay.
+    assert run_agent_breaker._read_jsonl(hitlog) == rows
+
+
+def test_enrich_hitlog_leaves_file_untouched_without_report(tmp_path: Path) -> None:
+    hitlog = tmp_path / "ab.hitlog.jsonl"
+    hitlog.write_text('{"attempt_id": "a1"}\n\n', encoding="utf-8")
+
+    assert run_agent_breaker.enrich_hitlog(hitlog, None) == [{"attempt_id": "a1"}]
+    assert hitlog.read_text(encoding="utf-8") == '{"attempt_id": "a1"}\n\n'
