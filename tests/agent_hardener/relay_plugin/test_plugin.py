@@ -19,7 +19,12 @@ if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
 from agent_hardener.relay_plugin.config import PLUGIN_KIND
-from agent_hardener.relay_plugin.plugin import AgentHardenerGuardrailPlugin, _record_judge_error
+from agent_hardener.relay_plugin.plugin import (
+    AgentHardenerGuardrailPlugin,
+    _latched_llm,
+    _latched_llm_stream,
+    _record_judge_error,
+)
 
 nemo_relay = pytest.importorskip("nemo_relay")
 
@@ -201,3 +206,31 @@ def test_an_invalid_guardrail_set_blocks_initialisation(relay_plugin: None) -> N
 
 def test_validate_accepts_the_config_the_defender_writes() -> None:
     assert AgentHardenerGuardrailPlugin().validate(_config()) is None
+
+
+# Relay 0.10 added an `LlmExecutionContext` argument to both LLM intercepts; earlier releases call
+# them without it, and the stream intercept without `name` too. The latch must forward on all of them.
+@pytest.mark.parametrize(
+    "call_args", [("model", {"q": 1}), ("model", {"q": 1}, "ctx")], ids=["relay<0.10", "relay>=0.10"]
+)
+def test_latched_llm_forwards_an_unblocked_call_in_every_relay_shape(call_args: tuple[Any, ...]) -> None:
+    async def next_call(request: Any) -> Any:
+        return {"forwarded": request}
+
+    intercept = _latched_llm("blocked")
+    assert asyncio.run(intercept(*call_args, next_call)) == {"forwarded": {"q": 1}}
+
+
+@pytest.mark.parametrize("call_args", [({"q": 1},), ("model", {"q": 1}, "ctx")], ids=["relay<0.10", "relay>=0.10"])
+def test_latched_llm_stream_forwards_an_unblocked_call_in_every_relay_shape(call_args: tuple[Any, ...]) -> None:
+    async def chunks() -> Any:
+        yield {"chunk": 1}
+
+    async def next_call(request: Any) -> Any:
+        assert request == {"q": 1}
+        return chunks()
+
+    async def collect() -> list[Any]:
+        return [chunk async for chunk in _latched_llm_stream("blocked")(*call_args, next_call)]
+
+    assert asyncio.run(collect()) == [{"chunk": 1}]

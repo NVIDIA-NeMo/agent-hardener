@@ -263,11 +263,22 @@ def _latched_tool(blocked_message: str) -> Callable[..., Any]:
     return intercept
 
 
+def _llm_intercept_args(args: tuple[Any, ...]) -> tuple[Any, Any]:
+    """``(request, next_call)`` from any Relay's LLM intercept call.
+
+    Relay 0.10 calls both LLM intercepts as ``(name, request, context, next)``; earlier releases use
+    ``(name, request, next)`` and, for streams, ``(request, next)``. The plugin runs in the user's
+    image and does not choose that Relay, and a mismatched arity fails every model call with HTTP 500.
+    """
+    *leading, next_call = args
+    return (leading[1] if len(leading) >= 2 else leading[0]), next_call
+
+
 def _latched_llm(blocked_message: str) -> Callable[..., Any]:
     """Answer the model call from the plugin, so the agent stops instead of planning its next move."""
 
-    async def intercept(name: str, request: Any, next_call: Any) -> Any:
-        del name
+    async def intercept(*args: Any) -> Any:
+        request, next_call = _llm_intercept_args(args)
         key = _request_key()
         if not _BLOCKED.is_blocked(key):
             return await next_call(request)
@@ -285,9 +296,10 @@ def _latched_llm(blocked_message: str) -> Callable[..., Any]:
 
 
 def _latched_llm_stream(blocked_message: str) -> Callable[..., Any]:
-    """The streaming twin of :func:`_latched_llm`. Note there is no ``name`` argument here."""
+    """The streaming twin of :func:`_latched_llm`."""
 
-    def intercept(request: Any, next_call: Any) -> Any:
+    def intercept(*args: Any) -> Any:
+        request, next_call = _llm_intercept_args(args)
         key = _request_key()
         if not _BLOCKED.is_blocked(key):
             return _passthrough_stream(request, next_call)
