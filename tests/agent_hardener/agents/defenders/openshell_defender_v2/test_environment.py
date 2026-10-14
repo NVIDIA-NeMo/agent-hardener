@@ -99,6 +99,20 @@ def test_llm_not_called_when_egress_empty(monkeypatch) -> None:
     assert {t.host for t in tuples} == {"host.docker.internal"}
 
 
+def test_host_gateway_egress_is_protected(monkeypatch) -> None:
+    """Host services listed only in ``egress`` are protected in both bare and URL form; others are not."""
+    monkeypatch.setattr(f"{_MODULE}.complete_structured", lambda *_args: EnvironmentEndpointOutput(host=None))
+    egress = ["host.docker.internal:9100", "http://host.docker.internal:9200/v1", "es.example.com:9200"]
+    relay_victim = _relay_victim(agent_env={}, backends=[], egress=egress)
+
+    tuples = extract_environment(_defender_input(relay_victim), DefenderConfig())
+    protected = {(t.host, t.port) for t in tuples}
+
+    assert protected == {("host.docker.internal", 9100), ("host.docker.internal", 9200)}
+    assert endpoint_is_protected(protected, "host.docker.internal", 9100) is True
+    assert endpoint_is_protected(protected, "es.example.com", 9200) is False
+
+
 def test_no_agent_env_or_backends(monkeypatch) -> None:
     monkeypatch.setattr(
         f"{_MODULE}.complete_structured",
