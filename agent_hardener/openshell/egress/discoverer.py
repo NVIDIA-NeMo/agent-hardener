@@ -15,6 +15,7 @@ import socket
 from typing import TYPE_CHECKING
 
 from agent_hardener.openshell.egress.base import PolicyEndpoint
+from agent_hardener.openshell.egress.host_gateway import HOST_GATEWAY_ALIAS
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -28,7 +29,11 @@ def host_pattern(host: str) -> str:
     OpenShell rejects a bare ``*`` and TLD wildcards (``*.com``). For 3+ labels we use a subdomain
     wildcard over the parent (``integrate.api.nvidia.com`` → ``*.api.nvidia.com``); for a 2-label
     registrable domain we keep it exact (``tavily.com``) so we never emit an illegal TLD wildcard.
+    ``host.docker.internal`` also stays exact: ``normalize_host_gateway_allowed_ips`` matches it by
+    exact host to add the bridge ``allowed_ips``, and without them OpenShell drops calls to the host.
     """
+    if host == HOST_GATEWAY_ALIAS:
+        return host
     labels = host.split(".")
     if len(labels) >= 3:
         return "*." + ".".join(labels[1:])
