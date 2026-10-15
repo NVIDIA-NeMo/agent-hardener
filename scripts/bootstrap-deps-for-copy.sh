@@ -20,7 +20,7 @@ cat >&2 <<'EOF'
 
 Dependency bootstrap failed while preparing the initial commit.
 
-This step generates uv.lock and requirements.txt before git-init so the
+This step generates uv.lock before git-init so the
 initial commit and first push include dependency artifacts.
 
 Fix the uv/python/package-index issue and rerun copier copy.

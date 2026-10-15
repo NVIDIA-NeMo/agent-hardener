@@ -23,7 +23,7 @@ if ($status -eq 0) {
 [Console]::Error.WriteLine("")
 [Console]::Error.WriteLine("Dependency bootstrap failed while preparing the initial commit.")
 [Console]::Error.WriteLine("")
-[Console]::Error.WriteLine("This step generates uv.lock and requirements.txt before git-init so the")
+[Console]::Error.WriteLine("This step generates uv.lock before git-init so the")
 [Console]::Error.WriteLine("initial commit and first push include dependency artifacts.")
 [Console]::Error.WriteLine("")
 [Console]::Error.WriteLine("Fix the uv/python/package-index issue and rerun copier copy.")

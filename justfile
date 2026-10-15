@@ -47,7 +47,7 @@ setup:
 stop *args:
     ./scripts/stop-swarm.sh {{ args }}
 
-# Install Python, sync dependencies, export requirements.txt, and set up pre-commit hooks
+# Install Python, sync dependencies, and set up pre-commit hooks
 [unix]
 install:
     @bash scripts/install-project.sh
@@ -59,14 +59,10 @@ install:
     @powershell -ExecutionPolicy Bypass -File scripts/install-project.ps1
 
 # Generate dependency artifacts without installing hooks (internal helper).
-# Inlines the `uv export` from `export-reqs` rather than calling `just export-reqs`:
-# during `copier copy` this runs via `uvx --from rust-just just bootstrap-deps`, where
-# a bare `just` is not reliably on PATH. Keep in sync with the `export-reqs` recipe.
 [private]
 bootstrap-deps:
     uv python install 3.11
     uv sync
-    uv export --format requirements-txt --no-hashes --no-emit-project --output-file requirements.txt
 
 # Install project dependencies in CI (frozen lockfile, no pre-commit hooks)
 install-ci:
@@ -88,12 +84,6 @@ garak-venv *args:
 [unix]
 garak-dev path:
     uv pip install --python "$HOME/.agent-hardener/garak-venv/bin/python" -e {{ path }}
-
-# Export dependencies to requirements.txt
-export-reqs:
-    @echo "Exporting dependencies to requirements.txt..."
-    uv export --format requirements-txt --no-hashes --no-emit-project --output-file requirements.txt
-    @echo "Requirements exported to requirements.txt"
 
 # Start Phoenix and the OpenTelemetry Collector
 [unix]
