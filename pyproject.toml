@@ -21,6 +21,7 @@ dependencies = [
     "PyYAML==6.0.3",
     "pydantic>=2.0,<3.0",
     "langgraph>=0.6.7",
+    "langgraph-sdk>=0.4.7",  # CVE-2026-104873
     "langchain-core>=0.3.0",
     "requests>=2.32.0,<3.0",
     "ruamel-yaml>=0.19.1",

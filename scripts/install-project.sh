@@ -19,7 +19,6 @@ fingerprint_file() {
 }
 
 uv_lock_before="$(fingerprint_file uv.lock)"
-requirements_before="$(fingerprint_file requirements.txt)"
 
 if just bootstrap-deps; then
     :
@@ -29,7 +28,7 @@ else
 
 Dependency setup failed while running 'just install'.
 
-This step installs Python, syncs dependencies, and exports requirements.txt.
+This step installs Python and syncs dependencies.
 Fix the uv/python/package-index issue above and rerun 'just install'.
 EOF
     exit "$status"
@@ -52,7 +51,6 @@ check_changed() {
 }
 
 check_changed "uv.lock" "$uv_lock_before"
-check_changed "requirements.txt" "$requirements_before"
 
 if [ "${#changed[@]}" -eq 0 ]; then
     exit 0
@@ -65,5 +63,5 @@ done
 printf '\nYour repo is now dirty because generated dependency files changed.\n'
 printf 'Commit them on a work branch (create one with '\''git switch -c <branch-name>'\''\n'
 printf 'first if you are still on the default branch):\n'
-printf '  git add uv.lock requirements.txt\n'
+printf '  git add uv.lock\n'
 printf '  git commit -m "Update dependency lock files"\n'

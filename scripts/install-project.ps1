@@ -8,7 +8,7 @@ if ($args.Count -ne 0) {
     exit 1
 }
 
-$depFiles = @("uv.lock", "requirements.txt")
+$depFiles = @("uv.lock")
 
 function Get-FileFingerprint($Path) {
     if (Test-Path -LiteralPath $Path -PathType Leaf) {
@@ -29,7 +29,7 @@ if ($LASTEXITCODE -ne 0) {
     [Console]::Error.WriteLine("")
     [Console]::Error.WriteLine("Dependency setup failed while running 'just install'.")
     [Console]::Error.WriteLine("")
-    [Console]::Error.WriteLine("This step installs Python, syncs dependencies, and exports requirements.txt.")
+    [Console]::Error.WriteLine("This step installs Python and syncs dependencies.")
     [Console]::Error.WriteLine("Fix the uv/python/package-index issue above and rerun 'just install'.")
     exit $status
 }
@@ -65,5 +65,5 @@ Write-Host ""
 Write-Host "Your repo is now dirty because generated dependency files changed."
 Write-Host "Commit them on a work branch (create one with 'git switch -c <branch-name>'"
 Write-Host "first if you are still on the default branch):"
-Write-Host "  git add uv.lock requirements.txt"
+Write-Host "  git add uv.lock"
 Write-Host '  git commit -m "Update dependency lock files"'
