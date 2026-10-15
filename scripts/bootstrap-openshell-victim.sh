@@ -182,7 +182,8 @@ fi
 
 log "Ensuring OpenShell gateway: $GATEWAY"
 if ! openshell gateway info --gateway "$GATEWAY" >/dev/null 2>&1; then
-  openshell gateway start --name "$GATEWAY"
+  # The gateway is a system service; register it if needed.
+  uv run agent-hardener setup || die "OpenShell gateway $GATEWAY is not reachable"
 fi
 
 if [ "$RECREATE_SANDBOX" = true ]; then

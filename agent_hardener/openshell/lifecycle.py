@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import yaml  # type: ignore[import-untyped]
+
 from agent_hardener.openshell._forward import ForwardMixin
 from agent_hardener.openshell._polling import PollingMixin, wait_for_http_health
 from agent_hardener.openshell._victim import VictimMixin
@@ -42,6 +44,9 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger("agent_hardener.session")
+
+#: The provider type the manifest names for "the victim's secrets"; backed by a generated profile.
+GENERIC_PROVIDER_TYPE = "generic"
 
 # Re-exported so ``from agent_hardener.openshell.lifecycle import X`` keeps working for existing importers
 # after the split into config/command/support/mixin modules.
@@ -113,35 +118,14 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         return combine_results(results, ok=results[-1].ok)
 
     def _ensure_gateway_started(self) -> list[OpenShellCommandResult]:
-        results = [self._exec.run(["gateway", "info", "--gateway", self.config.gateway])]
-        if not results[-1].ok:
-            start_result = self._exec.run(["gateway", "start", "--name", self.config.gateway])
-            if "unrecognized subcommand" in start_result.output:
-                # gateway start was removed in OpenShell >=0.0.45; the gateway is
-                # managed by the system service. Record a synthetic success so up()
-                # does not bail on the failed `gateway info`, and let subsequent
-                # sandbox commands surface the real error if the gateway is down.
-                logger.debug("openshell gateway start not supported; skipping (system service manages gateway)")
-                results.append(
-                    OpenShellCommandResult(
-                        ok=True,
-                        command=start_result.command,
-                        output=(
-                            "openshell gateway start not supported; "
-                            "continuing with sandbox commands\n"
-                            f"{start_result.output}"
-                        ).strip(),
-                    )
-                )
-            else:
-                results.append(start_result)
-        return results
+        # The gateway is a system service (brew/systemd); all that can be done here is confirm it answers.
+        return [self._exec.run(["gateway", "info", "--gateway", self.config.gateway])]
 
     def _create_sandbox(self, effective_policy_path: Path) -> list[OpenShellCommandResult]:
-        args = self._sandbox_create_args(effective_policy_path)
-        uploads = self._effective_uploads()
-        if uploads:
-            logger.info("sandbox create uploads sandbox=%s uploads=%s", self.config.sandbox, uploads)
+        build = self._build_image()
+        if not build.ok:
+            return [build]
+        args = self._sandbox_create_args(effective_policy_path, image=build.output.strip())
         logger.info(
             "sandbox create command sandbox=%s command=%s",
             self.config.sandbox,
@@ -155,9 +139,41 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         ]
         if results[-1].ok:
             results.append(self.wait_for_sandbox_ready())
+        if results[-1].ok:
+            results.extend(self._upload_seed_files())
         return results
 
-    def _sandbox_create_args(self, effective_policy_path: Path) -> list[str]:
+    def image_tag(self) -> str:
+        """The local image tag the staged build context is built into."""
+        return f"agent-hardener/{self.config.sandbox}:latest"
+
+    def _build_image(self) -> OpenShellCommandResult:
+        """Build the staged Dockerfile into a local image; ``output`` carries the image reference.
+
+        ``sandbox create --from`` takes an image reference only, built with the gateway's container engine. A ``build_context`` that is
+        not a local path is taken to already be an image reference and passed through untouched.
+        """
+        context = self.config.build_context
+        assert context is not None  # guarded by up()
+        if not context.exists():
+            return OpenShellCommandResult(ok=True, command=[], output=str(context))
+        dockerfile = context if context.is_file() else context / "Dockerfile"
+        tag = self.image_tag()
+        command = ["docker", "build", "-t", tag, "-f", str(dockerfile), str(dockerfile.parent)]
+        logger.info(
+            "sandbox setup: image build starting sandbox=%s command=%s", self.config.sandbox, shlex.join(command)
+        )
+        try:
+            completed = self.runner.run(command, cwd=self.config.cwd)
+        except OSError as exc:
+            return OpenShellCommandResult(ok=False, command=command, output=str(exc))
+        if completed.returncode != 0:
+            return OpenShellCommandResult.from_completed(command, completed)
+        return OpenShellCommandResult(ok=True, command=command, output=tag)
+
+    def _sandbox_create_args(self, effective_policy_path: Path, *, image: str) -> list[str]:
+        # No --upload: OpenShell refuses it together with a main command (uploads would land after
+        # the canonical process starts). Files go in with `sandbox upload` once the sandbox is Ready.
         args = [
             "sandbox",
             "create",
@@ -166,18 +182,26 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             "--name",
             self.config.sandbox,
             "--from",
-            str(self.config.build_context),
+            image,
+            "--policy",
+            str(effective_policy_path),
+            "--no-tty",
+            "--detach",
         ]
-        uploads = self._effective_uploads()
-        for upload in uploads:
-            args.extend(["--upload", upload])
-        if uploads:
-            args.append("--no-git-ignore")
-        args.extend(["--policy", str(effective_policy_path), "--no-tty"])
         if self.config.provider:
             args.extend(["--provider", self.config.provider, "--no-auto-providers"])
         args.extend(["--", *self.config.create_command])
         return args
+
+    def _upload_seed_files(self) -> list[OpenShellCommandResult]:
+        results: list[OpenShellCommandResult] = []
+        for upload in self._effective_uploads():
+            local, _separator, destination = upload.partition(":")
+            logger.info("sandbox setup: upload sandbox=%s %s -> %s", self.config.sandbox, local, destination)
+            results.append(self.upload_file(Path(local), destination))
+            if not results[-1].ok:
+                break
+        return results
 
     def _effective_uploads(self) -> list[str]:
         """``config.uploads`` with each source swapped for its same-named active-state copy, if one exists.
@@ -219,6 +243,20 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if is_transient_transport_failure(results[-1].output):
             return combine_results(results)
 
+        credentials, error = self._provider_credentials()
+        if error is not None:
+            return error
+
+        provider_type = self.config.provider_type
+        if provider_type == GENERIC_PROVIDER_TYPE:
+            # A provider's --type must name an imported profile. Generate a credentials-only one for exactly these secrets; the sandbox
+            # policy's ``credential_binding`` decides which endpoints they may be sent to.
+            names = list(credentials) or list(self.config.provider_credentials)
+            results.append(self._ensure_generic_profile(names))
+            if not results[-1].ok:
+                return combine_results(results)
+            provider_type = self.config.provider
+
         args = [
             "provider",
             "create",
@@ -227,23 +265,9 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             "--gateway",
             self.config.gateway,
             "--type",
-            self.config.provider_type,
+            provider_type,
         ]
-        if self.config.provider_env_file:
-            try:
-                credentials = self._provider_credentials_from_env_file()
-            except OSError as exc:
-                return OpenShellCommandResult(
-                    ok=False,
-                    command=[self.config.openshell_bin, *args],
-                    output=f"failed to read provider_env_file {self.config.provider_env_file}: {exc}",
-                )
-            if not credentials:
-                return OpenShellCommandResult(
-                    ok=False,
-                    command=[self.config.openshell_bin, *args],
-                    output=f"no configured provider credentials found in {self.config.provider_env_file}",
-                )
+        if credentials:
             for name, value in credentials.items():
                 args.extend(["--credential", f"{name}={value}"])
         else:
@@ -251,12 +275,64 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         results.append(self._exec.run(args))
         return combine_results(results, ok=results[-1].ok)
 
+    def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
+        """The ``NAME -> value`` credentials from ``provider_env_file`` (empty when none is configured)."""
+        if not self.config.provider_env_file:
+            return {}, None
+        command = [self.config.openshell_bin, "provider", "create"]
+        try:
+            credentials = self._provider_credentials_from_env_file()
+        except OSError as exc:
+            message = f"failed to read provider_env_file {self.config.provider_env_file}: {exc}"
+            return {}, OpenShellCommandResult(ok=False, command=command, output=message)
+        if not credentials:
+            message = f"no configured provider credentials found in {self.config.provider_env_file}"
+            return {}, OpenShellCommandResult(ok=False, command=command, output=message)
+        return credentials, None
+
+    def _ensure_generic_profile(self, credential_names: list[str]) -> OpenShellCommandResult:
+        """Import (or update) the credentials-only provider profile named after the provider."""
+        profile_id = str(self.config.provider)
+        profile = {
+            "id": profile_id,
+            "display_name": "Agent Hardener secrets",
+            "description": "Secrets the Agent Hardener victim reads from its environment.",
+            "category": "other",
+            "credentials": [{"name": name.lower(), "env_vars": [name], "required": False} for name in credential_names],
+        }
+        profile_dir = self.log_dir or ((self.config.cwd or Path.cwd()) / ".agent-hardener" / "openshell-logs")
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        profile_path = profile_dir / f"{profile_id}.profile.yaml"
+        profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
+        imported = self._exec.run(
+            ["provider", "profile", "import", "--file", str(profile_path), "--gateway", self.config.gateway]
+        )
+        if imported.ok:
+            return imported
+        updated = self._exec.run(
+            [
+                "provider",
+                "profile",
+                "update",
+                profile_id,
+                "--file",
+                str(profile_path),
+                "--gateway",
+                self.config.gateway,
+            ]
+        )
+        return combine_results([imported, updated], ok=updated.ok)
+
     def down(self) -> OpenShellCommandResult:
         """Delete the sandbox."""
         results: list[OpenShellCommandResult] = []
         if self.config.forward:
             results.append(self.stop_managed_forward())
         results.append(self._exec.run(["sandbox", "delete", self.config.sandbox, "--gateway", self.config.gateway]))
+        if results[-1].ok:
+            # OpenShell deletes asynchronously ("deletion accepted"); a create under the same name
+            # before teardown finishes would collide with the sandbox still being deleted.
+            results.append(self.wait_for_sandbox_deleted())
         return combine_results(results, ok=results[-1].ok)
 
     def restart(self, policy_path: Path | None = None, wait_for_health: bool = True) -> OpenShellCommandResult:
@@ -288,17 +364,12 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         )
 
     def active_policy(self) -> OpenShellCommandResult:
-        """Return the current active sandbox policy as YAML."""
-        return self._exec.run(
-            [
-                "sandbox",
-                "get",
-                self.config.sandbox,
-                "--gateway",
-                self.config.gateway,
-                "--policy-only",
-            ]
-        )
+        """Return the sandbox's current *base* policy (a revision header, ``---``, then the YAML).
+
+        Not ``sandbox get --policy-only``: that prints the effective policy, which
+        also carries provider-contributed rules and so never matches the file that was applied.
+        """
+        return self._exec.run(["policy", "get", self.config.sandbox, "--gateway", self.config.gateway, "--base"])
 
     def upload_file(self, local_path: Path, destination: str) -> OpenShellCommandResult:
         """Upload a local file into the running sandbox."""

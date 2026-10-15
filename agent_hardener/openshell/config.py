@@ -42,6 +42,10 @@ class SubprocessCommandRunner:
         )
 
 
+#: The sandbox's canonical main process (see ``OpenShellConfig.create_command``).
+DEFAULT_CREATE_COMMAND = ("sleep", "infinity")
+
+
 @dataclass(frozen=True)
 class OpenShellConfig:
     """OpenShell gateway/sandbox settings."""
@@ -57,7 +61,10 @@ class OpenShellConfig:
     provider_credentials: list[str] = field(default_factory=list)
     forward: str | None = None
     start_command: str | None = None
-    create_command: list[str] = field(default_factory=lambda: ["/bin/true"])
+    # OpenShell makes this the sandbox's canonical main process: when it exits the sandbox goes
+    # ``Completed`` and exec/upload stop working. It must therefore outlive the run; the victim itself
+    # is started separately with ``sandbox exec`` once the uploads are in place.
+    create_command: list[str] = field(default_factory=lambda: list(DEFAULT_CREATE_COMMAND))
     uploads: list[str] = field(default_factory=list)
     health_url: str | None = None
     health_timeout: float = 120.0
@@ -116,7 +123,7 @@ class OpenShellCommandResult:
 
 def _create_command_from_value(value: object) -> list[str]:
     if value is None or value == "":
-        return ["/bin/true"]
+        return list(DEFAULT_CREATE_COMMAND)
     if isinstance(value, str):
         command = shlex.split(value)
     elif isinstance(value, list):

@@ -14,16 +14,28 @@ import shutil
 import subprocess
 import sys
 import time
+import tomllib
 from dataclasses import dataclass
+from pathlib import Path
+
+import tomli_w
 
 # GATEWAY_NAME matches OpenShellConfig.gateway's default so `run` finds the same gateway.
 GATEWAY_ENDPOINT = "https://127.0.0.1:17670"
 GATEWAY_NAME = "auto-defender"
 DRIVER = "docker"
 DOCKER_NETWORK = "openshell-docker"
-SYSTEMD_DROPIN_DIR = "/etc/systemd/system/openshell.service.d"
-SYSTEMD_DROPIN = f"{SYSTEMD_DROPIN_DIR}/docker.conf"
-INSTALL_HINT = "curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"
+#: The OpenShell release this code targets.
+OPENSHELL_VERSION = "v0.1.4"
+INSTALL_HINT = (
+    "curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh "
+    f"| OPENSHELL_VERSION={OPENSHELL_VERSION} sh"
+)
+#: First file the gateway service reads (before the Homebrew/package default). Schema v2.
+GATEWAY_CONFIG = Path.home() / ".config" / "openshell" / "gateway.toml"
+BREW_SERVICE = "nvidia/openshell/openshell"
+DOCKER_DESKTOP_GRPC_ENDPOINT = "https://host.docker.internal:17670"
+SYSTEMD_USER_SERVICE = "openshell-gateway"
 READY_TIMEOUT_S = 30
 
 
@@ -46,32 +58,42 @@ def _docker_socket() -> str | None:
     return sock or None
 
 
+def write_gateway_config(socket: str, path: Path = GATEWAY_CONFIG) -> None:
+    """Point the gateway at the Docker driver and this daemon's socket in its schema-v2 ``gateway.toml``.
+
+    Existing keys in the file are preserved; only the driver keys below are set.
+    """
+    config = tomllib.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    openshell = config.setdefault("openshell", {})
+    openshell["version"] = 2
+    openshell.setdefault("gateway", {})["compute_driver"] = DRIVER
+    docker = openshell.setdefault("drivers", {}).setdefault(DRIVER, {})
+    docker["socket_path"] = socket.removeprefix("unix://")
+    if sys.platform == "darwin":
+        # The driver runs each sandbox's control supervisor with host networking. Under Docker Desktop
+        # (without its opt-in host networking) "host" is the Linux VM, so the gateway's 127.0.0.1
+        # listener is unreachable and every sandbox fails with ControlSupervisorStartFailed; the
+        # Desktop-provided host alias does reach it.
+        docker["grpc_endpoint"] = DOCKER_DESKTOP_GRPC_ENDPOINT
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(tomli_w.dumps(config), encoding="utf-8")
+
+
 def _configure_driver_macos(socket: str) -> str | None:
-    _run(["brew", "services", "stop", "openshell"])
-    _run(["launchctl", "setenv", "OPENSHELL_DRIVERS", DRIVER])
-    _run(["launchctl", "setenv", "DOCKER_HOST", socket])
-    _run(["brew", "services", "start", "openshell"])
+    write_gateway_config(socket)
+    _run(["brew", "services", "restart", BREW_SERVICE])
     return None
 
 
 def _configure_driver_linux(socket: str) -> str | None:
-    have_service = (
-        shutil.which("systemctl") is not None
-        and "openshell" in _run(["systemctl", "list-units", "--all", "--type=service"]).stdout
-    )
+    write_gateway_config(socket)
     warning: str | None = None
-    if have_service:
-        _run(["sudo", "systemctl", "stop", "openshell"])
-        _run(["sudo", "mkdir", "-p", SYSTEMD_DROPIN_DIR])
-        dropin = f"[Service]\nEnvironment=OPENSHELL_DRIVERS={DRIVER}\nEnvironment=DOCKER_HOST={socket}\n"
-        _run(["sudo", "tee", SYSTEMD_DROPIN], stdin=dropin)
-        _run(["sudo", "systemctl", "daemon-reload"])
-        _run(["sudo", "systemctl", "start", "openshell"])
+    if shutil.which("systemctl") is not None:
+        restart = _run(["systemctl", "--user", "restart", SYSTEMD_USER_SERVICE])
+        if restart.returncode != 0:
+            warning = f"could not restart the {SYSTEMD_USER_SERVICE} user service — restart it, then re-run."
     else:
-        warning = (
-            f"systemd openshell service not found — set OPENSHELL_DRIVERS={DRIVER} and "
-            f"DOCKER_HOST={socket} for the OpenShell service, then re-run."
-        )
+        warning = f"systemd not found — restart the OpenShell gateway so it picks up {GATEWAY_CONFIG}, then re-run."
     if _run(["docker", "network", "inspect", DOCKER_NETWORK]).returncode != 0:
         _run(["docker", "network", "create", DOCKER_NETWORK])
     return warning

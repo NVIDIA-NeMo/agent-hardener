@@ -31,7 +31,8 @@ network_policies:
     endpoints:
     - host: api.github.com
       port: 443
-      protocol: http
+      protocol: rest
+      enforcement: enforce
       rules:
       - allow: {method: GET, path: /repos/*/*/issues}
 """
@@ -61,6 +62,15 @@ def test_add_deny_rule_chosen_when_path_is_cleanly_separable_but_endpoint_is_tou
     selection = select(_ctx(benign_predictions=predictions))
     assert selection.chosen == "add_deny_rule"
     assert selection.infeasible  # remove_endpoint still recorded its reason
+
+
+def test_add_deny_rule_infeasible_on_audit_endpoint() -> None:
+    benign = RequestTuple(host="api.github.com", port=443, protocol="http", method="GET", path="/repos/foo/bar/issues")
+    ctx = _ctx(benign_predictions=[BenignPrediction(source_request="list issues", tuples=[benign])])
+    ctx.policy.network_policies["github"].endpoints[0].enforcement = "audit"
+    selection = select(ctx)
+    assert selection.chosen is None
+    assert "add_deny_rule" in selection.infeasible
 
 
 def test_remove_endpoint_chosen_when_host_port_entirely_untouched_by_benign() -> None:

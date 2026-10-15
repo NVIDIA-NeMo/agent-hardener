@@ -15,7 +15,7 @@ from urllib import error, request
 from urllib.parse import urlsplit
 
 from agent_hardener.openshell.config import OpenShellCommandResult
-from agent_hardener.openshell.support import _poll_until
+from agent_hardener.openshell.support import _poll_until, is_sandbox_not_found
 
 if TYPE_CHECKING:
     from agent_hardener.openshell.command import OpenShellCommandExecutor
@@ -51,6 +51,24 @@ class PollingMixin:
             ok=False,
             command=command,
             output=f"timed out waiting for sandbox {self.config.sandbox} to become ready\n{last['output']}".strip(),
+        )
+
+    def wait_for_sandbox_deleted(self) -> OpenShellCommandResult:
+        """Wait until the configured sandbox is gone (OpenShell deletes asynchronously)."""
+        command = ["wait-for-sandbox-deleted", self.config.sandbox]
+        last = {"output": ""}
+
+        def _gone() -> bool:
+            status = self.status()
+            last["output"] = status.output
+            return not status.ok and is_sandbox_not_found(status.output)
+
+        if _poll_until(_gone, timeout=self.config.sandbox_timeout, interval=2.0):
+            return OpenShellCommandResult(ok=True, command=command, output=f"sandbox deleted: {self.config.sandbox}")
+        return OpenShellCommandResult(
+            ok=False,
+            command=command,
+            output=f"timed out waiting for sandbox {self.config.sandbox} to be deleted\n{last['output']}".strip(),
         )
 
     def wait_for_health(self) -> OpenShellCommandResult:

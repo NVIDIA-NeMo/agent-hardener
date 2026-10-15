@@ -30,7 +30,7 @@ def find_entry_for(
         ):
             continue
         for endpoint in entry.endpoints:
-            if endpoint.host == host and (port is None or endpoint.port is None or endpoint.port == port):
+            if endpoint.host == host and endpoint.matches_port(port):
                 return key, entry
     return None
 
@@ -38,7 +38,7 @@ def find_entry_for(
 def find_endpoint(entry: NetworkPolicyEntry, host: str, port: int | None, path: str | None = None) -> Endpoint | None:
     """Find the specific endpoint within ``entry`` matching ``host``/``port``."""
     for endpoint in entry.endpoints:
-        if endpoint.host == host and (port is None or endpoint.port is None or endpoint.port == port):
+        if endpoint.host == host and endpoint.matches_port(port):
             return endpoint
     return None
 

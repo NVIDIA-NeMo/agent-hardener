@@ -168,26 +168,42 @@ For the real OpenShell/Garak demo:
 Install OpenShell and verify the local gateway:
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh
 openshell status
 ```
+
+> **Upgrading from OpenShell 0.0.x**
+>
+> Agent Hardener targets OpenShell 0.1.4. OpenShell 0.1.0 is a breaking release, and the installer refuses to upgrade a 0.0.x install in place. On macOS:
+>
+> 1. Delete every 0.0.x sandbox: `openshell sandbox delete --all --gateway <name>` for each registered gateway. 0.0.x sandboxes cannot run under 0.1.
+> 2. Uninstall: `brew services stop nvidia/openshell/openshell && brew uninstall nvidia/openshell/openshell`. Also remove any stray `openshell` / `openshell-gateway` binaries left in `/opt/homebrew/bin` or `~/.local/bin`; the installer stops if it finds a 0.0.x binary on the path.
+> 3. Remove the old state: `$(brew --prefix)/var/openshell` and `~/.local/state/openshell`. A 0.0.x gateway database there crashes the 0.1 gateway at startup.
+> 4. Install with the command above, then run `uv run agent-hardener setup` to configure the Docker driver and register the `auto-defender` gateway.
+>
+> On Linux, use `systemctl --user disable --now openshell-gateway` and your package manager in place of the Homebrew commands, and remove `~/.local/state/openshell`.
 
 Do not use `uv tool install -U openshell` for the real E2E path. That installs the CLI only; it does not install or start the local OpenShell gateway service. The native installer installs the CLI plus the gateway service. On macOS and current Linux packages, the local service listens on `https://127.0.0.1:17670` and the installer registers it as the `openshell` gateway.
 
 If you previously installed the CLI with `uv tool install`, it may shadow the native package binary on `PATH`. Remove it with `uv tool uninstall openshell`, or verify that `openshell --version` and the native package version match before running the E2E.
 
-On macOS, if the installer starts the gateway but `openshell status` reports connection refused and the gateway log says `no compute driver configured`, use the Docker driver and expose the Docker socket, then restart the service:
+On macOS, configure the gateway to use the Docker driver. `uv run agent-hardener setup` does this for you. To do it by hand, write `~/.config/openshell/gateway.toml` with Docker's socket path (from `docker context inspect --format '{{.Endpoints.docker.Host}}'`, without the `unix://` prefix), then run `brew services restart nvidia/openshell/openshell`:
 
-```bash
-DOCKER_SOCK=$(docker context inspect --format '{{.Endpoints.docker.Host}}')
-brew services stop openshell
-launchctl setenv OPENSHELL_DRIVERS docker
-launchctl setenv DOCKER_HOST "$DOCKER_SOCK"
-brew services restart openshell
-openshell status
+```toml
+[openshell]
+version = 2
+
+[openshell.gateway]
+compute_driver = "docker"
+
+[openshell.drivers.docker]
+socket_path = "/Users/<you>/.docker/run/docker.sock"
+grpc_endpoint = "https://host.docker.internal:17670"
 ```
 
-The Docker driver runs sandboxes as containers inside Docker Desktop's VM. Avoid `OPENSHELL_DRIVERS=vm` on macOS — the VM driver uses Homebrew's `e2fsprogs` to create an ext4 rootfs, and the version installed by Homebrew creates a filesystem with features the OpenShell base VM kernel cannot mount read-only.
+`grpc_endpoint` is required under Docker Desktop. The driver runs each sandbox's supervisor with host networking, and there that "host" is Docker Desktop's VM, so the gateway's `127.0.0.1` listener is unreachable. Without it, every sandbox fails with `ControlSupervisorStartFailed`. The `OPENSHELL_DRIVERS` / `DOCKER_HOST` launchctl variables used with 0.0.x are deprecated.
+
+The Docker driver runs sandboxes as containers inside Docker Desktop's VM. Avoid the VM driver on macOS — the VM driver uses Homebrew's `e2fsprogs` to create an ext4 rootfs, and the version installed by Homebrew creates a filesystem with features the OpenShell base VM kernel cannot mount read-only.
 
 The final status should report `Status: Connected`. If you plan to use the example config unchanged, also register the same endpoint as `auto-defender`:
 

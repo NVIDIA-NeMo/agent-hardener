@@ -18,6 +18,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 import yaml  # type: ignore[import-untyped]
 
+from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
 from agent_hardener.openshell.egress import (
     CodeEgressSource,
@@ -29,9 +30,11 @@ from agent_hardener.openshell.egress import (
 from agent_hardener.openshell.lifecycle import OpenShellConfig, OpenShellLifecycle, read_env_file, wait_for_http_health
 from agent_hardener.openshell.policy_egress import (
     apply_victim_binaries,
+    bind_provider_credentials,
     inject_backend_egress,
     inject_discovered_egress,
     normalize_host_gateway_allowed_ips,
+    reconcile_shared_endpoint_settings,
 )
 from agent_hardener.openshell.relay_victim import dockerfile_env, stage_relay_victim_build
 from agent_hardener.preflight.relay import RELAY_PROBE_PROMPT, RELAY_PROBE_TIMEOUT_SECONDS, check_relay_instrumentation
@@ -179,6 +182,12 @@ def prepare_relay_victim(config: OpenShellConfig) -> OpenShellConfig:
     # host.docker.internal endpoints (declared backends reach the host via it) carry a
     # Docker-Desktop-specific allowed_ips default; rewrite it to this daemon's actual bridge IP.
     normalize_host_gateway_allowed_ips(policy)
+    reconcile_shared_endpoint_settings(policy)
+    if config.provider:
+        bind_provider_credentials(policy, config.provider)
+    # Fail here, naming the field, rather than at `sandbox create`: OpenShell rejects unknown
+    # fields and inconsistent endpoints outright, and this is the policy every defender starts from.
+    parse_policy(policy)
     dest.write_text(yaml.safe_dump(policy, sort_keys=False, default_flow_style=False), encoding="utf-8")
     policy_path = dest
 

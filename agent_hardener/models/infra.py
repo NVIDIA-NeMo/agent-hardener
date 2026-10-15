@@ -29,8 +29,9 @@ class BackendEndpoint(AgentHardenerModel):
 
     host: str = "host.docker.internal"
     port: int = Field(gt=0, le=65535)
-    # OpenShell's L7 policy validator only accepts these protocols.
-    protocol: Literal["rest", "websocket", "graphql", "sql"] = "rest"
+    # OpenShell's policy validator only accepts these protocols. ``tcp`` is L4-only (databases,
+    # brokers): no ``access``/``enforcement`` is emitted for it.
+    protocol: Literal["rest", "websocket", "graphql", "mcp", "json-rpc", "tcp"] = "rest"
     enforcement: str = "enforce"
     access: str = "full"
     allowed_ips: list[str] = Field(default_factory=list)

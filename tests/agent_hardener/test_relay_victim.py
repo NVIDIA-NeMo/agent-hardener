@@ -17,7 +17,13 @@ from agent_hardener.errors import VictimBuildError
 from agent_hardener.models import BackendEndpoint, BackendServiceSpec, RelayVictimSpec
 from agent_hardener.openshell.egress import DockerfileEnvEgressSource
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult, OpenShellConfig
-from agent_hardener.openshell.policy_egress import build_backend_egress_block, inject_backend_egress
+from agent_hardener.openshell.policy_egress import (
+    apply_victim_binaries,
+    bind_provider_credentials,
+    build_backend_egress_block,
+    inject_backend_egress,
+    reconcile_shared_endpoint_settings,
+)
 from agent_hardener.openshell.relay_victim import GUARDRAIL_PACKAGE, dockerfile_env, stage_relay_victim_build
 from agent_hardener.providers import backends
 from agent_hardener.providers.backends import BackendManager
@@ -633,3 +639,46 @@ def test_the_launcher_does_not_duplicate_what_the_image_already_leads_with(tmp_p
 
     assert "PATH=/workspace/.venv/bin:/usr/bin" in rendered
     assert "/app/openshell-shims:/app/openshell-shims" not in rendered
+
+
+def test_tcp_backend_endpoint_carries_no_request_level_fields() -> None:
+    block = build_backend_egress_block([BackendEndpoint(port=5432, protocol="tcp")], ["/usr/local/bin/python*"])
+    assert block["endpoints"] == [{"host": "host.docker.internal", "port": 5432, "protocol": "tcp"}]
+
+
+def test_reconcile_unions_allowed_ips_across_blocks_on_one_host_port() -> None:
+    policy = {
+        "network_policies": {
+            "a": {"endpoints": [{"host": "*.nvidia.com", "port": 443}]},
+            "b": {"endpoints": [{"host": "*.nvidia.com", "port": 443, "allowed_ips": ["10.0.0.1"]}]},
+            "c": {"endpoints": [{"host": "*.nvidia.com", "port": 80}]},
+        }
+    }
+    reconcile_shared_endpoint_settings(policy)
+    blocks = policy["network_policies"]
+    assert blocks["a"]["endpoints"][0]["allowed_ips"] == ["10.0.0.1"]
+    assert "allowed_ips" not in blocks["c"]["endpoints"][0]
+
+
+def test_apply_victim_binaries_deduplicates_into_fresh_entries() -> None:
+    policy = {"network_policies": {"a": {"binaries": [{"path": "/usr/local/bin/python*"}]}}}
+    apply_victim_binaries(policy, ["/usr/local/bin/python*"])
+    assert policy["network_policies"]["a"]["binaries"] == [
+        {"path": "/usr/local/bin/python*"},
+        {"path": "/usr/bin/python*"},
+    ]
+    assert "&id" not in yaml.safe_dump(policy)
+
+
+def test_bind_provider_credentials_binds_only_inspected_endpoints() -> None:
+    endpoints = [
+        {"host": "a.example.com", "port": 443, "protocol": "rest"},
+        {"host": "b.example.com", "port": 443, "protocol": "rest", "tls": "skip"},
+        {"host": "db.example.com", "port": 5432, "protocol": "tcp"},
+        {"host": "host.docker.internal", "port": 4318},
+    ]
+    policy = {"network_policies": {"a": {"endpoints": endpoints}}}
+
+    bind_provider_credentials(policy, "secrets")
+
+    assert [e.get("credential_binding") for e in endpoints] == [{"provider": "secrets"}, None, None, None]

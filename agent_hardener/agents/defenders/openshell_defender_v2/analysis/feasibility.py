@@ -110,6 +110,9 @@ def check_add_deny_rule(ctx: DefenderContext) -> Witness | None:
     entry_key, endpoint_index, endpoint = located
     if endpoint_is_protected(ctx.protected_endpoints, ctx.cut.host, ctx.cut.port):
         return None
+    # OpenShell's default enforcement is ``audit``: a deny rule on such an endpoint only logs.
+    if not endpoint.enforces():
+        return None
     if endpoint.protocol in ("graphql", "mcp", "json-rpc"):
         return _check_add_deny_rule_semantic(ctx, entry_key, endpoint_index, endpoint)
     return _check_add_deny_rule_rest(ctx, entry_key, endpoint_index, endpoint)
@@ -126,6 +129,7 @@ def infeasibility_reason(node_name: str, ctx: DefenderContext) -> str:
     reasons = {
         "remove_endpoint": "attacked host:port not in policy, also touched by predicted benign traffic, or binary filter excluded all entries",
         "add_deny_rule": (
+            "endpoint isn't 'enforcement: enforce' (deny rules on an audit endpoint only log), or "
             "endpoint isn't graphql/mcp/json-rpc with a separable field, and no path prefix "
             "separates the attack path from all predicted benign paths"
         ),

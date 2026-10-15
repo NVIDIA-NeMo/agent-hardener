@@ -78,7 +78,7 @@ def read_env_file(path: Path | None) -> dict[str, str]:
 def is_sandbox_not_found(output: str) -> bool:
     """Return whether an OpenShell delete/get failure only means the sandbox is absent."""
     normalized = output.lower()
-    return "notfound" in normalized and "sandbox not found" in normalized
+    return "sandbox not found" in normalized and ("notfound" in normalized or "entity was not found" in normalized)
 
 
 def is_supervisor_relay_unavailable(output: str) -> bool:

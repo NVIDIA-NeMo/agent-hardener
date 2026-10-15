@@ -34,13 +34,13 @@ _BASE_POLICY = Policy.model_validate(
             "beeceptor": {
                 "name": "beeceptor",
                 "endpoints": [
-                    {"host": "abc123.free.beeceptor.com", "port": 443, "protocol": "http", "access": "full"},
+                    {"host": "abc123.free.beeceptor.com", "port": 443, "protocol": "rest", "access": "full"},
                 ],
             },
             "integration_backend": {
                 "name": "integration_backend",
                 "endpoints": [
-                    {"host": "host.docker.internal", "port": 8089, "protocol": "http", "access": "full"},
+                    {"host": "host.docker.internal", "port": 8089, "protocol": "rest", "access": "full"},
                 ],
             },
         },
