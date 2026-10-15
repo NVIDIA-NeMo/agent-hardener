@@ -13,9 +13,14 @@ from collections import defaultdict
 
 from ..errors import LintViolationError
 from .globs import glob_is_subset
-from .schema import Policy, effective_methods, effective_paths
+from .schema import Endpoint, Policy, effective_methods, effective_paths
 
 _EndpointKey = tuple[str, int | None]
+
+
+def _keys(ep: Endpoint) -> list[_EndpointKey]:
+    """One ``(host, port)`` key per port the endpoint covers, so a ``ports:`` list can't hide a widening."""
+    return [(ep.host, port) for port in ep.port_list()]
 
 
 def _hosts(policy: Policy) -> set[str]:
@@ -30,12 +35,10 @@ def _method_glob_pairs(policy: Policy) -> dict[_EndpointKey, set[tuple[str, str]
     pairs: dict[_EndpointKey, set[tuple[str, str]]] = defaultdict(set)
     for entry in policy.network_policies.values():
         for ep in entry.endpoints:
-            key = (ep.host, ep.port)
             methods = effective_methods(ep)
             paths = effective_paths(ep) or ["**"]
-            for method in methods:
-                for path in paths:
-                    pairs[key].add((method, path))
+            for key in _keys(ep):
+                pairs[key] |= {(method, path) for method in methods for path in paths}
     return dict(pairs)
 
 
@@ -43,7 +46,8 @@ def _endpoint_methods(policy: Policy) -> dict[_EndpointKey, set[str]]:
     out: dict[_EndpointKey, set[str]] = defaultdict(set)
     for entry in policy.network_policies.values():
         for ep in entry.endpoints:
-            out[(ep.host, ep.port)] |= effective_methods(ep)
+            for key in _keys(ep):
+                out[key] |= effective_methods(ep)
     return dict(out)
 
 
@@ -51,7 +55,8 @@ def _endpoint_paths(policy: Policy) -> dict[_EndpointKey, set[str]]:
     out: dict[_EndpointKey, set[str]] = defaultdict(set)
     for entry in policy.network_policies.values():
         for ep in entry.endpoints:
-            out[(ep.host, ep.port)] |= set(effective_paths(ep))
+            for key in _keys(ep):
+                out[key] |= set(effective_paths(ep))
     return dict(out)
 
 

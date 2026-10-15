@@ -25,12 +25,12 @@ from .lint import assert_contraction
 if TYPE_CHECKING:
     from .schema import DenyRule, Endpoint, Policy
 
-EndpointKey = tuple[str, str, int | None]  # (entry_key, host, port)
+EndpointKey = tuple[str, str, int | tuple[int, ...] | None]  # (entry_key, host, port or ports)
 
 
 def _endpoint_map(policy: Policy) -> dict[EndpointKey, Endpoint]:
     return {
-        (entry_key, ep.host, ep.port): ep
+        (entry_key, ep.host, ep.port_key()): ep
         for entry_key, entry in policy.network_policies.items()
         for ep in entry.endpoints
     }
@@ -150,7 +150,7 @@ def merge_candidates(original: Policy, candidates: list[Policy], config: Defende
         entry = merged.network_policies.get(entry_key)
         if entry is None:
             continue
-        entry.endpoints = [ep for ep in entry.endpoints if (ep.host, ep.port) != (host, port)]
+        entry.endpoints = [ep for ep in entry.endpoints if (ep.host, ep.port_key()) != (host, port)]
         if not entry.endpoints:
             del merged.network_policies[entry_key]
 

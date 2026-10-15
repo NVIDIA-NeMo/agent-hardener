@@ -40,6 +40,31 @@ def host_pattern(host: str) -> str:
     return host
 
 
+#: Ports OpenShell refuses on every endpoint (etcd, kube-apiserver, kubelet).
+BLOCKED_PORTS = frozenset({2379, 2380, 6443, 10250, 10255})
+
+
+def is_policy_host(host: str) -> bool:
+    """True if ``host`` is a hostname OpenShell will take as an endpoint ``host``.
+
+    Rejects empty hosts/labels and all-numeric names (``0.0.1``, octal ``0376.0251.0376``) — IP
+    spellings that scanning attack payloads or test fixtures turns up, not real dependencies.
+    """
+    labels = host.split(".")
+    if not host or any(not label for label in labels):
+        return False
+    return not all(label.isdigit() for label in labels)
+
+
+def _never_authorized(ip: str) -> bool:
+    """Loopback, link-local (incl. 169.254.169.254) and unspecified: never authorized by OpenShell."""
+    try:
+        address = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return address.is_loopback or address.is_link_local or address.is_unspecified
+
+
 def resolve_private_ips(host: str) -> list[str]:
     """Resolve ``host`` and return any private/internal IPs it maps to (empty on failure).
 
@@ -86,8 +111,16 @@ class EgressDiscoverer:
         """
         allowed: dict[tuple[str, int], set[str]] = {}
         for endpoint in self.endpoints():
+            if not is_policy_host(endpoint.host) or endpoint.port in BLOCKED_PORTS:
+                continue
+            resolved = self._resolver(endpoint.host)
+            ips = {ip for ip in resolved if not _never_authorized(ip)}
+            if resolved and not ips:
+                # Resolves only to loopback/link-local/metadata addresses: an SSRF target picked up from
+                # a payload or fixture, not a dependency — and OpenShell refuses to authorize it anyway.
+                continue
             key = (host_pattern(endpoint.host), endpoint.port)
-            allowed.setdefault(key, set()).update(self._resolver(endpoint.host))
+            allowed.setdefault(key, set()).update(ips)
         return [
             PolicyEndpoint(host=pattern, port=port, allowed_ips=tuple(sorted(ips)))
             for (pattern, port), ips in sorted(allowed.items())

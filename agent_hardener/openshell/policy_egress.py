@@ -51,13 +51,10 @@ def normalize_host_gateway_allowed_ips(policy: dict) -> dict:
 def _endpoint_dict(
     host: str, port: int, *, protocol: str, enforcement: str, access: str, allowed_ips: list[str] | None
 ) -> dict[str, object]:
-    entry: dict[str, object] = {
-        "host": host,
-        "port": port,
-        "protocol": protocol,
-        "enforcement": enforcement,
-        "access": access,
-    }
+    entry: dict[str, object] = {"host": host, "port": port, "protocol": protocol}
+    # OpenShell rejects request-level fields on an L4 (``tcp``) endpoint.
+    if protocol != "tcp":
+        entry |= {"enforcement": enforcement, "access": access}
     if allowed_ips:
         entry["allowed_ips"] = list(allowed_ips)
     return entry
@@ -126,14 +123,65 @@ def apply_victim_binaries(policy: dict[str, Any], binaries: list[str]) -> None:
     admitted into the policy and then refused at the proxy, which is the failure discovery exists to
     prevent.
     """
-    entries = [{"path": path} for path in binaries]
     for block in (policy.get("network_policies") or {}).values():
         if isinstance(block, dict):
             existing = [entry for entry in block.get("binaries") or [] if isinstance(entry, dict)]
-            keep = [entry for entry in existing if str(entry.get("path", "")).startswith("/usr/")]
-            kept = {str(entry.get("path", "")) for entry in keep}
-            keep += [{"path": path} for path in SYSTEM_INTERPRETER_BINARIES if path not in kept]
-            block["binaries"] = entries + keep
+            kept = [str(entry.get("path", "")) for entry in existing if str(entry.get("path", "")).startswith("/usr/")]
+            # Fresh dicts, deduplicated: a victim glob that equals a system interpreter glob would
+            # otherwise be listed twice, and a shared dict object dumps as a YAML anchor/alias.
+            paths = dict.fromkeys([*binaries, *kept, *SYSTEM_INTERPRETER_BINARIES])
+            block["binaries"] = [{"path": path} for path in paths]
+
+
+#: Endpoint protocols OpenShell inspects at L7 — the only ones a ``credential_binding`` can apply to.
+_REQUEST_PROTOCOLS = frozenset({"rest", "websocket", "graphql", "mcp", "json-rpc"})
+
+
+def bind_provider_credentials(policy: dict[str, Any], provider: str) -> dict[str, Any]:
+    """Let the victim's secrets resolve on every inspected endpoint the policy already allows.
+
+    OpenShell hands the sandbox placeholders, not secret values, and only substitutes the real value
+    on endpoints whose ``credential_binding`` names the provider. Binding every inspected endpoint lets
+    the secrets reach any egress the policy allows, leaving the policy — which the defenders narrow — the single place that grants it. ``tls: skip`` and
+    L4 (``tcp``) endpoints are left unbound: their traffic is never inspected, so nothing is rewritten.
+    Mutates and returns ``policy``.
+    """
+    for block in (policy.get("network_policies") or {}).values():
+        if not isinstance(block, dict):
+            continue
+        for endpoint in block.get("endpoints", []) or []:
+            if (
+                isinstance(endpoint, dict)
+                and endpoint.get("protocol") in _REQUEST_PROTOCOLS
+                and endpoint.get("tls") != "skip"
+            ):
+                endpoint["credential_binding"] = {"provider": provider}
+    return policy
+
+
+def reconcile_shared_endpoint_settings(policy: dict[str, Any]) -> dict[str, Any]:
+    """Give every endpoint on the same exact ``host:port`` the union of their ``allowed_ips``.
+
+    OpenShell rejects a policy whose endpoints on one host:port disagree on ``allowed_ips``. The
+    template, backend, and discovered-egress blocks are written independently, so the same host
+    (``*.nvidia.com:443`` from both the template and discovery) routinely lands with different lists.
+    The union only matters for private addresses the host resolves to, which every list already
+    vouched for. Mutates and returns ``policy``.
+    """
+    endpoints_by_key: dict[tuple[str, object], list[dict]] = {}
+    for block in (policy.get("network_policies") or {}).values():
+        if not isinstance(block, dict):
+            continue
+        for endpoint in block.get("endpoints", []) or []:
+            if isinstance(endpoint, dict) and endpoint.get("host"):
+                for port in endpoint.get("ports") or [endpoint.get("port")]:
+                    endpoints_by_key.setdefault((str(endpoint["host"]).lower(), port), []).append(endpoint)
+    for endpoints in endpoints_by_key.values():
+        union = list(dict.fromkeys(ip for endpoint in endpoints for ip in endpoint.get("allowed_ips") or []))
+        if union:
+            for endpoint in endpoints:
+                endpoint["allowed_ips"] = list(union)
+    return policy
 
 
 def inject_backend_egress(

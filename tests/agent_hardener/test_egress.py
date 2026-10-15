@@ -155,6 +155,27 @@ def test_discoverer_adds_ssrf_allowed_ips_for_private_hosts(tmp_path: Path) -> N
     assert by_host["*.api.nvidia.com"].allowed_ips == ("192.0.2.10",)  # SSRF exemption auto-added
 
 
+def test_discoverer_drops_endpoints_openshell_0_1_rejects() -> None:
+    resolver = {"127.0.0.1.nip.io": ["127.0.0.1"], "mixed.example.com": ["169.254.169.254", "10.0.0.5"]}
+    discoverer = EgressDiscoverer(
+        [
+            ManualEgressSource(
+                [
+                    "http://127.0.0.1.nip.io",  # resolves only to loopback: an SSRF target, dropped
+                    "http://0376.0251.0376",  # all-numeric (octal IP spelling), dropped
+                    "https://k8s.example.com:6443",  # blocked port, dropped
+                    "https://mixed.example.com",  # keeps only the private, authorizable IP
+                ]
+            )
+        ],
+        resolver=lambda host: resolver.get(host, []),
+    )
+
+    eps = {(e.host, e.port): e.allowed_ips for e in discoverer.policy_endpoints()}
+
+    assert eps == {("*.example.com", 443): ("10.0.0.5",)}
+
+
 def test_resolve_private_ips_filters(monkeypatch: pytest.MonkeyPatch) -> None:
     # getaddrinfo returns one private + one public IP; only the private one is kept.
     def fake_getaddrinfo(host, _port):

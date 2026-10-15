@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import yaml
 
 from agent_hardener.agents.victims.openshell_victim import build_payload
 from agent_hardener.config import parse_config_data
@@ -29,12 +30,22 @@ from agent_hardener.tools.openshell import main as openshell_tool_main
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
+_NOT_FOUND = "code: 'Some requested entity was not found', message: \"sandbox not found\""
+
+
 class FakeRunner:
     def __init__(self) -> None:
         self.commands: list[list[str]] = []
+        self.deleting = False
 
     def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
         self.commands.append(args)
+        if args[1:3] == ["sandbox", "delete"]:
+            self.deleting = True
+        elif self.deleting and args[1:3] == ["sandbox", "get"]:
+            # The first status poll after an (async) delete sees the sandbox gone.
+            self.deleting = False
+            return subprocess.CompletedProcess(args=args, returncode=1, stdout=_NOT_FOUND)
         return subprocess.CompletedProcess(args=args, returncode=0, stdout="ok")
 
 
@@ -98,7 +109,7 @@ def test_openshell_config_from_mapping_defaults_create_command(tmp_path: Path) -
         }
     )
 
-    assert config.create_command == ["/bin/true"]
+    assert config.create_command == ["sleep", "infinity"]
 
 
 def test_lifecycle_builds_policy_apply_and_restart_commands(tmp_path: Path) -> None:
@@ -125,8 +136,9 @@ def test_lifecycle_builds_policy_apply_and_restart_commands(tmp_path: Path) -> N
         "--timeout",
         "60",
     ]
-    assert runner.commands[1] == ["openshell", "sandbox", "get", "sb", "--gateway", "gw", "--policy-only"]
+    assert runner.commands[1] == ["openshell", "policy", "get", "sb", "--gateway", "gw", "--base"]
     assert runner.commands[2][:4] == ["openshell", "sandbox", "delete", "sb"]
+    assert runner.commands[3] == ["openshell", "sandbox", "get", "sb", "--gateway", "gw"]  # delete wait
 
 
 def test_lifecycle_uploads_file_and_restarts_victim_in_place(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -173,6 +185,7 @@ def test_lifecycle_restart_tolerates_missing_sandbox_delete(tmp_path: Path) -> N
             (1, 'status: NotFound, message: "sandbox not found"'),
             (0, "gateway ok"),
             (1, 'status: NotFound, message: "sandbox not found"'),
+            (0, "image built"),
             (0, "sandbox created"),
             (0, "Phase: Ready"),
         ]
@@ -209,15 +222,9 @@ def test_lifecycle_reports_missing_openshell_binary(tmp_path: Path) -> None:
 
 
 @pytest.mark.unit
-def test_ensure_gateway_started_treats_removed_start_subcommand_as_success(tmp_path: Path) -> None:
-    """Treat a removed `gateway start` subcommand as success so lifecycle up continues.
-
-    OpenShell >=0.0.45 removed `gateway start`; the gateway is managed by the system
-    service. `gateway info` fails, then `gateway start` reports an unrecognized
-    subcommand, so ``_ensure_gateway_started`` must record a success and continue with
-    the sandbox commands instead of letting ``up()`` bail.
-    """
-    runner = SequenceRunner([(1, "gateway not connected"), (1, "error: unrecognized subcommand 'start'")])
+def test_ensure_gateway_started_only_checks_the_service_gateway(tmp_path: Path) -> None:
+    """The gateway is a system service: a down gateway is reported, never "started"."""
+    runner = SequenceRunner([(1, "gateway not connected")])
     lifecycle = OpenShellLifecycle(
         OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin="openshell"),
         runner=runner,
@@ -225,30 +232,8 @@ def test_ensure_gateway_started_treats_removed_start_subcommand_as_success(tmp_p
 
     results = lifecycle._ensure_gateway_started()
 
-    assert [cmd[:3] for cmd in runner.commands] == [["openshell", "gateway", "info"], ["openshell", "gateway", "start"]]
-    assert len(results) == 2
-    assert results[-1].ok is True
-    assert "continuing with sandbox commands" in results[-1].output
-
-
-@pytest.mark.unit
-def test_ensure_gateway_started_keeps_real_start_failure(tmp_path: Path) -> None:
-    """Preserve a genuine `gateway start` failure so lifecycle up still surfaces it.
-
-    Unlike the removed-subcommand case, a real `gateway start` failure must remain the
-    last recorded result so ``up()`` reports the error rather than continuing.
-    """
-    runner = SequenceRunner([(1, "gateway not connected"), (1, "error: gateway connect failed")])
-    lifecycle = OpenShellLifecycle(
-        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin="openshell"),
-        runner=runner,
-    )
-
-    results = lifecycle._ensure_gateway_started()
-
-    assert len(results) == 2
+    assert runner.commands == [["openshell", "gateway", "info", "--gateway", "gw"]]
     assert results[-1].ok is False
-    assert "gateway connect failed" in results[-1].output
 
 
 def test_read_env_file_parses_dotenv_values(tmp_path: Path) -> None:
@@ -282,7 +267,9 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
             (0, "gateway ok"),
             (1, "sandbox missing"),
             (1, "provider missing"),
+            (0, "profile imported"),
             (0, "provider created"),
+            (0, "image built"),
             (0, "sandbox created"),
             (0, "Phase: Ready"),
         ]
@@ -305,7 +292,18 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
 
     assert runner.commands[1][1:4] == ["sandbox", "get", "sb"]
     assert runner.commands[2] == ["openshell", "provider", "get", "agents-lab-secrets", "--gateway", "gw"]
-    assert runner.commands[3] == [
+    # The "generic" provider type is backed by a profile generated for exactly these secrets.
+    assert runner.commands[3][1:5] == ["provider", "profile", "import", "--file"]
+    profile = yaml.safe_load(Path(runner.commands[3][5]).read_text(encoding="utf-8"))
+    assert profile["id"] == "agents-lab-secrets"
+    assert [c["env_vars"] for c in profile["credentials"]] == [
+        ["NIM_API_KEY"],
+        ["INFERENCE_API_KEY"],
+        ["VLLM_API_KEY"],
+        ["GITHUB_TOKEN"],
+    ]
+    assert "endpoints" not in profile  # the sandbox policy, not the profile, grants egress
+    assert runner.commands[4] == [
         "openshell",
         "provider",
         "create",
@@ -314,7 +312,7 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
         "--gateway",
         "gw",
         "--type",
-        "generic",
+        "agents-lab-secrets",
         "--credential",
         "NIM_API_KEY=nim-key",
         "--credential",
@@ -324,7 +322,20 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
         "--credential",
         "GITHUB_TOKEN=github-key",
     ]
-    assert "--provider" in runner.commands[4]
+    assert runner.commands[5][:2] == ["docker", "build"]
+    assert "--provider" in runner.commands[6]
+
+
+def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Path) -> None:
+    runner = SequenceRunner([(1, "provider profile import failed"), (0, "updated")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        runner=runner,
+        log_dir=tmp_path,
+    )
+
+    assert lifecycle._ensure_generic_profile(["INFERENCE_API_KEY"]).ok is True
+    assert runner.commands[1][1:5] == ["provider", "profile", "update", "p"]
 
 
 def test_lifecycle_skips_provider_check_when_sandbox_already_exists(tmp_path: Path) -> None:
@@ -349,16 +360,20 @@ def test_lifecycle_skips_provider_check_when_sandbox_already_exists(tmp_path: Pa
     ]
 
 
-def test_lifecycle_uploads_files_on_sandbox_create(tmp_path: Path) -> None:
+def test_lifecycle_builds_image_then_creates_detached_then_uploads(tmp_path: Path) -> None:
+    """`--from` takes an image ref, and `--upload` can't go with a main command."""
     workflow = tmp_path / "research_agent_workflow.yaml"
     workflow.write_text("workflow: {}\n", encoding="utf-8")
-    upload = f"{workflow}:/tmp/research_agent_workflow.yaml"
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text("FROM scratch\n", encoding="utf-8")
     runner = SequenceRunner(
         [
             (0, "gateway ok"),
             (1, "sandbox missing"),
+            (0, "image built"),
             (0, "sandbox created"),
             (0, "Phase: Ready"),
+            (0, "uploaded"),
         ]
     )
     lifecycle = OpenShellLifecycle(
@@ -367,21 +382,67 @@ def test_lifecycle_uploads_files_on_sandbox_create(tmp_path: Path) -> None:
             sandbox="sb",
             policy_path=tmp_path / "policy.yaml",
             openshell_bin="openshell",
-            build_context=tmp_path,
-            uploads=[upload],
+            build_context=dockerfile,
+            uploads=[f"{workflow}:/tmp/research_agent_workflow.yaml"],
         ),
         runner=runner,
     )
 
     assert lifecycle.up().ok is True
 
-    create_command = runner.commands[2]
+    assert runner.commands[2] == [
+        "docker",
+        "build",
+        "-t",
+        "agent-hardener/sb:latest",
+        "-f",
+        str(dockerfile),
+        str(tmp_path),
+    ]
+    create_command = runner.commands[3]
     assert create_command[1:3] == ["sandbox", "create"]
-    assert create_command[create_command.index("--upload") + 1] == upload
-    assert create_command.index("--upload") < create_command.index("--policy")
-    assert "--no-git-ignore" in create_command
-    assert create_command.index("--no-git-ignore") < create_command.index("--policy")
-    assert create_command[create_command.index("--") + 1 :] == ["/bin/true"]
+    assert create_command[create_command.index("--from") + 1] == "agent-hardener/sb:latest"
+    assert "--upload" not in create_command
+    assert "--detach" in create_command
+    assert create_command[create_command.index("--") + 1 :] == ["sleep", "infinity"]
+    assert runner.commands[5] == [
+        "openshell",
+        "sandbox",
+        "upload",
+        "--gateway",
+        "gw",
+        "--no-git-ignore",
+        "sb",
+        str(workflow),
+        "/tmp/research_agent_workflow.yaml",
+    ]
+
+
+def test_lifecycle_passes_an_image_reference_build_context_through(tmp_path: Path) -> None:
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(
+            gateway="gw",
+            sandbox="sb",
+            policy_path=tmp_path / "policy.yaml",
+            build_context=Path("registry.example.com/team/agent:1"),
+        ),
+        runner=FakeRunner(),
+    )
+
+    assert lifecycle._build_image().output == "registry.example.com/team/agent:1"
+
+
+def test_lifecycle_build_failure_stops_before_sandbox_create(tmp_path: Path) -> None:
+    runner = SequenceRunner([(0, "gateway ok"), (1, "sandbox missing"), (1, "build failed")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", build_context=tmp_path),
+        runner=runner,
+    )
+
+    result = lifecycle.up()
+
+    assert result.ok is False
+    assert not any(cmd[1:3] == ["sandbox", "create"] for cmd in runner.commands)
 
 
 @pytest.mark.parametrize("hardened", [True, False])
@@ -393,6 +454,7 @@ def test_sandbox_create_uploads_active_state_copy_over_seed(tmp_path: Path, hard
     active_state.mkdir()
     if hardened:
         (active_state / "plugins.toml").write_text("# hardened\n", encoding="utf-8")
+    runner = FakeRunner()
     lifecycle = OpenShellLifecycle(
         OpenShellConfig(
             gateway="gw",
@@ -402,14 +464,25 @@ def test_sandbox_create_uploads_active_state_copy_over_seed(tmp_path: Path, hard
             build_context=tmp_path,
             uploads=[f"{seed}:/etc/nemo-relay/plugins.toml"],
         ),
-        runner=FakeRunner(),
+        runner=runner,
         active_state_dir=active_state,
     )
 
-    args = lifecycle._sandbox_create_args(tmp_path / "policy.yaml")
+    lifecycle._upload_seed_files()
 
     source = active_state / "plugins.toml" if hardened else seed
-    assert args[args.index("--upload") + 1] == f"{source}:/etc/nemo-relay/plugins.toml"
+    assert runner.commands[-1][-2:] == [str(source), "/etc/nemo-relay/plugins.toml"]
+
+
+def test_down_waits_until_the_async_delete_completes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("agent_hardener.openshell.support.time.sleep", lambda _seconds: None)
+    runner = SequenceRunner([(0, "deletion accepted"), (0, "Phase: Deleting"), (1, _NOT_FOUND)])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml"), runner=runner
+    )
+
+    assert lifecycle.down().ok is True
+    assert len(runner.commands) == 3
 
 
 def test_logged_create_tolerates_transient_transport_reset_when_sandbox_exists(
@@ -463,6 +536,7 @@ def test_lifecycle_starts_victim_via_detached_sandbox_exec(tmp_path: Path) -> No
         [
             (0, "gateway ok"),
             (1, "sandbox missing"),
+            (0, "image built"),
             (0, "sandbox created"),
             (0, "Phase: Ready"),
             (0, "started"),
@@ -487,8 +561,8 @@ def test_lifecycle_starts_victim_via_detached_sandbox_exec(tmp_path: Path) -> No
 
     assert lifecycle.up().ok is True
 
-    assert runner.commands[3] == ["openshell", "sandbox", "get", "sb", "--gateway", "gw"]
-    assert runner.commands[4][:11] == [
+    assert runner.commands[4] == ["openshell", "sandbox", "get", "sb", "--gateway", "gw"]
+    assert runner.commands[5][:11] == [
         "openshell",
         "sandbox",
         "exec",
@@ -501,14 +575,14 @@ def test_lifecycle_starts_victim_via_detached_sandbox_exec(tmp_path: Path) -> No
         "sh",
         "-lc",
     ]
-    launcher = runner.commands[4][11]
+    launcher = runner.commands[5][11]
     assert "startup_log=/tmp/agent.startup.log" in launcher
     assert "pid_file=/tmp/agent.pid" in launcher
     assert 'nohup sh -lc "exec $1"' in launcher
     assert "tail -80" in launcher
-    assert runner.commands[4][12:] == ["sh", "/app/start-agents-lab.sh >/tmp/agents-lab.log 2>&1"]
-    assert runner.commands[5] == ["openshell", "forward", "list", "--gateway", "gw"]
-    assert runner.commands[6] == [
+    assert runner.commands[5][12:] == ["sh", "/app/start-agents-lab.sh >/tmp/agents-lab.log 2>&1"]
+    assert runner.commands[6] == ["openshell", "forward", "list", "--gateway", "gw"]
+    assert runner.commands[7] == [
         "openshell",
         "forward",
         "start",
@@ -518,7 +592,7 @@ def test_lifecycle_starts_victim_via_detached_sandbox_exec(tmp_path: Path) -> No
         "0.0.0.0:8000",
         "sb",
     ]
-    assert runner.commands[7] == ["openshell", "forward", "list", "--gateway", "gw"]
+    assert runner.commands[8] == ["openshell", "forward", "list", "--gateway", "gw"]
 
 
 def test_managed_forward_fails_fast_when_helper_dies_immediately(tmp_path: Path) -> None:

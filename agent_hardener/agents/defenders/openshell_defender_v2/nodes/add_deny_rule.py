@@ -99,7 +99,7 @@ def _synthesize_rest(ctx: DefenderContext, witness: AddDenyRuleWitness, target) 
     method = _choose_method_matcher(ctx, witness)
     rule = DenyRule(method=method, path=witness.glob)
     notes = [f"deny {method} {witness.glob} — provably touches no predicted benign path"]
-    if target.endpoint.options and target.endpoint.options.get("allow_encoded_slash"):
+    if target.endpoint.allow_encoded_slash:
         notes.append("attack path may use encoded slashes; allow_encoded_slash left untouched deliberately")
     return rule, notes, False
 

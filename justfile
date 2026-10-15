@@ -149,8 +149,7 @@ openshell-reset env_file=".env" *args:
     set -a
     . "{{env_file}}"
     set +a
-    openshell gateway destroy --name auto-defender || true
-    openshell gateway start --name auto-defender
+    openshell sandbox delete --all --gateway auto-defender || true
     ./scripts/bootstrap-openshell-victim.sh --env-file "{{env_file}}" {{args}}
 
 

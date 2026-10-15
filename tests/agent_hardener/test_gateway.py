@@ -6,12 +6,17 @@
 from __future__ import annotations
 
 import subprocess
+import tomllib
+from typing import TYPE_CHECKING
 
 import pytest
 from typer.testing import CliRunner
 
 from agent_hardener.cli import app
 from agent_hardener.openshell import gateway
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 pytestmark = pytest.mark.unit
 
@@ -43,6 +48,14 @@ class FakeRun:
 @pytest.fixture(autouse=True)
 def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(gateway.time, "sleep", lambda _s: None)
+
+
+@pytest.fixture(autouse=True)
+def _gateway_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    path = tmp_path / "gateway.toml"
+    monkeypatch.setattr(gateway, "GATEWAY_CONFIG", path)
+    monkeypatch.setattr(gateway.write_gateway_config, "__defaults__", (path,))
+    return path
 
 
 def _which(present: set[str]) -> object:
@@ -80,8 +93,8 @@ def test_macos_registers_and_reports_connected(monkeypatch: pytest.MonkeyPatch) 
     result = gateway.register_local_gateway()
 
     assert result.ok
-    assert ["launchctl", "setenv", "OPENSHELL_DRIVERS", "docker"] in fake.calls
-    assert ["launchctl", "setenv", "DOCKER_HOST", "unix:///var/run/docker.sock"] in fake.calls
+    assert ["brew", "services", "restart", gateway.BREW_SERVICE] in fake.calls
+    assert not any(cmd[:1] == ["launchctl"] for cmd in fake.calls)  # driver settings live in gateway.toml
     assert ["openshell", "gateway", "add", gateway.GATEWAY_ENDPOINT, "--local", "--name", gateway.GATEWAY_NAME] in (
         fake.calls
     )
@@ -114,3 +127,27 @@ def test_setup_runs_gateway_best_effort(monkeypatch: pytest.MonkeyPatch) -> None
 
     assert result.exit_code == 0  # gateway failure warns, does not fail setup
     assert calls == ["register"]
+
+
+def test_write_gateway_config_sets_docker_driver_and_keeps_other_keys(tmp_path: Path) -> None:
+    path = tmp_path / "gateway.toml"
+    path.write_text('[openshell]\nversion = 2\n\n[openshell.gateway]\nlog_level = "debug"\n', encoding="utf-8")
+
+    gateway.write_gateway_config("unix:///Users/me/.docker/run/docker.sock", path)
+
+    config = tomllib.loads(path.read_text(encoding="utf-8"))["openshell"]
+    assert config["version"] == 2
+    assert config["gateway"] == {"log_level": "debug", "compute_driver": "docker"}
+    assert config["drivers"]["docker"]["socket_path"] == "/Users/me/.docker/run/docker.sock"
+
+
+def test_write_gateway_config_points_docker_desktop_supervisors_at_the_host_alias(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(gateway.sys, "platform", "darwin")
+    path = tmp_path / "gateway.toml"
+
+    gateway.write_gateway_config("unix:///var/run/docker.sock", path)
+
+    docker = tomllib.loads(path.read_text(encoding="utf-8"))["openshell"]["drivers"]["docker"]
+    assert docker["grpc_endpoint"] == gateway.DOCKER_DESKTOP_GRPC_ENDPOINT

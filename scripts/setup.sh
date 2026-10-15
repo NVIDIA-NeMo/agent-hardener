@@ -42,10 +42,10 @@ docker info >/dev/null 2>&1       || die "Docker daemon is not running. Start Do
 if [ "$OS" = "Darwin" ]; then
     command -v brew >/dev/null 2>&1 || die "Homebrew is required. Install from https://brew.sh"
 fi
-command -v openshell >/dev/null 2>&1 || die "OpenShell CLI is required. Run: curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"
+command -v openshell >/dev/null 2>&1 || die "OpenShell CLI is required. Run: curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh"
 _openshell_link=$(readlink "$(command -v openshell)" 2>/dev/null || true)
 case "$(command -v openshell) ${_openshell_link}" in
-    *uv/tools*) die "openshell is installed via 'uv tool install', which only provides the CLI without the gateway service. Remove it with: uv tool uninstall openshell   Then install the native package: curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh" ;;
+    *uv/tools*) die "openshell is installed via 'uv tool install', which only provides the CLI without the gateway service. Remove it with: uv tool uninstall openshell   Then install the native package: curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh" ;;
 esac
 ok "Prerequisites present"
 

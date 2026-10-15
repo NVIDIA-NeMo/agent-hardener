@@ -32,7 +32,8 @@ network_policies:
     endpoints:
     - host: api.github.com
       port: 443
-      protocol: http
+      protocol: rest
+      enforcement: enforce
       rules:
       - allow: {method: GET, path: /repos/*/*/issues}
 """
@@ -185,7 +186,7 @@ def test_agent_env_endpoint_is_protected_even_without_a_matching_backend_entry(m
         "    endpoints:\n"
         "    - host: other.internal\n"
         "      port: 9000\n"
-        "      protocol: http\n"
+        "      protocol: rest\n"
         "      access: full\n"
     )
     attack = RequestTuple(host="other.internal", port=9000, protocol="http")

@@ -266,13 +266,21 @@ def _policy_digest(policy_text: str) -> str:
 
 
 def _normalize_policy_for_digest(value: Any) -> Any:
-    """Normalize OpenShell policy fields that are omitted after load/apply."""
+    """Normalize OpenShell policy fields that are omitted (or defaulted) after load/apply."""
     if isinstance(value, dict):
         normalized = {}
         for key, child in value.items():
             normalized_child = _normalize_policy_for_digest(child)
             if key == "endpoints" and normalized_child == []:
                 continue
+            if key == "network_policies" and isinstance(normalized_child, dict):
+                # OpenShell echoes a rule's ``name`` back defaulted to its key.
+                normalized_child = {
+                    rule_key: {k: v for k, v in rule.items() if not (k == "name" and v == rule_key)}
+                    if isinstance(rule, dict)
+                    else rule
+                    for rule_key, rule in normalized_child.items()
+                }
             normalized[key] = normalized_child
         return normalized
     if isinstance(value, list):

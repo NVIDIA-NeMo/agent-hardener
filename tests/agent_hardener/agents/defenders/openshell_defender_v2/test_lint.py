@@ -21,7 +21,7 @@ network_policies:
     endpoints:
     - host: api.github.com
       port: 443
-      protocol: http
+      protocol: rest
       rules:
       - allow: {method: GET, path: /repos/*/*/issues}
 """
@@ -39,7 +39,7 @@ def test_new_host_raises() -> None:
     after_text = _BASE.replace(
         "version: 1\nnetwork_policies:\n  github:",
         "version: 1\nnetwork_policies:\n  evil:\n    name: evil\n    endpoints:\n"
-        "    - host: evil.example.com\n      port: 443\n      protocol: http\n      access: full\n  github:",
+        "    - host: evil.example.com\n      port: 443\n      protocol: rest\n      access: full\n  github:",
     )
     after = load_policy_from_yaml(after_text)
     with pytest.raises(LintViolationError, match="new host"):
@@ -80,3 +80,16 @@ def test_removed_endpoint_is_a_valid_contraction() -> None:
     before = load_policy_from_yaml(_BASE)
     after = load_policy_from_yaml("version: 1\nnetwork_policies: {}\n")
     assert_contraction(before, after)  # should not raise
+
+
+def test_ports_list_gaining_a_method_raises() -> None:
+    before = load_policy_from_yaml(
+        "version: 1\nnetwork_policies:\n  a:\n    endpoints:\n"
+        "    - {host: h.example.com, ports: [80, 8080], protocol: rest, access: read-only}\n"
+    )
+    after = load_policy_from_yaml(
+        "version: 1\nnetwork_policies:\n  a:\n    endpoints:\n"
+        "    - {host: h.example.com, ports: [80, 8080], protocol: rest, access: full}\n"
+    )
+    with pytest.raises(LintViolationError, match=r"h\.example\.com:8080 gained methods"):
+        assert_contraction(before, after)
