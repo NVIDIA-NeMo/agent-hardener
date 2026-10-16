@@ -66,6 +66,10 @@ dev = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+# Lets the OSS scanner resolve dependencies from uv.lock.
+[tool.uv]
+managed = true
+
 [tool.hatch.metadata]
 allow-direct-references = true
 
