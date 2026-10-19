@@ -153,7 +153,10 @@ def build_agent_breaker_config(
                         "detector_model_type": _resolve("detector_model_type", DEFAULT_DETECTOR_MODEL_TYPE, overrides),
                         "detector_model_name": detector_model,
                         "detector_model_config": _model_config(
-                            _resolve("detector_model_uri", DEFAULT_MODEL_URI, overrides), detector_model, 1024
+                            # Match garak's AgentBreakerResult default so its structured verdict is not truncated.
+                            _resolve("detector_model_uri", DEFAULT_MODEL_URI, overrides),
+                            detector_model,
+                            8192,
                         ),
                     }
                 }

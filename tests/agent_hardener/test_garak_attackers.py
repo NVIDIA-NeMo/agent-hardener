@@ -34,6 +34,7 @@ def test_build_agent_breaker_config_defaults() -> None:
     assert plugins["probe_spec"] == PROBE_SPEC
     assert plugins["extended_detectors"] == [DETECTOR_SPEC]
     assert plugins["generators"]["rest"]["RestGenerator"]["uri"] == "http://victim:8000/v1/chat/completions"
+    assert plugins["detectors"]["agent_breaker"]["AgentBreakerResult"]["detector_model_config"]["max_tokens"] == 8192
     assert config["reporting"] == {"report_dir": ".agent-hardener/garak_runs", "report_prefix": "agent-breaker"}
 
 
