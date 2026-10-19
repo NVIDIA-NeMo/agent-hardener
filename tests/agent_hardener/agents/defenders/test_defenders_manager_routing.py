@@ -67,6 +67,18 @@ def test_zero_hit_attacks_are_a_successful_noop() -> None:
     assert output.analyses == []
 
 
+def test_empty_attack_output_remains_a_failure() -> None:
+    async def unexpected_callback(_agent: AgentConfig, _input: DefenderInput) -> DefenderOutput:
+        raise AssertionError("an empty attack stage must not invoke defenders")
+
+    output = _run_manager([], unexpected_callback)
+
+    assert output.ok is False
+    assert output.error == "Defenders manager failed to map any attacks to available defenders."
+    assert output.routed_agent_ids == []
+    assert output.analyses == []
+
+
 def test_mixed_attacker_outputs_skip_only_explicit_zero_hits() -> None:
     prompts: list[str] = []
 

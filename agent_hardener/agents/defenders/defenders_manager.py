@@ -134,7 +134,7 @@ class DefendersManager:
     ) -> DefendersManagerOutput:
         """Evaluate attacks, route to specific defenders, and aggregate policy patches."""
         actionable_attacks = [attack for attack in input_data.attacks if not _is_explicit_zero_hit(attack)]
-        if not actionable_attacks:
+        if input_data.attacks and not actionable_attacks:
             return DefendersManagerOutput(ok=True, summary="No attack hits to defend.")
 
         routed = self._route_attacks(
