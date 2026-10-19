@@ -265,6 +265,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         artifacts=artifacts,
         metadata={
             "garak_return_code": result.return_code,
+            "hit_count": hit_count,
             "garak_report_path": result.report_path,
             "garak_config_path": result.config_path,
             "target": request.target.name,

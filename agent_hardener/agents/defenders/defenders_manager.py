@@ -59,6 +59,10 @@ def _record_response_text(record: dict[str, Any]) -> str:
     return ""
 
 
+def _is_explicit_zero_hit(attack: AttackRecord) -> bool:
+    return attack.ok and not attack.records and attack.metadata.get("hit_count") == 0
+
+
 def _is_relay_guardrail_result(
     result: DefenderOutput, relay_plugins_path: Path | None, target_relay_plugins: Path | None
 ) -> bool:
@@ -129,9 +133,13 @@ class DefendersManager:
         validation_feedback: dict[str, ValidationFeedback] | None = None,
     ) -> DefendersManagerOutput:
         """Evaluate attacks, route to specific defenders, and aggregate policy patches."""
+        actionable_attacks = [attack for attack in input_data.attacks if not _is_explicit_zero_hit(attack)]
+        if not actionable_attacks:
+            return DefendersManagerOutput(ok=True, summary="No attack hits to defend.")
+
         routed = self._route_attacks(
-            attacks=input_data.attacks,
-            _summaries=input_data.attacker_summaries,
+            attacks=actionable_attacks,
+            _summaries=[attack.summary for attack in actionable_attacks if attack.summary],
             available=input_data.available_defenders,
         )
 
@@ -228,7 +236,7 @@ class DefendersManager:
 
         return DefendersManagerOutput(
             ok=len(analyses) > 0,
-            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(input_data.attacks)} attacks. Generated {len(analyses)} analyses.",
+            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {len(analyses)} analyses.",
             error=" | ".join(errors) if errors else None,
             routed_agent_ids=routed_agent_ids,
             analyses=analyses,

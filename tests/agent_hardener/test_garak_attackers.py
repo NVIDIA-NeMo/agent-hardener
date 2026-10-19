@@ -275,11 +275,29 @@ def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monke
     )
     assert record.ok is True
     assert record.metadata["garak_report_path"] == "/r.jsonl"
+    assert record.metadata["hit_count"] == 2
     assert record.metadata["target_uri"] == "http://127.0.0.1:9001/v1/chat/completions"
     assert record.records == [
         {"probe": "agent_breaker.AgentBreaker", "source": "garak-agent-breaker", "hit_index": 0},
         {"value": "raw-hit", "source": "garak-agent-breaker", "hit_index": 1},
     ]
+
+
+def test_agent_breaker_run_marks_successful_zero_hit_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_scan(**_kwargs: Any) -> run_agent_breaker.ScanResult:
+        return run_agent_breaker.ScanResult(return_code=0, hits=[], config_path="/c.yaml")
+
+    monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", fake_scan)
+    request = AgentRunInput(
+        round_id="round-0001",
+        target=TargetInput(name="victim", base_url="http://127.0.0.1:8000/v1/chat/completions"),
+    )
+
+    record = asyncio.run(run_agent_breaker.run(request, AgentConfig(name="agent-breaker", role="attacker")))
+
+    assert record.ok is True
+    assert record.records == []
+    assert record.metadata["hit_count"] == 0
 
 
 def test_default_request_timeout_fits_a_sub_agent_turn():
