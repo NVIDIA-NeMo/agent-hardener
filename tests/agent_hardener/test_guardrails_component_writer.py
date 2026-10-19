@@ -27,6 +27,8 @@ from agent_hardener.relay_plugin.config import GuardrailsComponentConfig
 if TYPE_CHECKING:
     from pathlib import Path
 
+    import pytest
+
 
 def _state(
     target: Path, *, tool: str = "transfer_funds", instruction: str = "Block unrequested transfers."
@@ -63,6 +65,35 @@ def test_the_api_key_is_never_written_only_its_env_var_name(tmp_path: Path) -> N
     model = _component(tomllib.loads(target.read_text(encoding="utf-8")))["model"]
     assert model["api_key_env"] == "INFERENCE_API_KEY"
     assert "api_key" not in model
+
+
+def test_the_judge_uses_its_own_endpoint_and_key_when_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A safety endpoint must win over the analysis one, and the judge must read the matching key."""
+    monkeypatch.setenv("AGENT_HARDENER_BASE_URL", "https://analysis.example/v1")
+    monkeypatch.setenv("AGENT_HARDENER_SAFETY_BASE_URL", "http://10.0.0.5:8000/v1")
+    monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
+    target = tmp_path / "plugins.toml"
+
+    component_writer_node(_state(target))
+
+    text = target.read_text(encoding="utf-8")
+    model = _component(tomllib.loads(text))["model"]
+    assert model["base_url"] == "http://10.0.0.5:8000/v1"
+    assert model["api_key_env"] == "AGENT_HARDENER_SAFETY_API_KEY"
+    assert "safety-key" not in text
+
+
+def test_the_judge_falls_back_to_the_analysis_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_HARDENER_SAFETY_BASE_URL", raising=False)
+    monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
+    monkeypatch.setenv("AGENT_HARDENER_BASE_URL", "https://analysis.example/v1")
+    target = tmp_path / "plugins.toml"
+
+    component_writer_node(_state(target))
+
+    model = _component(tomllib.loads(target.read_text(encoding="utf-8")))["model"]
+    assert model["base_url"] == "https://analysis.example/v1"
+    assert model["api_key_env"] == "INFERENCE_API_KEY"
 
 
 def test_successive_rounds_append_rather_than_overwrite(tmp_path: Path) -> None:

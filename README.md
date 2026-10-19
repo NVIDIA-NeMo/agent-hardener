@@ -256,6 +256,7 @@ Agent Hardener has three model groups, each with a built-in default you can over
 | --- | --- | --- | --- |
 | Attack | garak red-team + detector | `nvidia/nemotron-3-super-120b-a12b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
 | Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-super-120b-a12b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
+| Safety | the guardrail judge that runs inside the victim | the analysis model | the guardrails defender's `safety_llm` (model); `AGENT_HARDENER_SAFETY_BASE_URL` / `AGENT_HARDENER_SAFETY_API_KEY` (endpoint and key, else the analysis ones) |
 | Agent | the victim's own LLM | your NAT workflow | the `llms:` block in your workflow |
 
 The **analysis** lever is a single pair of env vars that retargets every default-model caller (both

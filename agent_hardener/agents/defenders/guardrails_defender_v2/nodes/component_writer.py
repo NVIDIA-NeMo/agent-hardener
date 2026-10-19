@@ -26,6 +26,7 @@ from agent_hardener.relay_plugin.config import (
     DEFAULT_GUARDRAIL_THRESHOLD,
     PLUGIN_KIND,
     GuardrailsComponentConfig,
+    judge_api_key_env,
     judge_endpoint,
 )
 
@@ -133,17 +134,15 @@ def _component_config(document: dict[str, Any], state: GraphState) -> dict[str, 
 def _judge_model(state: GraphState) -> dict[str, Any]:
     """The model that scores tool calls.
 
-    Only the model name is the operator's to choose; the endpoint and the *name* of the key env var
-    are pinned. The key itself is never written here — this file is uploaded into the victim image
-    and rendered in run reports.
+    The endpoint and the *name* of the key env var come from the run's environment
+    (``AGENT_HARDENER_SAFETY_BASE_URL`` / ``AGENT_HARDENER_SAFETY_API_KEY``, else the analysis ones).
+    The key itself is never written here — this file is uploaded into the victim image and rendered
+    in run reports.
     """
     return {
         "provider": "nvidia",
-        "api_key_env": "INFERENCE_API_KEY",  # pragma: allowlist secret
-        # The operator picks the model; Agent Hardener pins the endpoint. That is the existing contract
-        # for the safety model group, and it is what keeps the sandbox allow-list and the judge from
-        # disagreeing: both read judge_endpoint(). Move it with AGENT_HARDENER_BASE_URL, which moves the
-        # run's other analysis models too.
+        "api_key_env": judge_api_key_env(),
+        # The sandbox allow-list and the judge both read judge_endpoint(), so they cannot disagree.
         "model": state.safety_llm or DEFAULT_MODEL,
         # Never left unset: that sends the judge to OpenAI's default host, which the sandbox does not
         # allow out and which cannot serve the model it is given — and the guardrail fails *open*, so
