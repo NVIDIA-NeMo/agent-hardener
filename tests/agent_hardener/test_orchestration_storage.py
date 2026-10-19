@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from agent_hardener.agents.defenders.defenders_manager import DefendersManager
 from agent_hardener.models import (
     AgentConfig,
     AgentRunInput,
@@ -143,6 +144,20 @@ class ScenarioAdapter:
         )
 
 
+class ZeroHitAdapter(ScenarioAdapter):
+    async def run(self, agent: AgentConfig, request: AgentRunInput, ctx: object | None = None) -> AgentRunOutput:
+        if agent.role == "attacker":
+            self.calls.append((agent.role, request.iteration))
+            return AttackRecord(
+                agent_id=agent.agent_id,
+                agent_name=agent.name,
+                summary="AgentBreaker completed without reported hits.",
+                records=[],
+                metadata={"hit_count": 0},
+            )
+        return await super().run(agent, request, ctx)
+
+
 class RaisingAdapter:
     async def run(self, agent: AgentConfig, request: AgentRunInput, ctx: object | None = None) -> AgentRunOutput:
         raise RuntimeError("agent boom")
@@ -218,6 +233,45 @@ def test_successful_session_flow_writes_storage_and_logs(tmp_path: Path) -> None
     log_text = (round_dir / "round.log").read_text(encoding="utf-8")
     assert "agent start phase=attackers role=attacker name=attacker" in log_text
     assert "agent stop phase=validators role=validator name=benign validator" in log_text
+
+
+def test_zero_hit_round_records_successful_noop_defense_and_still_validates(tmp_path: Path) -> None:
+    adapter = ZeroHitAdapter(fail_first_validation=True)
+    orchestrator = Orchestrator(
+        _config(tmp_path),
+        agent_adapter=adapter,
+        round_id_factory=lambda: "20260502T000011Z-abcdef12",
+    )
+    # The module-wide fixture substitutes a routing double for ordinary orchestration tests. This
+    # regression drives the real manager because the empty-record routing boundary is under test.
+    orchestrator.defense.defenders_manager = DefendersManager()
+
+    report = asyncio.run(orchestrator.run_round())
+
+    assert report.success is False
+    assert report.attacks[0].records == []
+    assert report.iterations[0].defenders == []
+    assert report.iterations[0].policy_patches == []
+    assert [validator.ok for validator in report.iterations[0].validators] == [False, True]
+    assert [role for role, _iteration in adapter.calls].count("defender") == 0
+    assert [role for role, _iteration in adapter.calls].count("victim") == 1
+    assert [role for role, _iteration in adapter.calls].count("validator") == 2
+
+    manager_output = read_json(tmp_path / "iteration-1" / "defenders_manager_manager.json")
+    assert manager_output == {
+        "analyses": [],
+        "error": None,
+        "ok": True,
+        "routed_agent_ids": [],
+        "summary": "No attack hits to defend.",
+    }
+    events = [json.loads(line) for line in (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()]
+    defense_done = next(
+        event for event in events if event["event"] == "phase_completed" and event.get("phase") == "defenders"
+    )
+    assert defense_done["ok"] is True
+    assert defense_done["count"] == 0
+    assert defense_done["routed_count"] == 0
 
 
 def test_agent_exception_is_logged_before_raising(tmp_path: Path) -> None:
