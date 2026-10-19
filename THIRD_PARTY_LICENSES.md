@@ -4,7 +4,7 @@ Agent Hardener is licensed under Apache-2.0 (see `LICENSE`). It does not vendor 
 redistribute third-party source code; the packages below are its **runtime dependency
 closure**, resolved at install time from PyPI, and each remains under its own licence.
 
-Generated for **nvidia-agent-hardener 0.0.16** on 2026-10-15 from the
+Generated for **nvidia-agent-hardener 0.0.17** on 2026-10-19 from the
 resolved runtime closure (`uv export --no-dev`). Development-only dependencies are excluded from
 the distributed package and are not listed.
 
@@ -40,7 +40,7 @@ Every dependency is under a permissive or weak-copyleft licence. **There are no 
 | `langgraph` | 1.2.5 | MIT |
 | `langgraph-checkpoint` | 4.1.1 | MIT |
 | `langgraph-prebuilt` | 1.1.0 | MIT |
-| `langgraph-sdk` | 0.4.2 | MIT |
+| `langgraph-sdk` | 0.4.7 | MIT |
 | `langsmith` | 0.8.0 | MIT |
 | `linkify-it-py` | 2.1.0 | MIT |
 | `markdown-it-py` | 4.0.0 | MIT |
