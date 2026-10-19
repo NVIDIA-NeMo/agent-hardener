@@ -120,6 +120,7 @@ def test_direct_detector_config_root_seeded_from_builder() -> None:
     detector = root["detectors"]["agent_breaker"]["AgentBreakerResult"]
     assert detector["detector_model_name"]  # baked default flows through
     assert detector["detector_model_type"]
+    assert detector["detector_model_config"]["max_tokens"] == 8192
 
 
 class _FakeStdout:
