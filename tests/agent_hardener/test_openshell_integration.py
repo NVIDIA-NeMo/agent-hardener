@@ -326,8 +326,94 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
     assert "--provider" in runner.commands[6]
 
 
+def test_provider_carries_the_safety_judge_key_alongside_the_victim_secrets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The judge runs inside the victim, so its own key must reach the sandbox with the victim's."""
+    monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
+    env_file = tmp_path / ".env"
+    env_file.write_text("INFERENCE_API_KEY=inference-key\n", encoding="utf-8")
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(
+            gateway="gw",
+            sandbox="sb",
+            policy_path=tmp_path / "policy.yaml",
+            provider="p",
+            provider_env_file=env_file,
+            provider_credentials=["INFERENCE_API_KEY"],
+        ),
+        runner=SequenceRunner([]),
+    )
+
+    credentials, error = lifecycle._provider_credentials()
+
+    assert error is None
+    assert credentials == {"INFERENCE_API_KEY": "inference-key", "AGENT_HARDENER_SAFETY_API_KEY": "safety-key"}
+
+
+def test_provider_carries_the_safety_judge_key_without_a_victim_env_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        runner=SequenceRunner([]),
+    )
+
+    assert lifecycle._provider_credentials() == ({"AGENT_HARDENER_SAFETY_API_KEY": "safety-key"}, None)
+
+
+def test_existing_provider_gets_the_safety_judge_key_by_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The provider outlives runs, so a reused one must still receive the key, and never on argv."""
+    monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
+    runner = SequenceRunner([(0, "provider exists"), (0, "profile imported"), (0, "provider updated")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(
+            gateway="gw",
+            sandbox="sb",
+            policy_path=tmp_path / "policy.yaml",
+            provider="p",
+            provider_type="generic",
+            provider_credentials=["INFERENCE_API_KEY"],
+        ),
+        runner=runner,
+        log_dir=tmp_path,
+    )
+
+    assert lifecycle.ensure_provider().ok is True
+
+    profile = yaml.safe_load(Path(runner.commands[1][5]).read_text(encoding="utf-8"))
+    assert [c["env_vars"] for c in profile["credentials"]] == [["INFERENCE_API_KEY"], ["AGENT_HARDENER_SAFETY_API_KEY"]]
+    assert runner.commands[2] == [
+        "openshell",
+        "provider",
+        "update",
+        "p",
+        "--gateway",
+        "gw",
+        "--credential",
+        "AGENT_HARDENER_SAFETY_API_KEY",
+    ]
+    assert not any("safety-key" in part for command in runner.commands for part in command)
+
+
+def test_existing_provider_is_left_alone_without_a_safety_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
+    runner = SequenceRunner([(0, "provider exists")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        runner=runner,
+    )
+
+    assert lifecycle.ensure_provider().ok is True
+    assert len(runner.commands) == 1
+
+
 def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Path) -> None:
-    runner = SequenceRunner([(1, "provider profile import failed"), (0, "updated")])
+    """OpenShell rejects a profile update that does not carry the current resource_version."""
+    runner = SequenceRunner(
+        [(1, "provider profile import failed"), (0, "id: p\nresource_version: 3\n"), (0, "updated")]
+    )
     lifecycle = OpenShellLifecycle(
         OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
         runner=runner,
@@ -335,7 +421,10 @@ def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Pa
     )
 
     assert lifecycle._ensure_generic_profile(["INFERENCE_API_KEY"]).ok is True
-    assert runner.commands[1][1:5] == ["provider", "profile", "update", "p"]
+    assert runner.commands[1][1:5] == ["provider", "profile", "export", "p"]
+    assert runner.commands[2][1:5] == ["provider", "profile", "update", "p"]
+    profile = yaml.safe_load(Path(runner.commands[2][6]).read_text(encoding="utf-8"))
+    assert profile["resource_version"] == 3
 
 
 def test_lifecycle_skips_provider_check_when_sandbox_already_exists(tmp_path: Path) -> None:

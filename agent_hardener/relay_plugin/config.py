@@ -30,17 +30,38 @@ def no_reasoning_body(model: str) -> dict[str, Any] | None:
 PLUGIN_KIND = "agent_hardener.pre_tool_verifier"
 
 
+#: The safety judge's own endpoint and credential; unset falls back to the analysis endpoint and key.
+SAFETY_BASE_URL_ENV = "AGENT_HARDENER_SAFETY_BASE_URL"
+SAFETY_API_KEY_ENV = "AGENT_HARDENER_SAFETY_API_KEY"  # pragma: allowlist secret
+DEFAULT_JUDGE_API_KEY_ENV = "INFERENCE_API_KEY"  # pragma: allowlist secret
+
+
 def judge_endpoint() -> str:
     """Where the in-victim safety judge sends its scoring calls.
 
-    The same endpoint the rest of the run's analysis models use, so one override moves everything.
-    It is resolved here rather than left unset because an unset ``base_url`` sends the judge to
-    OpenAI's default host — unreachable from the sandbox and wrong for the model it is given.
+    ``AGENT_HARDENER_SAFETY_BASE_URL`` when set, else the endpoint the rest of the run's analysis
+    models use. It is resolved here rather than left unset because an unset ``base_url`` sends the
+    judge to OpenAI's default host — unreachable from the sandbox and wrong for the model it is given.
 
     The sandbox allow-lists this host explicitly (``agent_hardener.tools.openshell``): the judge runs
     inside the victim, and egress discovery cannot find an endpoint Agent Hardener itself injected.
     """
-    return os.environ.get("AGENT_HARDENER_BASE_URL") or "https://integrate.api.nvidia.com/v1"
+    return (
+        os.environ.get(SAFETY_BASE_URL_ENV)
+        or os.environ.get("AGENT_HARDENER_BASE_URL")
+        or "https://integrate.api.nvidia.com/v1"
+    )
+
+
+def judge_api_key_env() -> str:
+    """The env var the judge reads its key from: the safety key when one is set, else the analysis key."""
+    return SAFETY_API_KEY_ENV if os.environ.get(SAFETY_API_KEY_ENV) else DEFAULT_JUDGE_API_KEY_ENV
+
+
+def judge_credentials() -> dict[str, str]:
+    """The safety key to hand the victim sandbox, which only sees credentials it is given explicitly."""
+    value = os.environ.get(SAFETY_API_KEY_ENV)
+    return {SAFETY_API_KEY_ENV: value} if value else {}
 
 
 #: Judge scores at or above this refuse. One value for the rail the defender deploys and for the
@@ -58,7 +79,7 @@ class JudgeModel(BaseModel):
     base_url: str | None = None
     #: Name of the env var holding the key — never the key itself. This file is uploaded into the
     #: victim image and rendered in run reports.
-    api_key_env: str = "INFERENCE_API_KEY"
+    api_key_env: str = DEFAULT_JUDGE_API_KEY_ENV
 
 
 class Guardrail(BaseModel):

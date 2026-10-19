@@ -39,6 +39,7 @@ from agent_hardener.openshell.support import (
     is_transient_transport_failure,
     read_env_file,
 )
+from agent_hardener.relay_plugin.config import judge_credentials
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -239,6 +240,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             )
         ]
         if results[-1].ok:
+            results.append(self._sync_judge_credentials())
             return combine_results(results)
         if is_transient_transport_failure(results[-1].output):
             return combine_results(results)
@@ -275,10 +277,31 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         results.append(self._exec.run(args))
         return combine_results(results, ok=results[-1].ok)
 
+    def _sync_judge_credentials(self) -> OpenShellCommandResult:
+        """Add the safety judge's key to a provider an earlier run created without it.
+
+        The provider outlives runs, so without this the key only lands on the very first one. The key
+        is passed by name: OpenShell reads it from this process's environment, keeping it off argv.
+        """
+        judge = judge_credentials()
+        if not judge:
+            return OpenShellCommandResult(ok=True, command=[], output="")
+        results: list[OpenShellCommandResult] = []
+        if self.config.provider_type == GENERIC_PROVIDER_TYPE:
+            results.append(self._ensure_generic_profile([*self.config.provider_credentials, *judge]))
+            if not results[-1].ok:
+                return combine_results(results)
+        args = ["provider", "update", str(self.config.provider), "--gateway", self.config.gateway]
+        for name in judge:
+            args.extend(["--credential", name])
+        results.append(self._exec.run(args))
+        return combine_results(results)
+
     def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
-        """The ``NAME -> value`` credentials from ``provider_env_file`` (empty when none is configured)."""
+        """The ``NAME -> value`` credentials: ``provider_env_file``'s, plus the safety judge's own key."""
+        judge = judge_credentials()
         if not self.config.provider_env_file:
-            return {}, None
+            return judge, None
         command = [self.config.openshell_bin, "provider", "create"]
         try:
             credentials = self._provider_credentials_from_env_file()
@@ -288,7 +311,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if not credentials:
             message = f"no configured provider credentials found in {self.config.provider_env_file}"
             return {}, OpenShellCommandResult(ok=False, command=command, output=message)
-        return credentials, None
+        return {**credentials, **judge}, None
 
     def _ensure_generic_profile(self, credential_names: list[str]) -> OpenShellCommandResult:
         """Import (or update) the credentials-only provider profile named after the provider."""
@@ -309,6 +332,13 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         )
         if imported.ok:
             return imported
+        # OpenShell only updates a profile against its current resource_version, so read it back first.
+        exported = self._exec.run(["provider", "profile", "export", profile_id, "--gateway", self.config.gateway])
+        if not exported.ok:
+            return combine_results([imported, exported], ok=False)
+        current = yaml.safe_load(exported.output) or {}
+        profile["resource_version"] = current.get("resource_version")
+        profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
         updated = self._exec.run(
             [
                 "provider",
@@ -321,7 +351,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
                 self.config.gateway,
             ]
         )
-        return combine_results([imported, updated], ok=updated.ok)
+        return combine_results([imported, exported, updated], ok=updated.ok)
 
     def down(self) -> OpenShellCommandResult:
         """Delete the sandbox."""
