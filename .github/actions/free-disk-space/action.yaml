@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Free disk space
+description: >
+  Removes unused pre-installed tools from the ubuntu-latest runner to recover
+  disk space before jobs that pull large container images or install heavy
+  dependencies.
+
+inputs:
+  remove_python:
+    description: Remove /opt/hostedtoolcache/Python
+    required: false
+    default: "false"
+  remove_pypy:
+    description: Remove /opt/hostedtoolcache/PyPy
+    required: false
+    default: "false"
+  remove_node:
+    description: Remove /opt/hostedtoolcache/node
+    required: false
+    default: "false"
+  remove_ruby:
+    description: Remove /opt/hostedtoolcache/Ruby
+    required: false
+    default: "false"
+  remove_java:
+    description: Remove /opt/hostedtoolcache/Java_*
+    required: false
+    default: "false"
+  remove_go:
+    description: Remove /opt/hostedtoolcache/go
+    required: false
+    default: "false"
+  remove_haskell:
+    description: Remove /opt/hostedtoolcache/stack and /usr/local/.ghcup
+    required: false
+    default: "false"
+  remove_swift:
+    description: Remove /usr/share/swift and /opt/hostedtoolcache/swift-*
+    required: false
+    default: "false"
+  prune_docker:
+    description: Run docker system prune -f to remove unused host Docker data
+    required: false
+    default: "false"
+  disable_swap:
+    description: Disable swap and remove /swapfile (~4GB recovered on GitHub-managed runners)
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Remove unused tools
+      shell: bash
+      run: |
+        if [ "${{ inputs.disable_swap }}" = "true" ]; then
+          sudo swapoff -a || true
+          sudo rm -f /swapfile || true
+        fi
+        sudo rm -rf /usr/share/dotnet || true
+        sudo rm -rf /usr/local/lib/android || true
+        sudo rm -rf /opt/ghc || true
+        sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+        if [ "${{ inputs.remove_python }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/Python || true
+        fi
+        if [ "${{ inputs.remove_pypy }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/PyPy || true
+        fi
+        if [ "${{ inputs.remove_node }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/node || true
+        fi
+        if [ "${{ inputs.remove_ruby }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/Ruby || true
+        fi
+        if [ "${{ inputs.remove_java }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/Java_* || true
+        fi
+        if [ "${{ inputs.remove_go }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/go || true
+        fi
+        if [ "${{ inputs.remove_haskell }}" = "true" ]; then
+          sudo rm -rf /opt/hostedtoolcache/stack || true
+          sudo rm -rf /usr/local/.ghcup || true
+        fi
+        if [ "${{ inputs.remove_swift }}" = "true" ]; then
+          sudo rm -rf /usr/share/swift || true
+          sudo rm -rf /opt/hostedtoolcache/swift-* || true
+        fi
+        if [ "${{ inputs.prune_docker }}" = "true" ]; then
+          docker system prune -f || true
+        fi
+        df -h
