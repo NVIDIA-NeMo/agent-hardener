@@ -24,7 +24,8 @@ concurrency:
 
 env:
   UV_VERSION: "0.10.10"
-  WAR_GAME_AGENTS: langgraph,relay
+  # relay is off until a nemo-helix release ships the nemo-fabric its example image pins nemo-relay for.
+  WAR_GAME_AGENTS: langgraph
 
 jobs:
   github-scripts:
@@ -53,7 +54,7 @@ jobs:
       # Keep the other agent's results if one fails.
       fail-fast: false
       matrix:
-        agent: [langgraph, relay]
+        agent: [langgraph]
     steps:
       - name: Checkout agent-hardener
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3

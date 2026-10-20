@@ -6,8 +6,8 @@
 ## `workflows/system-test.yaml`
 
 Runs on every push to `main` and on manual dispatch (with an optional `helix_ref` to test against a
-different NeMo Helix ref). It runs one full war-game per NeMo Helix example agent (`langgraph`,
-`relay`), through the Helix CLI:
+different NeMo Helix ref). It runs one full war-game per NeMo Helix example agent, through the
+Helix CLI:
 
 `nemo agent-hardener setup` → `init` → `synth-benign --no-interactive` → `run`
 
@@ -18,6 +18,10 @@ uploads its `validation.json` and logs as `war-game-results-<agent>`.
 `war-game-report` merges the results and fails unless, for every agent, at least 1/3 of the attacks
 were blocked and at least 1/3 of the benign requests passed. Unscored rows (`error`) count against
 both rates.
+
+Only `langgraph` runs today. `war_game.sh` also supports `relay`, but that example's image can't be
+built from published packages yet (its `nemo-relay` pin needs a newer `nemo-fabric` than released
+`nemo-helix` allows); add it back to the matrix and `WAR_GAME_AGENTS` once that ships.
 
 Branch protection should require only **System test status**, which passes when every job above it
 succeeded.
