@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-import asyncio
 import logging
 import re
 from collections.abc import Awaitable, Callable
@@ -12,6 +11,7 @@ from agent_hardener.agents.defenders.extraction_cache import ExtractionCache
 from agent_hardener.agents.defenders.openshell_defender_v2.errors import LintViolationError
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.loader import dump_policy_yaml, load_policy_from_yaml
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.merge import merge_candidates
+from agent_hardener.concurrency import agent_concurrency, gather_limited_ordered
 from agent_hardener.models import (
     CURRENT_POLICY_KEY,
     AgentConfig,
@@ -165,7 +165,6 @@ class DefendersManager:
         policy_path_str: str | None = enriched_context.get("victim_policy_path")
         victim_policy_path = Path(policy_path_str) if policy_path_str else None
 
-        tasks = []
         task_meta: list[tuple[AgentConfig, DefenderInput]] = []
         for attack, defenders in routed:
             records = attack.records if attack.records else [{}]
@@ -186,15 +185,19 @@ class DefendersManager:
                         feedback=validation_feedback.get(defender.agent_id) if validation_feedback else None,
                         relay_victim_spec=input_data.relay_victim_spec,
                     )
-                    tasks.append(run_defender_cb(defender, inp))
                     task_meta.append((defender, inp))
 
-        if not tasks:
+        if not task_meta:
             return DefendersManagerOutput(
                 ok=False, error="No defenders matched the validation feedback targets — nothing to retry."
             )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # One task per attack record and defender; unbounded, a handful of hits bursts past the
+        # model endpoint's rate limit and every defender fails.
+        limit = agent_concurrency({}, input_data.context, "defenders", "AGENT_HARDENER_DEFENDER_CONCURRENCY")
+        results = await gather_limited_ordered(
+            task_meta, limit, lambda meta: run_defender_cb(*meta), return_exceptions=True
+        )
 
         self._merge_and_write_policy(
             task_meta,
