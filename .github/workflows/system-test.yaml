@@ -1,0 +1,131 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: System test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      helix_ref:
+        description: nemo-helix git ref to test against
+        required: false
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+# Each war-game spends real inference tokens, so a newer push to main supersedes a running one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.10.10"
+  # relay is off until a nemo-helix release ships the nemo-fabric its example image pins nemo-relay for.
+  WAR_GAME_AGENTS: langgraph
+
+jobs:
+  github-scripts:
+    name: Test GitHub scripts
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: false
+      - name: Run war-game gate unit tests
+        run: uv run --no-cache .github/scripts/tests/test_check_war_game.py
+
+  war-game:
+    # One Helix per agent so the two war-games don't contend on :8080 or the OpenShell gateway.
+    name: War-game (${{ matrix.agent }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      # Keep the other agent's results if one fails.
+      fail-fast: false
+      matrix:
+        agent: [langgraph]
+    steps:
+      - name: Checkout agent-hardener
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          path: agent-hardener
+          persist-credentials: false
+      - name: Free disk space
+        uses: ./agent-hardener/.github/actions/free-disk-space
+      - name: Set up NeMo Helix
+        uses: ./agent-hardener/.github/actions/setup-helix
+        with:
+          ref: ${{ inputs.helix_ref || 'main' }}
+          path: nemo-helix
+          uv_version: ${{ env.UV_VERSION }}
+      - name: Run war-game
+        run: agent-hardener/.github/scripts/war_game.sh "${{ matrix.agent }}" nemo-helix war-game-results
+        env:
+          INFERENCE_API_KEY: ${{ secrets.INFERENCE_API_KEY }}
+          # Install the agent-hardener commit under test instead of the PyPI release.
+          NEMO_AGENT_HARDENER_SPEC: ${{ github.workspace }}/agent-hardener
+          _TYPER_FORCE_DISABLE_TERMINAL: "1"
+      - name: Upload war-game results
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          # Unique per agent so the report job can merge them.
+          name: war-game-results-${{ matrix.agent }}
+          retention-days: 30
+          path: |
+            war-game-results/
+            !war-game-results/work/
+
+  war-game-report:
+    name: War-game report
+    needs: [war-game]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout agent-hardener
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - name: Download war-game results
+        # A war-game that died before uploading leaves no artifact; the gate reports it as missing.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: war-game-results-*
+          path: war-game-results
+      - name: Check attack and benign thresholds
+        run: python3 .github/scripts/check_war_game.py war-game-results --agents "$WAR_GAME_AGENTS" --strict
+
+  system-test-status:
+    # The single check for branch protection; it passes only when every job above succeeded.
+    name: System test status
+    needs: [github-scripts, war-game, war-game-report]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all dependent jobs
+        shell: bash
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## System test status"
+            echo
+            echo "| Job | Result |"
+            echo "| --- | --- |"
+            printf '%s\n' "${NEEDS_JSON}" | jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"'
+          } >> "${GITHUB_STEP_SUMMARY}"
+          printf '%s\n' "${NEEDS_JSON}" | jq -e 'to_entries | map(.value.result) | all(. == "success")'
