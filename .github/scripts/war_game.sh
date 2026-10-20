@@ -151,6 +151,8 @@ main() {
     # A failed run still leaves partial logs worth collecting, so the status is checked after.
     local status=0
     nemo agent-hardener run --manifest-id "$MANIFEST" --attack-intensity "$ATTACK_INTENSITY" >"$OUT_DIR/run.json" || status=$?
+    # garak logs its errors (a failing red-team model, an unreachable target) only here, not in the run-logs.
+    cp "${XDG_DATA_HOME:-$HOME/.local/share}/garak/garak.log" "$OUT_DIR/" 2>/dev/null || true
     collect_results
     # `run` fails a round unless every attack is blocked and every benign request passes; the
     # thresholds are check_war_game.py's call, so only other failures fail this script.
