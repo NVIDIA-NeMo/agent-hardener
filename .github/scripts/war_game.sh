@@ -5,7 +5,7 @@
 # Run one full war-game through NeMo Helix (`nemo agent-hardener init -> synth-benign -> run`)
 # against one of Helix's example agents, and leave <agent>.validation.json in the output dir.
 #
-# Usage: war_game.sh <langgraph|relay> <nemo-helix checkout> <output dir>
+# Usage: war_game.sh <langgraph|langchain|relay> <nemo-helix checkout> <output dir>
 # Needs: INFERENCE_API_KEY (a build.nvidia.com key), Docker, the OpenShell CLI, Helix bootstrapped.
 
 set -euo pipefail
@@ -67,10 +67,13 @@ setup_agent_hardener() {
     nemo agent-hardener doctor
 }
 
-init_langgraph() {
-    MANIFEST=langgraph-victim
-    nemo agent-hardener init --project-dir "$EXAMPLES_DIR/langgraph-victim" --name "$MANIFEST" \
-        --harness langgraph --relay-confirmed --yes \
+# The bring-your-own examples (langgraph-victim, langchain-victim) share one shape; the harness is
+# the example's name.
+init_project() {
+    local harness=$1
+    MANIFEST=$harness-victim
+    nemo agent-hardener init --project-dir "$EXAMPLES_DIR/$MANIFEST" --name "$MANIFEST" \
+        --harness "$harness" --relay-confirmed --yes \
         --start-command "/usr/local/bin/python /app/server.py" --binary "/usr/local/bin/python*" \
         --secrets INFERENCE_API_KEY --egress "$INFERENCE_HOST" \
         --env "INFERENCE_BASE_URL=$INFERENCE_BASE_URL" --env "INFERENCE_MODEL=$VICTIM_MODEL" \
@@ -136,7 +139,7 @@ main() {
 
     log "Initialising the $AGENT victim"
     case $AGENT in
-        langgraph) init_langgraph ;;
+        langgraph | langchain) init_project "$AGENT" ;;
         relay) init_relay ;;
         *) echo "Unknown agent: $AGENT" >&2; exit 2 ;;
     esac
@@ -148,6 +151,8 @@ main() {
     # A failed run still leaves partial logs worth collecting, so the status is checked after.
     local status=0
     nemo agent-hardener run --manifest-id "$MANIFEST" --attack-intensity "$ATTACK_INTENSITY" >"$OUT_DIR/run.json" || status=$?
+    # garak logs its errors (a failing red-team model, an unreachable target) only here, not in the run-logs.
+    cp "${XDG_DATA_HOME:-$HOME/.local/share}/garak/garak.log" "$OUT_DIR/" 2>/dev/null || true
     collect_results
     # `run` fails a round unless every attack is blocked and every benign request passes; the
     # thresholds are check_war_game.py's call, so only other failures fail this script.

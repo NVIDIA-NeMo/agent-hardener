@@ -19,7 +19,7 @@ uploads its `validation.json` and logs as `war-game-results-<agent>`.
 were blocked and at least 1/3 of the benign requests passed. Unscored rows (`error`) count against
 both rates.
 
-Only `langgraph` runs today. `war_game.sh` also supports `relay`, but that example's image can't be
+`langgraph` and `langchain` run today. `war_game.sh` also supports `relay`, but that example's image can't be
 built from published packages yet (its `nemo-relay` pin needs a newer `nemo-fabric` than released
 `nemo-helix` allows); add it back to the matrix and `WAR_GAME_AGENTS` once that ships.
 
