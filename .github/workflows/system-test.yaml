@@ -53,6 +53,9 @@ jobs:
     strategy:
       # Keep the other agent's results if one fails.
       fail-fast: false
+      # Every war-game shares one build.nvidia.com key, whose burst limit two concurrent victims
+      # (each request also fans out guardrail-judge calls) exceed; run the agents one at a time.
+      max-parallel: 1
       matrix:
         agent: [langgraph, langchain]
     steps:
