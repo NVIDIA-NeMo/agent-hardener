@@ -521,11 +521,25 @@ class Mission:
         except Exception:
             self._run_log.debug("failed to write %s", filename, exc_info=True)
 
+    def _save_victim_logs(self) -> None:
+        """Keep the victim's in-sandbox logs before the sandbox is deleted. Best-effort.
+
+        A victim that starts healthy and then fails its requests leaves its traceback only there.
+        """
+        try:
+            run_dir = RunLayout(self.ctx.session_config.storage.root_dir, self._run_id).run_dir
+            output = self._lifecycle.collect_victim_diagnostics().output
+            if output:
+                (run_dir / "victim-diagnostics.log").write_text(output, encoding="utf-8")
+        except Exception:
+            self._run_log.debug("failed to save victim logs", exc_info=True)
+
     def _teardown(self) -> None:
         """Tear the sandbox + backends down, unless --no-cleanup left them running."""
         if self.ctx.no_cleanup:
             self._announce("Cleanup skipped; sandbox + backends left running.")
             return
+        self._save_victim_logs()
         self._detail(self._lifecycle.down().output)
         if self._backend_manager:
             self._detail(self._backend_manager.down(self._backend_specs, self._backend_cwd).output)

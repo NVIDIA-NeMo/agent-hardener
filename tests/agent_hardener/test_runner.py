@@ -533,3 +533,49 @@ def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.Monkey
     # A recreate re-uploads the run's hardened guardrails, not the seed.
     assert Path(str(captured["active_state_dir"])).name == "victim-active-state"
     assert relay_uploader.lifecycle is openshell_uploader.lifecycle
+
+
+def _teardown_mission(tmp_path: Path, diagnostics: OpenShellCommandResult, calls: list[str]) -> Mission:
+    class FakeLifecycle:
+        def collect_victim_diagnostics(self) -> OpenShellCommandResult:
+            calls.append("diagnostics")
+            return diagnostics
+
+        def down(self) -> OpenShellCommandResult:
+            calls.append("down")
+            return _ok("down")
+
+    mission = Mission.__new__(Mission)
+    mission.ctx = SimpleNamespace(no_cleanup=False, session_config=_session(root_dir=tmp_path))
+    mission._run_id = "test-run"
+    mission._lifecycle = FakeLifecycle()
+    mission._backend_manager = None
+    mission._detail = lambda _output: None
+    mission._run_log = logging.getLogger("test")
+    (tmp_path / "run-logs" / "test-run").mkdir(parents=True)
+    return mission
+
+
+def test_teardown_saves_victim_logs_before_deleting_sandbox(tmp_path: Path) -> None:
+    calls: list[str] = []
+    mission = _teardown_mission(tmp_path, _ok("=== app log ===\nTraceback: boom"), calls)
+
+    mission._teardown()
+
+    assert calls == ["diagnostics", "down"]
+    saved = tmp_path / "run-logs" / "test-run" / "victim-diagnostics.log"
+    assert saved.read_text(encoding="utf-8") == "=== app log ===\nTraceback: boom"
+
+
+def test_teardown_still_deletes_sandbox_when_diagnostics_fail(tmp_path: Path) -> None:
+    calls: list[str] = []
+    mission = _teardown_mission(tmp_path, _ok(), calls)
+
+    def broken() -> OpenShellCommandResult:
+        raise RuntimeError("sandbox exec failed")
+
+    mission._lifecycle.collect_victim_diagnostics = broken
+    mission._teardown()
+
+    assert calls == ["down"]
+    assert not (tmp_path / "run-logs" / "test-run" / "victim-diagnostics.log").exists()
