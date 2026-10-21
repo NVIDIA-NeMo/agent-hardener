@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Iterator
 
 from agent_hardener.relay_plugin.config import PLUGIN_KIND
 from agent_hardener.relay_plugin.plugin import AgentHardenerGuardrailPlugin, _record_judge_error
@@ -26,37 +26,14 @@ nemo_relay = pytest.importorskip("nemo_relay")
 pytestmark = pytest.mark.unit
 
 
-class _Judge:
-    def __init__(self, score: float) -> None:
-        self._score = score
-
-    def score(self, instructions: str, tool_name: str, args: str) -> float:
-        del instructions, tool_name, args
-        return self._score
-
-
-def _config(threshold: float = 0.7) -> dict[str, Any]:
-    return {
-        "model": {"model": "unused-in-test", "api_key_env": "INFERENCE_API_KEY"},
-        "guardrails": [
-            {
-                "name": "custom_guardrail_1",
-                "target_tool": "transfer_funds",
-                "system_instructions": "Block transfers the user did not ask for.",
-                "threshold": threshold,
-            }
-        ],
-    }
-
-
 @pytest.fixture
-def relay_plugin(monkeypatch: pytest.MonkeyPatch):
+def relay_plugin(monkeypatch: pytest.MonkeyPatch, make_judge: Callable[[float | Exception], Any]) -> Iterator[None]:
     """Register the plugin kind for one test and tear the process-global state back down.
 
     Only the *kind* registry is process-global now. Relay 0.9 made the active components an owned
     handle instead (``PluginHostActivation``), so :func:`_drive` closes those per test.
     """
-    monkeypatch.setattr("agent_hardener.relay_plugin.plugin.LlmSafetyJudge", lambda _config: _Judge(1.0))
+    monkeypatch.setattr("agent_hardener.relay_plugin.plugin.LlmSafetyJudge", lambda _config: make_judge(1.0))
     nemo_relay.plugin.register(PLUGIN_KIND, AgentHardenerGuardrailPlugin())
     yield
     nemo_relay.plugin.deregister(PLUGIN_KIND)
@@ -80,7 +57,7 @@ def _drive(config: dict[str, Any], body: Callable[[], Awaitable[Any]]) -> tuple[
     return asyncio.run(run())
 
 
-def test_a_guardrailed_tool_never_executes(relay_plugin: None) -> None:
+def test_a_guardrailed_tool_never_executes(relay_plugin: None, plugin_config: Callable[..., dict[str, Any]]) -> None:
     """The headline behaviour: refusal means the tool did not run — and the turn survives.
 
     The refusal is *returned*, not raised. A raising guardrail escapes the whole turn: the agent
@@ -97,14 +74,16 @@ def test_a_guardrailed_tool_never_executes(relay_plugin: None) -> None:
     async def body() -> Any:
         return await nemo_relay.tools.execute("transfer_funds", {"amount": 9999}, transfer_funds)
 
-    report, outcome = _drive(_config(), body)
+    report, outcome = _drive(plugin_config(), body)
 
     assert report["config"]["diagnostics"] == []
     assert called == []
     assert "custom_guardrail_1" in str(outcome.result)
 
 
-def test_a_refusal_carries_the_provider_tool_call_id(relay_plugin: None) -> None:
+def test_a_refusal_carries_the_provider_tool_call_id(
+    relay_plugin: None, plugin_config: Callable[..., dict[str, Any]]
+) -> None:
     """The refusal must answer the call that provoked it, by the provider's own ID.
 
     A refusing intercept completes execution without invoking the rest of the chain, so nothing
@@ -123,13 +102,13 @@ def test_a_refusal_carries_the_provider_tool_call_id(relay_plugin: None) -> None
             "transfer_funds", {"amount": 9999}, transfer_funds, tool_call_id="call_abc123"
         )
 
-    _report, outcome = _drive(_config(), body)
+    _report, outcome = _drive(plugin_config(), body)
 
     # The provider's ID, not the tool name the refusal used to be stamped with.
     assert "call_abc123" in str(outcome.result)
 
 
-def test_an_unguarded_tool_still_runs(relay_plugin: None) -> None:
+def test_an_unguarded_tool_still_runs(relay_plugin: None, plugin_config: Callable[..., dict[str, Any]]) -> None:
     """A guardrail is scoped to its tool; the rest of the agent must keep working."""
     del relay_plugin
 
@@ -140,21 +119,20 @@ def test_an_unguarded_tool_still_runs(relay_plugin: None) -> None:
         return await nemo_relay.tools.execute("read_file", {"path": "README.md"}, read_file)
 
     # An unguarded tool passes straight through the intercept and actually runs.
-    _report, outcome = _drive(_config(), body)
+    _report, outcome = _drive(plugin_config(), body)
     assert outcome is not None
 
 
-class _UnscoringJudge:
-    def score(self, instructions: str, tool_name: str, args: str) -> float:
-        del instructions, tool_name, args
-        msg = "the guardrail judge returned no score: 'BLOCK'"
-        raise ValueError(msg)
-
-
-def test_an_unscored_call_runs_and_is_marked(relay_plugin: None, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_an_unscored_call_runs_and_is_marked(
+    relay_plugin: None,
+    plugin_config: Callable[..., dict[str, Any]],
+    make_judge: Callable[[float | Exception], Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Failing open is kept, but visibly: the run must be able to tell it from a call scored benign."""
     del relay_plugin
-    monkeypatch.setattr("agent_hardener.relay_plugin.plugin.LlmSafetyJudge", lambda _config: _UnscoringJudge())
+    unscored = make_judge(ValueError("the guardrail judge returned no score: 'BLOCK'"))
+    monkeypatch.setattr("agent_hardener.relay_plugin.plugin.LlmSafetyJudge", lambda _config: unscored)
     marks: list[tuple[str, Any]] = []
     monkeypatch.setattr(nemo_relay.scope, "event", lambda name, **kwargs: marks.append((name, kwargs.get("data"))))
     called: list[Any] = []
@@ -166,7 +144,7 @@ def test_an_unscored_call_runs_and_is_marked(relay_plugin: None, monkeypatch: py
     async def body() -> Any:
         return await nemo_relay.tools.execute("transfer_funds", {"amount": 9999}, transfer_funds)
 
-    _drive(_config(), body)
+    _drive(plugin_config(), body)
 
     assert called == [{"amount": 9999}]
     [(name, data)] = marks
@@ -199,5 +177,15 @@ def test_an_invalid_guardrail_set_blocks_initialisation(relay_plugin: None) -> N
         _drive({"model": {"model": "m"}, "guardrails": [{"name": "missing-target-tool"}]}, body)
 
 
-def test_validate_accepts_the_config_the_defender_writes() -> None:
-    assert AgentHardenerGuardrailPlugin().validate(_config()) is None
+def test_validate_accepts_the_config_the_defender_writes(plugin_config: Callable[..., dict[str, Any]]) -> None:
+    assert AgentHardenerGuardrailPlugin().validate(plugin_config()) is None
+
+
+def test_validate_reports_a_malformed_config_as_an_error_diagnostic() -> None:
+    diagnostics = AgentHardenerGuardrailPlugin().validate({"guardrails": "not-a-list"})
+
+    assert diagnostics is not None
+    (diagnostic,) = diagnostics
+    assert diagnostic["level"] == "error"
+    assert diagnostic["code"] == "agent_hardener.invalid_guardrails"
+    assert diagnostic["message"].startswith("invalid Agent Hardener guardrail config")

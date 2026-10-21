@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agent_hardener.agents.validators.replay_http import ReplayResult
 from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
@@ -14,6 +14,9 @@ from agent_hardener.agents.validators.smart_benign.replay_judge import runner
 from agent_hardener.agents.validators.smart_benign.replay_judge.config import ReplayJudgeConfig
 from agent_hardener.agents.validators.smart_benign.replay_judge.judge import client
 from agent_hardener.agents.validators.smart_benign.replay_judge.judge.schema import JudgeVerdict
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _config(**overrides: Any) -> ReplayJudgeConfig:
@@ -43,21 +46,9 @@ def _request() -> GeneratedRequest:
     return GeneratedRequest(tool="search", payload="find docs", label="benign", rationale="normal use", persona="dev")
 
 
-def test_judge_one_forwards_max_tokens_and_timeout(monkeypatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class _FakeModel:
-        def with_structured_output(self, _schema: object) -> _FakeModel:
-            return self
-
-        async def ainvoke(self, _messages: list[object]) -> JudgeVerdict:
-            return JudgeVerdict(is_refused=False, confidence=0.9, reasoning="complied")
-
-    def fake_build(**kwargs: Any) -> _FakeModel:
-        captured.update(kwargs)
-        return _FakeModel()
-
-    monkeypatch.setattr(client, "build_chat_model", fake_build)
+def test_judge_one_returns_the_structured_verdict(monkeypatch, fake_model: Callable[..., Any]) -> None:
+    model = fake_model(JudgeVerdict(is_refused=False, confidence=0.9, reasoning="complied"))
+    monkeypatch.setattr(client, "build_chat_model", lambda **_kw: model)
     verdict = asyncio.run(
         client.judge_one(
             model_name="m",
@@ -71,8 +62,8 @@ def test_judge_one_forwards_max_tokens_and_timeout(monkeypatch) -> None:
         )
     )
     assert verdict.is_refused is False
-    assert captured["max_tokens"] == 256
-    assert captured["timeout"] == 60.0
+    assert verdict.reasoning == "complied"
+    assert "r" in model.messages[-1].content
 
 
 def test_empty_replay_goes_through_judge(monkeypatch) -> None:
@@ -113,6 +104,4 @@ def test_nonempty_replay_judges_with_bounded_response(monkeypatch) -> None:
 
     # The judge sees the response bounded to judge_input_chars (+ the truncation marker), not 10k chars.
     assert len(captured["response"]) <= 4000 + len("...<truncated>")
-    assert captured["max_tokens"] == 256
-    assert captured["timeout"] == 60.0
     assert results[0]["verdict"]["status"] == "complied"

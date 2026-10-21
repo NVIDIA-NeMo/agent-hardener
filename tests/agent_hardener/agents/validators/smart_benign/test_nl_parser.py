@@ -3,13 +3,13 @@
 
 """Node tests for the nl_parser subgraph (description → typed capabilities, one LLM call).
 
-The LLM is the canonical ``_FakeModel`` / ``build_chat_model`` monkeypatch — no network.
+The LLM is the canonical ``fake_model`` fixture / ``build_chat_model`` monkeypatch — no network.
 """
 
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -21,6 +21,9 @@ from agent_hardener.agents.validators.smart_benign.subgraphs.nl_parser.schemas i
 )
 from agent_hardener.agents.validators.smart_benign.subgraphs.nl_parser.state import NLParserState
 from agent_hardener.rate_limits import RateLimitError
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 def _state(**overrides: Any) -> NLParserState:
@@ -34,22 +37,7 @@ def _state(**overrides: Any) -> NLParserState:
     return NLParserState(**{**base, **overrides})
 
 
-class _FakeModel:
-    def __init__(self, output: ParserOutput | None = None, raises: Exception | None = None) -> None:
-        self._output = output
-        self._raises = raises
-
-    def with_structured_output(self, _schema: object) -> _FakeModel:
-        return self
-
-    async def ainvoke(self, _messages: list[object]) -> ParserOutput:
-        if self._raises is not None:
-            raise self._raises
-        assert self._output is not None
-        return self._output
-
-
-def _patch(monkeypatch: pytest.MonkeyPatch, model: _FakeModel) -> None:
+def _patch(monkeypatch: pytest.MonkeyPatch, model: Any) -> None:
     monkeypatch.setattr(pr, "build_chat_model", lambda **_kw: model)
 
 
@@ -59,10 +47,12 @@ def test_parse_skips_without_description() -> None:
     assert "tools" not in delta  # nothing parsed
 
 
-def test_parse_maps_llm_output_to_nl_tagged_tools(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_maps_llm_output_to_nl_tagged_tools(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
     _patch(
         monkeypatch,
-        _FakeModel(
+        fake_model(
             ParserOutput(
                 system_role="research assistant",
                 tools=[ParserToolHypothesis(name="bash_executor", description="runs bash", confidence=0.8)],
@@ -80,14 +70,14 @@ def test_parse_maps_llm_output_to_nl_tagged_tools(monkeypatch: pytest.MonkeyPatc
     assert "1 tool" in delta["source_note"]
 
 
-def test_parse_rate_limit_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch(monkeypatch, _FakeModel(raises=Exception("429 too many requests")))
+def test_parse_rate_limit_propagates(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
+    _patch(monkeypatch, fake_model(raises=Exception("429 too many requests")))
     with pytest.raises(RateLimitError):
         asyncio.run(pr.parse(_state()))
 
 
-def test_parse_swallows_non_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch(monkeypatch, _FakeModel(raises=ValueError("bad json")))
+def test_parse_swallows_non_rate_limit_error(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
+    _patch(monkeypatch, fake_model(raises=ValueError("bad json")))
     delta = asyncio.run(pr.parse(_state()))
     assert delta["errors"]
     assert "nl_parser" in delta["errors"][0]
