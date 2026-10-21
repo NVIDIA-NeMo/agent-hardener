@@ -132,11 +132,6 @@ def test_rest_witness_glob_covers_the_attack_and_no_benign_path() -> None:
     assert not glob_matches(witness.glob, _BENIGN_LIST.path)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="prefix_to_glob drops the leading '/', so the deny glob never matches real request paths "
-    "(policy/globs.py:43; the trie strips it in analysis/trie.py:_segments)",
-)
 def test_rest_witness_glob_matches_the_attack_path() -> None:
     cut = RequestTuple(host="api.github.com", port=443, protocol="http", method="DELETE", path="/admin/delete")
 
@@ -145,15 +140,10 @@ def test_rest_witness_glob_matches_the_attack_path() -> None:
     assert glob_matches(witness.glob, "/admin/delete")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="a full-path prefix becomes '<path>/**', which needs a trailing '/' and so misses the attack path itself "
-    "(policy/globs.py:43-46)",
-)
 def test_rest_witness_glob_matches_the_exact_attack_path_when_only_the_full_path_is_clean() -> None:
     witness = check_add_deny_rule(_ctx(benign=[_BENIGN_LIST]))
 
-    assert glob_matches(witness.glob, "/" + "/".join(["repos", "foo", "bar", "issues", "1"]))
+    assert witness.glob == "/repos/foo/bar/issues/1"
 
 
 def test_rest_witness_without_a_cut_method_has_no_attack_methods() -> None:
