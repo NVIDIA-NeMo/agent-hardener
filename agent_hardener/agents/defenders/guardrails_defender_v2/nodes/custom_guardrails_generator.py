@@ -199,9 +199,11 @@ def custom_guardrails_generator_node(state: GraphState) -> dict[str, Any]:
         )
 
         # Strip accidental surrounding markdown or wrapping blocks
-        current_guardrail_draft = current_guardrail_draft.strip().strip('"`')
+        # Unwrap a code fence before stripping stray quotes/backticks, which would eat the fence.
+        current_guardrail_draft = current_guardrail_draft.strip()
         if current_guardrail_draft.startswith("```"):
-            current_guardrail_draft = re.sub(r"^```.*?\n|```$", "", current_guardrail_draft, flags=re.DOTALL).strip()
+            current_guardrail_draft = re.sub(r"^```.*?\n|```$", "", current_guardrail_draft, flags=re.DOTALL)
+        current_guardrail_draft = current_guardrail_draft.strip().strip('"`')
 
         # --- 2. GRADER PHASE ---
         grader_human_message = GRADER_USER_PROMPT.format(
