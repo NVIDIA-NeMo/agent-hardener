@@ -23,7 +23,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  UV_VERSION: "0.10.10"
+  UV_VERSION: "0.13.4"
   # relay is off until a nemo-helix release ships the nemo-fabric its example image pins nemo-relay for.
   WAR_GAME_AGENTS: langgraph,langchain
 
