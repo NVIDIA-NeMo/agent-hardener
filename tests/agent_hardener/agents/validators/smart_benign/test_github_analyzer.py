@@ -4,7 +4,7 @@
 """Node-level tests for the github_analyzer subgraph (clone_and_scan + summarize).
 
 Git/network is never hit: the pure scanners run against a real ``tmp_path``, the clone is stubbed at
-the ``_git_clone``/``_head_sha`` helpers, and the summarizer LLM is the canonical ``_FakeModel`` /
+the ``_git_clone``/``_head_sha`` helpers, and the summarizer LLM is the canonical ``fake_model`` fixture /
 ``build_chat_model`` monkeypatch.
 """
 
@@ -27,6 +27,7 @@ from agent_hardener.agents.validators.smart_benign.subgraphs.github_analyzer.sta
 from agent_hardener.rate_limits import RateLimitError
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -149,22 +150,7 @@ def _tool(name: str) -> ToolSpec:
     return ToolSpec(name=name, description="d", source="github", confidence=0.9)
 
 
-class _FakeModel:
-    def __init__(self, output: SummarizerOutput | None = None, raises: Exception | None = None) -> None:
-        self._output = output
-        self._raises = raises
-
-    def with_structured_output(self, _schema: object) -> _FakeModel:
-        return self
-
-    async def ainvoke(self, _messages: list[object]) -> SummarizerOutput:
-        if self._raises is not None:
-            raise self._raises
-        assert self._output is not None
-        return self._output
-
-
-def _patch_model(monkeypatch: pytest.MonkeyPatch, model: _FakeModel) -> None:
+def _patch_model(monkeypatch: pytest.MonkeyPatch, model: Any) -> None:
     monkeypatch.setattr(sm, "build_chat_model", lambda **_kw: model)
 
 
@@ -175,10 +161,10 @@ def test_summarize_no_readme_skips_llm() -> None:
     assert "personas" not in delta  # no LLM enrichment happened
 
 
-def test_summarize_success_enriches_profile(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_summarize_success_enriches_profile(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
     _patch_model(
         monkeypatch,
-        _FakeModel(
+        fake_model(
             SummarizerOutput(
                 system_role="research assistant",
                 personas=[SummarizerPersona(name="dev", description="a developer")],
@@ -194,14 +180,16 @@ def test_summarize_success_enriches_profile(monkeypatch: pytest.MonkeyPatch) -> 
     assert [t.name for t in delta["tools"]] == ["bash_executor"]
 
 
-def test_summarize_rate_limit_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_model(monkeypatch, _FakeModel(raises=Exception("429 too many requests")))
+def test_summarize_rate_limit_propagates(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
+    _patch_model(monkeypatch, fake_model(raises=Exception("429 too many requests")))
     with pytest.raises(RateLimitError):
         asyncio.run(sm.summarize(_state(readme_text="# Repo", declared_tools=[_tool("bash_executor")])))
 
 
-def test_summarize_swallows_non_rate_limit_error(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_model(monkeypatch, _FakeModel(raises=ValueError("bad json")))
+def test_summarize_swallows_non_rate_limit_error(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    _patch_model(monkeypatch, fake_model(raises=ValueError("bad json")))
     delta = asyncio.run(sm.summarize(_state(readme_text="# Repo", declared_tools=[_tool("bash_executor")])))
     assert delta["errors"]  # error recorded
     assert [t.name for t in delta["tools"]] == ["bash_executor"]  # tools still passed through

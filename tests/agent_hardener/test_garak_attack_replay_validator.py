@@ -13,7 +13,7 @@ import pytest
 
 from agent_hardener.agents.validators import garak_attack_replay as validator
 from agent_hardener.agents.validators.garak_replay import detectors, parsing
-from agent_hardener.agents.validators.garak_replay.config import INDIRECT_DETECTOR_SCAN_YAML, build_config
+from agent_hardener.agents.validators.garak_replay.config import INDIRECT_DETECTOR_SCAN_YAML, ReplayConfig, build_config
 from agent_hardener.models import AgentConfig, AgentRunInput, AttackRecord, TargetInput
 
 DATA_DIR = Path(__file__).resolve().parents[1] / "fixtures"
@@ -533,3 +533,101 @@ def test_persistent_worker_maps_unjudged_reply_to_none(tmp_path: Path, monkeypat
     worker = validator._PersistentGarakWorker(repo_path=None, timeout_seconds=5)
     assert worker.verify("direct_prompt_injection", {}, {}) is None
     worker.close()
+
+
+def _replay_config(**overrides: Any) -> ReplayConfig:
+    return build_config(
+        _request(),
+        AgentConfig(
+            name="garak replay validator",
+            role="validator",
+            timeout_seconds=30,
+            config={"kind": "attack", "replay_url": "http://victim.test/v1/chat/completions", **overrides},
+        ),
+    )
+
+
+def test_indirect_detector_config_root_is_empty_without_override_or_model_settings() -> None:
+    root = detectors.detector_config_root("indirect_prompt_injection", _replay_config())
+
+    assert root == {"detectors": {"indirect_injection": {"IndirectInjectionResult": {}}}}
+
+
+def test_detector_model_settings_are_layered_over_seeded_defaults() -> None:
+    config = _replay_config(
+        detector_model_type="openai.OpenAICompatible",
+        detector_model_name="my-judge",
+        detector_model_config={"max_tokens": 16},
+    )
+
+    detector = detectors.detector_config_root("direct_prompt_injection", config)["detectors"]["agent_breaker"][
+        "AgentBreakerResult"
+    ]
+
+    assert detector["detector_model_type"] == "openai.OpenAICompatible"
+    assert detector["detector_model_name"] == "my-judge"
+    assert detector["detector_model_config"] == {"max_tokens": 16}
+
+
+def test_override_file_replaces_seeded_detector_config(tmp_path: Path) -> None:
+    override = tmp_path / "scan.yaml"
+    override.write_text(
+        "plugins:\n  detectors:\n    agent_breaker:\n      AgentBreakerResult:\n        custom: 1\n", encoding="utf-8"
+    )
+
+    root = detectors.detector_config_root(
+        "direct_prompt_injection", _replay_config(direct_detector_config=str(override))
+    )
+
+    assert root == {"detectors": {"agent_breaker": {"AgentBreakerResult": {"custom": 1}}}}
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["", "- just\n- a list\n", "plugins: {detectors: not-a-mapping}\n", "plugins: {}\n"],
+    ids=["empty", "non-mapping-root", "non-mapping-detectors", "no-detectors"],
+)
+def test_malformed_override_file_falls_back_to_bare_detector_skeleton(tmp_path: Path, content: str) -> None:
+    override = tmp_path / "scan.yaml"
+    override.write_text(content, encoding="utf-8")
+
+    root = detectors.detector_config_root(
+        "direct_prompt_injection", _replay_config(direct_detector_config=str(override))
+    )
+
+    assert root == {"detectors": {"agent_breaker": {"AgentBreakerResult": {}}}}
+
+
+def test_unreadable_override_file_is_treated_as_empty(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.yaml"
+
+    root = detectors.detector_config_root(
+        "indirect_prompt_injection", _replay_config(indirect_detector_config=str(missing))
+    )
+
+    assert root == {"detectors": {"indirect_injection": {"IndirectInjectionResult": {}}}}
+
+
+def test_default_detector_config_prefers_configured_repo_then_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    configured = tmp_path / "configured"
+    from_env = tmp_path / "env"
+    configured.mkdir()
+    from_env.mkdir()
+    (from_env / "scan.yaml").write_text("x: 1\n", encoding="utf-8")
+    monkeypatch.setenv("GARAK_REPO_PATH", str(from_env))
+
+    assert detectors.default_detector_config(configured, "scan.yaml") == from_env / "scan.yaml"
+    (configured / "scan.yaml").write_text("x: 2\n", encoding="utf-8")
+    assert detectors.default_detector_config(configured, "scan.yaml") == configured / "scan.yaml"
+
+
+def test_default_detector_config_returns_none_when_nothing_found(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("GARAK_REPO_PATH", raising=False)
+    (tmp_path / "scan.yaml").mkdir()  # a directory is not a config file
+
+    assert detectors.default_detector_config(None, "scan.yaml") is None
+    assert detectors.default_detector_config(tmp_path, "scan.yaml") is None

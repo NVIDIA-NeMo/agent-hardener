@@ -266,7 +266,7 @@ def prompt_backends() -> list[dict]:
             return backends
 
 
-def resolve_project_layout(pointed_at: Path, *, interactive: bool) -> tuple[str, Path, list[Path], list[Path]]:
+def resolve_project_layout(pointed_at: Path, *, interactive: bool) -> tuple[str, Path, list[Path]]:
     """Resolve the project layout from where the user pointed.
 
     Walks up to the installable project root so an agent subfolder still yields the correct root,

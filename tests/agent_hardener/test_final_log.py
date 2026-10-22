@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 from rich.console import Console
 
 from agent_hardener.display.final import build_summary_renderable, print_final_summary, render_final_run_log
+from agent_hardener.final_log import collect_attempt_transcripts
+from agent_hardener.final_log.collect import _collect_final_log_data
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -970,3 +972,99 @@ def test_build_mitigations_emits_defense_pairs_with_attack_linkage(tmp_path: Pat
     assert guardrail["attack"]["prompt_excerpt"].startswith("Use the send_email tool")
     # The hardened OpenShell policy is a single selectable defense linked to the policy defender's attack.
     assert defenses["openshell_policy"]["kind"] == "policy"
+
+
+def test_collect_final_log_data_tolerates_malformed_reports_and_counts_hits(tmp_path: Path) -> None:
+    hitlog = tmp_path / "garak.job.hitlog.jsonl"
+    _write_jsonl(hitlog, [_hitlog_row("agentbreaker.Tool", "nat.ToolUse", "p", "o", 1.0)])
+    missing = tmp_path / "gone.report.jsonl"
+    reports = [
+        {"attacks": "not-a-list", "iterations": "nope"},
+        {
+            "attacks": [
+                "not-a-dict",
+                {
+                    "agent_name": "agent_breaker",
+                    "ok": False,
+                    "metadata": {"yaml_name": "scan.yaml", "garak_job_id": "job-7"},
+                    "records": [{"probe": "agentbreaker.Tool", "detector": "nat.ToolUse"}, "junk"],
+                    "artifacts": [
+                        "not-a-dict",
+                        {"type": "garak_hitlog", "path": str(hitlog)},
+                        {"type": "garak_report", "path": str(missing)},  # declared but absent on disk
+                        {"type": "other", "path": str(hitlog)},  # wrong type is ignored
+                        {"type": "garak_report"},  # no path
+                    ],
+                },
+                {"agent_name": "indirect", "metadata": "bad", "records": "bad"},
+            ]
+        },
+    ]
+
+    data = _collect_final_log_data(reports)
+
+    breaker = data.stats["agent_breaker"]
+    assert breaker.agent_hardener_hits == 2  # len(records) counts non-dict records too
+    assert breaker.statuses["failed"] == 1
+    assert breaker.yaml_names == {"scan.yaml"}
+    assert breaker.job_ids == {"job-7"}
+    assert breaker.probes["agentbreaker.Tool"] == 2  # one dict record + one hitlog row; "junk" adds none
+    assert breaker.hitlog_hits == 1  # merged from the declared hitlog artifact
+    assert data.garak_files == [hitlog]
+    assert data.stats["indirect"].statuses["ok"] == 1  # ok defaults to True
+
+
+def test_collect_final_log_data_registers_policy_route_files_by_scanner(tmp_path: Path) -> None:
+    routes = tmp_path / "routes.json"
+    routes.write_text(
+        json.dumps({"findings": [{"scanner": "agent_breaker"}, "junk", {"probe": "latentinjection.X"}]}),
+        encoding="utf-8",
+    )
+    not_a_list = tmp_path / "mods.json"
+    not_a_list.write_text(json.dumps({"findings": "nope"}), encoding="utf-8")
+    report = {
+        "iterations": [
+            "skip-me",
+            {
+                "policy_patches": [
+                    "skip-me",
+                    {"finding_routes_path": str(routes), "per_finding_modifications_path": str(not_a_list)},
+                    {"finding_routes_path": str(tmp_path / "missing.json")},
+                    {},
+                ]
+            },
+        ]
+    }
+
+    data = _collect_final_log_data([report])
+
+    assert data.stats["agent_breaker"].files == {routes}
+    assert data.stats["indirect"].files == {routes}
+    assert not_a_list not in data.stats["other"].files
+
+
+def test_collect_attempt_transcripts_skips_non_report_files_and_rescopes_scanner(tmp_path: Path) -> None:
+    hitlog = tmp_path / "garak.job.hitlog.jsonl"
+    _write_jsonl(hitlog, [_attempt_row("hitlog attempt", "x", hit=True)])
+    report = tmp_path / "garak.job.report.jsonl"
+    _write_jsonl(
+        report,
+        [
+            {"entry_type": "eval", "probe": "agentbreaker.Tool"},  # neither setup nor attempt
+            {"entry_type": "attempt", "prompt": None, "outputs": None, "detector_results": {"d": [0.0, 0.0]}},
+            {"entry_type": "start_run setup", "plugins.probe_spec": "latentinjection.Resume"},
+            {"entry_type": "attempt", "probe": "latentinjection.Resume", "detector": "d", "detector_results": [0.5]},
+        ],
+    )
+
+    transcripts = collect_attempt_transcripts([hitlog, report])
+
+    assert len(transcripts) == 2  # the hitlog file is not a report, so its row is not read
+    first, second = transcripts
+    assert (first.probe, first.prompt, first.response, first.hit) == ("<unknown>", "", "", False)
+    assert second.scanner == "indirect"  # a later setup row re-scopes the scanner for following attempts
+    assert second.hit is True
+
+
+def test_collect_attempt_transcripts_missing_file_yields_nothing(tmp_path: Path) -> None:
+    assert collect_attempt_transcripts([tmp_path / "absent.report.jsonl"]) == []

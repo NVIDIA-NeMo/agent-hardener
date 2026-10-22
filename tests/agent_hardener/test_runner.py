@@ -11,7 +11,7 @@ import tempfile
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -19,6 +19,9 @@ from agent_hardener.errors import BenignSuiteError
 from agent_hardener.models import TargetInput
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime.runner import Mission, MissionError, run_mission
+
+if TYPE_CHECKING:
+    from conftest import BuildMission
 
 pytestmark = pytest.mark.unit
 
@@ -579,3 +582,32 @@ def test_teardown_still_deletes_sandbox_when_diagnostics_fail(tmp_path: Path) ->
 
     assert calls == ["down"]
     assert not (tmp_path / "run-logs" / "test-run" / "victim-diagnostics.log").exists()
+
+
+def test_no_cleanup_leaves_the_sandbox_and_backends_running(build_mission: BuildMission) -> None:
+    harness = build_mission(no_cleanup=True)
+
+    harness.run()
+
+    assert harness.lifecycle.calls == ["down", "up"]  # the initial rebuild only; no teardown down
+    assert "Cleanup skipped; sandbox + backends left running." in harness.lines
+
+
+@pytest.mark.usefixtures("relay_probe")
+def test_teardown_stops_the_sandbox_and_the_backends(build_mission: BuildMission, tmp_path: Path) -> None:
+    harness = build_mission(backends=("db",))
+
+    harness.run()
+
+    assert harness.lifecycle.calls[-1] == "down"
+    assert harness.backends.downed == [(["db"], tmp_path)]
+    assert "backends down" in harness.run_log
+
+
+def test_teardown_without_backends_only_stops_the_sandbox(build_mission: BuildMission) -> None:
+    harness = build_mission()
+
+    harness.run()
+
+    assert harness.lifecycle.calls == ["down", "up", "down"]
+    assert harness.backends.downed == []
