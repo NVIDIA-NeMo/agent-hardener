@@ -66,7 +66,7 @@ class PathTrie:
             chain.append(node)
         for i in range(1, len(chain)):
             if "benign" not in self._collect(chain[i]):
-                return "/".join(segments[:i])
+                return "/" + "/".join(segments[:i])
         return None
 
     def _collect(self, node: _TrieNode) -> set[str]:

@@ -15,7 +15,7 @@ pytestmark = pytest.mark.unit
 def test_returns_shallowest_clean_prefix_when_attack_path_is_isolated() -> None:
     trie = PathTrie()
     trie.insert("/repos/foo/bar/issues", "benign")
-    assert trie.shallowest_clean_prefix("/admin/delete") == "admin"
+    assert trie.shallowest_clean_prefix("/admin/delete") == "/admin"
 
 
 def test_returns_none_when_benign_path_nests_under_attack() -> None:
@@ -36,7 +36,7 @@ def test_finds_deeper_clean_prefix_when_shallow_segment_collides() -> None:
     trie = PathTrie()
     trie.insert("/repos/foo/bar/issues", "benign")
     # "repos" collides (benign lives under it), but "repos/foo/bar/delete" doesn't.
-    assert trie.shallowest_clean_prefix("/repos/foo/bar/delete") == "repos/foo/bar/delete"
+    assert trie.shallowest_clean_prefix("/repos/foo/bar/delete") == "/repos/foo/bar/delete"
 
 
 def test_empty_path_returns_none() -> None:

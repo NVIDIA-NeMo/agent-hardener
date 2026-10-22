@@ -95,10 +95,12 @@ def _check_add_deny_rule_rest(ctx: DefenderContext, entry_key: str, endpoint_ind
     prefix = trie.shallowest_clean_prefix(ctx.cut.path)
     if prefix is None:
         return None
+    # Only the full path is clean: deny it literally, since ``<path>/**`` would miss the path itself.
+    full_path = prefix.count("/") == len([seg for seg in ctx.cut.path.split("/") if seg])
     return AddDenyRuleWitness(
         entry_key=entry_key,
         endpoint_index=endpoint_index,
-        glob=prefix_to_glob(prefix),
+        glob=prefix if full_path else prefix_to_glob(prefix),
         attack_methods={ctx.cut.method} if ctx.cut.method else set(),
     )
 
