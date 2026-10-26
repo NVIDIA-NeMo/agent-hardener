@@ -54,13 +54,13 @@ def judge_endpoint() -> str:
 
 
 def judge_api_key_env() -> str:
-    """The env var the judge reads its key from: the safety key when one is set, else the analysis key."""
-    return SAFETY_API_KEY_ENV if os.environ.get(SAFETY_API_KEY_ENV) else DEFAULT_JUDGE_API_KEY_ENV
+    """Keep the judge's resolved key separate from the victim's own inference credential."""
+    return SAFETY_API_KEY_ENV if judge_credentials() else DEFAULT_JUDGE_API_KEY_ENV
 
 
 def judge_credentials() -> dict[str, str]:
-    """The safety key to hand the victim sandbox, which only sees credentials it is given explicitly."""
-    value = os.environ.get(SAFETY_API_KEY_ENV)
+    """Forward the explicit or inherited judge key under its own sandbox credential name."""
+    value = os.environ.get(SAFETY_API_KEY_ENV) or os.environ.get(DEFAULT_JUDGE_API_KEY_ENV)
     return {SAFETY_API_KEY_ENV: value} if value else {}
 
 

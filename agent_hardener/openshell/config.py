@@ -23,18 +23,23 @@ if TYPE_CHECKING:
 class CommandRunner(Protocol):
     """Command execution contract for lifecycle operations."""
 
-    def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, args: list[str], cwd: Path | None = None, *, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         """Run a command and return the completed process."""
 
 
 class SubprocessCommandRunner:
     """Subprocess-backed command runner."""
 
-    def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, args: list[str], cwd: Path | None = None, *, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         """Run a command and capture output."""
         return subprocess.run(  # noqa: S603 - command arguments are explicit lists built by lifecycle callers.
             args,
             cwd=cwd,
+            env=env,
             check=False,
             text=True,
             stdout=subprocess.PIPE,

@@ -14,6 +14,7 @@ plumbing lives in :class:`~agent_hardener.openshell.command.OpenShellCommandExec
 from __future__ import annotations
 
 import logging
+import os
 import shlex
 import time
 from pathlib import Path
@@ -234,6 +235,11 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if not self.config.provider:
             return OpenShellCommandResult(ok=True, command=[], output="")
 
+        if self.config.provider_type != GENERIC_PROVIDER_TYPE and judge_credentials():
+            checked = self._check_judge_profile()
+            if not checked.ok:
+                return checked
+
         results = [
             self._run_with_transport_retries(
                 self._exec.run, ["provider", "get", self.config.provider, "--gateway", self.config.gateway]
@@ -244,7 +250,10 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             return combine_results(results)
         if is_transient_transport_failure(results[-1].output):
             return combine_results(results)
+        return self._create_provider(results)
 
+    def _create_provider(self, results: list[OpenShellCommandResult]) -> OpenShellCommandResult:
+        """Create a missing provider with its victim and judge credentials."""
         credentials, error = self._provider_credentials()
         if error is not None:
             return error
@@ -269,19 +278,50 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             "--type",
             provider_type,
         ]
-        if credentials:
-            for name, value in credentials.items():
-                args.extend(["--credential", f"{name}={value}"])
+        discover = (
+            self.config.provider_type != GENERIC_PROVIDER_TYPE
+            and not self.config.provider_env_file
+            and not self.config.provider_credentials
+        )
+        if credentials and not discover:
+            for name in credentials:
+                args.extend(["--credential", name])
         else:
             args.append("--from-existing")
-        results.append(self._exec.run(args))
+        results.append(self._exec.run(args, env={**os.environ, **credentials} if credentials else None))
+        if results[-1].ok and discover:
+            # OpenShell rejects --from-existing combined with --credential. Preserve profile
+            # discovery first, then add the judge without replacing the discovered victim key.
+            results.append(self._sync_judge_credentials())
         return combine_results(results, ok=results[-1].ok)
+
+    def _check_judge_profile(self) -> OpenShellCommandResult:
+        """Reject custom profiles that cannot carry the separate judge credential before mutation."""
+        exported = self._exec.run(
+            ["provider", "profile", "export", self.config.provider_type, "--gateway", self.config.gateway]
+        )
+        if not exported.ok:
+            return exported
+        profile = yaml.safe_load(exported.output) or {}
+        declared = {name for entry in profile.get("credentials", []) for name in entry.get("env_vars", [])}
+        if not set(judge_credentials()).issubset(declared):
+            return OpenShellCommandResult(
+                ok=False,
+                command=exported.command,
+                output=(
+                    f"Provider profile {self.config.provider_type!r} cannot carry the safety judge credential. "
+                    "Declare AGENT_HARDENER_SAFETY_API_KEY in the profile, or use the generic provider "
+                    "with explicit victim credential names or an env file."
+                ),
+            )
+        return exported
 
     def _sync_judge_credentials(self) -> OpenShellCommandResult:
         """Add the safety judge's key to a provider an earlier run created without it.
 
         The provider outlives runs, so without this the key only lands on the very first one. The key
-        is passed by name: OpenShell reads it from this process's environment, keeping it off argv.
+        is passed by name: OpenShell reads it from a child-only environment, keeping it off argv and
+        preserving the victim's independent inference credential when the judge inherits analysis.
         """
         judge = judge_credentials()
         if not judge:
@@ -294,14 +334,15 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         args = ["provider", "update", str(self.config.provider), "--gateway", self.config.gateway]
         for name in judge:
             args.extend(["--credential", name])
-        results.append(self._exec.run(args))
+        results.append(self._exec.run(args, env={**os.environ, **judge}))
         return combine_results(results)
 
     def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
         """The ``NAME -> value`` credentials: ``provider_env_file``'s, plus the safety judge's own key."""
         judge = judge_credentials()
         if not self.config.provider_env_file:
-            return judge, None
+            credentials = {name: os.environ[name] for name in self.config.provider_credentials if os.environ.get(name)}
+            return {**credentials, **judge}, None
         command = [self.config.openshell_bin, "provider", "create"]
         try:
             credentials = self._provider_credentials_from_env_file()
@@ -338,6 +379,11 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             return combine_results([imported, exported], ok=False)
         current = yaml.safe_load(exported.output) or {}
         profile["resource_version"] = current.get("resource_version")
+        # A reused provider can carry victim credentials inferred from its dotenv, or credentials
+        # added by another run. Adding the judge must not remove their existing profile mappings.
+        credentials = {entry["name"]: entry for entry in current.get("credentials", [])}
+        credentials.update({entry["name"]: entry for entry in profile["credentials"]})
+        profile["credentials"] = list(credentials.values())
         profile_path.write_text(yaml.safe_dump(profile, sort_keys=False), encoding="utf-8")
         updated = self._exec.run(
             [
