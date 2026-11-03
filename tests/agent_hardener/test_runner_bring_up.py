@@ -259,6 +259,16 @@ def test_reuse_adopts_the_pre_built_image_the_sandbox_was_created_from(build_mis
     assert _REUSING in reused.lines
 
 
+def test_reuse_rebuilds_a_changed_agent_from_its_source_not_the_recorded_image(build_mission: BuildMission) -> None:
+    build_mission(image="reg/agent:1", start_command="run-old", no_cleanup=True).run()
+    rebuilt = build_mission(start_command="run-new", skip_initial_up=True, no_cleanup=True)
+
+    rebuilt.run()
+
+    assert rebuilt.lifecycle.calls == ["down", "up"]
+    assert rebuilt.lifecycle.config.image is None
+
+
 def test_an_explicit_image_wins_over_the_recorded_one(build_mission: BuildMission) -> None:
     build_mission(image="reg/agent:1", no_cleanup=True).run()
     rebuilt = build_mission(image="reg/agent:2", skip_initial_up=True, no_cleanup=True)

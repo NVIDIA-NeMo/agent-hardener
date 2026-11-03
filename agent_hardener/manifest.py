@@ -12,6 +12,7 @@ the full config as an escape hatch.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from pathlib import Path
 from typing import Any, Literal
@@ -58,7 +59,7 @@ class BackendManifest(AgentHardenerModel):
         host = (value or "").strip()
         if not host:
             return None
-        if "://" in host or "/" in host or ":" in host:
+        if "://" in host or "/" in host or (":" in host and not _is_ipv6(host)):
             raise ValueError(f"backend host must be a bare hostname or IP, not {host!r}; put the port in ports")
         return host
 
@@ -69,6 +70,14 @@ class BackendManifest(AgentHardenerModel):
         if self.host and self.compose_file:
             raise ValueError(f"backend '{self.name}' sets both host and compose_file; compose starts it on this host")
         return self
+
+
+def _is_ipv6(host: str) -> bool:
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 class AgentSpec(AgentHardenerModel):

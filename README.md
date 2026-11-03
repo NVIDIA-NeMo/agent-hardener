@@ -106,7 +106,6 @@ backends:
   #   host: ledger.ns.svc
   #   ports: [8087]
   #   allowed_ips: [10.96.0.0/12]       # private ranges OpenShell would otherwise block
-  #   health_url: http://ledger.ns.svc:8087/health
 ```
 
 The minimum a user must supply: `agent.project_dir` + `agent.workflow`, and `agent.secrets` (env-var
@@ -121,7 +120,8 @@ On a host without Docker, `uv run agent-hardener stage` writes the victim's buil
 directory. Build and push that directory with any image builder, then pass the result to
 `run --victim-image <ref>` (also accepted by `up` and `synth-benign`). The image must come from the `stage`
 output of the same manifest and agent-hardener version you run with: `run` re-stages the context to derive
-the sandbox policy and launch environment, and nothing checks that the image still matches it.
+the sandbox policy and launch environment. `stage` stamps a digest of the context into the image, and
+`up`, `run` and `synth-benign` warn (but carry on) when the image's digest is missing or differs.
 
 Garak's agent_breaker probe is run from a `garak-scan.yaml` config that `init` scaffolds and
 `run` regenerates with the resolved victim endpoint. To tune it (models, victim port, attempts), add a

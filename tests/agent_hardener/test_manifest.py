@@ -159,6 +159,12 @@ def test_backend_rejects_routes_that_would_silently_do_nothing(backend: dict[str
         AgentManifest.model_validate({**AGENT, "backends": [backend]})
 
 
+@pytest.mark.parametrize("host", ["finance.ns.svc", "10.96.4.2", "fd00::10"])
+def test_a_backend_host_may_be_a_name_or_an_ip(host: str) -> None:
+    manifest = AgentManifest.model_validate({**AGENT, "backends": [{"name": "f", "ports": [8086], "host": host}]})
+    assert manifest.backends[0].host == host
+
+
 def test_a_blank_backend_host_means_the_default() -> None:
     manifest = AgentManifest.model_validate({**AGENT, "backends": [{"name": "f", "ports": [8086], "host": "  "}]})
     assert manifest.backends[0].host is None

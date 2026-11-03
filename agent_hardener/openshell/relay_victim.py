@@ -21,9 +21,6 @@ import shutil
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
-
 from agent_hardener.errors import VictimBuildError
 
 #: The guardrail package as it is named *inside the victim*. Copied in rather than pip-installed:
@@ -34,17 +31,19 @@ GUARDRAIL_PACKAGE = "agent_hardener_guardrail"
 _PLUGIN_SOURCE = Path(__file__).resolve().parent.parent / "relay_plugin"
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
+
     from agent_hardener.models import RelayVictimSpec
 
-# Kept out of the staged build context, which may be uploaded and built elsewhere (``agent-hardener stage``).
-# ``.env`` is the secrets convention; secrets reach the sandbox via the OpenShell provider, never the image.
+# Secrets reach the sandbox through the OpenShell provider, so dotenv files never enter the staged context.
 STAGED_CONTEXT_EXCLUDES = (".git", ".venv", "__pycache__", "*.pyc", ".agent-hardener", ".env", ".env.*")
 STAGED_CONTEXT_KEEPS = (".env.example",)
 
 SHIM_DIR = "openshell-shims"
 #: Written into the shim directory so a pre-built image carries the digest of the context it was built from.
 CONTEXT_DIGEST_FILE = "context_digest"
-IMAGE_CONTEXT_DIGEST_PATH = f"/app/{SHIM_DIR}/{CONTEXT_DIGEST_FILE}"
+IMAGE_SHIM_PATH = f"/app/{SHIM_DIR}"
+IMAGE_CONTEXT_DIGEST_PATH = f"{IMAGE_SHIM_PATH}/{CONTEXT_DIGEST_FILE}"
 
 # System-policy layer Relay discovers plugin config from. Agent Hardener uploads the guardrails the
 # defenders produce here; the user/project layers are deliberately not used, because NeMo Fabric
@@ -232,7 +231,9 @@ def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
         dockerfile.write(_HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST))
 
 
-def stage_relay_victim_build(spec: RelayVictimSpec, cwd: Path, build_root: Path) -> Path:
+def stage_relay_victim_build(
+    spec: RelayVictimSpec, cwd: Path, build_root: Path, *, also_exclude: Iterable[Path] = ()
+) -> Path:
     """Stage the build context and return the path to the staged ``Dockerfile``.
 
     Copies ``spec.project_dir`` into ``build_root`` and writes a ``Dockerfile`` at its root:
@@ -242,6 +243,8 @@ def stage_relay_victim_build(spec: RelayVictimSpec, cwd: Path, build_root: Path)
         spec: The NAT victim specification.
         cwd: Base directory that relative paths in ``spec`` resolve against.
         build_root: Directory to stage into (created/replaced).
+        also_exclude: Further files or directories to keep out of the context, beside the secrets file
+            and the relay artifacts directory.
 
     Returns:
         Path to the staged ``Dockerfile`` (suitable for ``--from``).
@@ -250,11 +253,11 @@ def stage_relay_victim_build(spec: RelayVictimSpec, cwd: Path, build_root: Path)
     project_dir = project_dir.resolve()
     if not project_dir.is_dir():
         raise VictimBuildError(f"relay_victim.project_dir does not exist: {project_dir}")
-    secrets_file = _resolve_secrets_file(spec, cwd)
+    excluded = {path.resolve() for path in (*_relative_to(cwd, spec.secrets_file, spec.relay_artifacts), *also_exclude)}
 
     if build_root.exists():
         shutil.rmtree(build_root)
-    shutil.copytree(project_dir, build_root, ignore=_staging_ignore(secrets_file), symlinks=True)
+    shutil.copytree(project_dir, build_root, ignore=_staging_ignore(excluded), symlinks=True)
 
     staged_dockerfile = build_root / "Dockerfile"
     user_dockerfile = spec.dockerfile if spec.dockerfile.is_absolute() else project_dir / spec.dockerfile
@@ -268,7 +271,7 @@ def stage_relay_victim_build(spec: RelayVictimSpec, cwd: Path, build_root: Path)
     if spec.harness == "hermes":
         _inject_hermes_wiring(staged_dockerfile)
 
-    _append_dockerignore(build_root, project_dir, secrets_file)
+    _append_dockerignore(build_root, project_dir, excluded)
     (build_root / SHIM_DIR / CONTEXT_DIGEST_FILE).write_text(staged_context_digest(build_root) + "\n", encoding="utf-8")
     return staged_dockerfile
 
@@ -280,36 +283,36 @@ def staged_context_digest(build_root: Path) -> str:
     for path in sorted(build_root.rglob("*")):
         if path == stamp or (path.is_dir() and not path.is_symlink()):
             continue
-        content = str(path.readlink()).encode() if path.is_symlink() else path.read_bytes()
+        if path.is_symlink():
+            file_hash = hashlib.sha256(str(path.readlink()).encode()).digest()
+        else:
+            with path.open("rb") as handle:
+                file_hash = hashlib.file_digest(handle, "sha256").digest()
         digest.update(path.relative_to(build_root).as_posix().encode() + b"\0")
-        digest.update(hashlib.sha256(content).digest())
+        digest.update(file_hash)
     return digest.hexdigest()
 
 
-def _resolve_secrets_file(spec: RelayVictimSpec, cwd: Path) -> Path | None:
-    if spec.secrets_file is None:
-        return None
-    secrets_file = spec.secrets_file if spec.secrets_file.is_absolute() else cwd / spec.secrets_file
-    return secrets_file.resolve()
+def _relative_to(cwd: Path, *paths: Path | None) -> list[Path]:
+    return [path if path.is_absolute() else cwd / path for path in paths if path is not None]
 
 
-def _staging_ignore(secrets_file: Path | None) -> Callable[[str, list[str]], set[str]]:
+def _staging_ignore(excluded: set[Path]) -> Callable[[str, list[str]], set[str]]:
     by_pattern = shutil.ignore_patterns(*STAGED_CONTEXT_EXCLUDES)
 
     def ignore(directory: str, names: list[str]) -> set[str]:
         ignored = set(by_pattern(directory, names)) - set(STAGED_CONTEXT_KEEPS)
-        if secrets_file is not None and secrets_file.parent == Path(directory).resolve():
-            ignored.add(secrets_file.name)
+        parent = Path(directory).resolve()
+        ignored.update(name for name in names if parent / name in excluded)
         return ignored
 
     return ignore
 
 
-def _append_dockerignore(build_root: Path, project_dir: Path, secrets_file: Path | None) -> None:
+def _append_dockerignore(build_root: Path, project_dir: Path, excluded: set[Path]) -> None:
     """Extend the project's own ``.dockerignore`` (copied in, if any) rather than replace it."""
     entries = list(STAGED_CONTEXT_EXCLUDES)
-    if secrets_file is not None and secrets_file.is_relative_to(project_dir):
-        entries.append(secrets_file.relative_to(project_dir).as_posix())
+    entries += sorted(path.relative_to(project_dir).as_posix() for path in excluded if path.is_relative_to(project_dir))
     dockerignore = build_root / ".dockerignore"
     existing = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
     present = {line.strip() for line in existing.splitlines()}

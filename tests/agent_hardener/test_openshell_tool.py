@@ -329,6 +329,7 @@ class _Sandbox:
     ) -> None:
         self.events: list[str] = []
         self.verify_error: Exception | None = None
+        self.drift: str | None = None
         outer = self
 
         class Lifecycle:
@@ -346,6 +347,9 @@ class _Sandbox:
             def down(self) -> None:
                 outer.events.append(f"down:{self.config}")
 
+            def image_context_drift(self) -> str | None:
+                return outer.drift
+
         def verify(prepared: str, *, base_url: str | None) -> None:
             outer.events.append(f"verify:{prepared}:{base_url}")
             if outer.verify_error:
@@ -360,6 +364,7 @@ class _Sandbox:
         monkeypatch.setattr(tool, "sandbox_is_ready", is_ready)
         monkeypatch.setattr(tool, "verify_relay_instrumentation", verify)
         monkeypatch.setattr(tool, "OpenShellLifecycle", Lifecycle)
+        monkeypatch.setattr(tool, "warn", lambda message: outer.events.append(f"warn:{message}"))
 
     def enter(self, **kwargs: Any) -> Any:
         return tool.managed_victim_sandbox(cast("VictimControlConfig", None), **kwargs)
@@ -373,6 +378,16 @@ def test_a_fresh_sandbox_is_built_verified_and_torn_down(monkeypatch: pytest.Mon
 
     assert config == "base"
     assert sandbox.events == ["up:prepared-base", "verify:prepared-base:http://victim/v1", "body", "down:base"]
+
+
+def test_a_mismatched_victim_image_is_warned_about_before_verification(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _Sandbox(monkeypatch)
+    sandbox.drift = "victim image reg/agent:1 was built from a different staged context"
+
+    with sandbox.enter(reuse=False, no_cleanup=True):
+        pass
+
+    assert sandbox.events[1] == "warn:victim image reg/agent:1 was built from a different staged context"
 
 
 def test_a_ready_sandbox_is_reused_and_left_running(monkeypatch: pytest.MonkeyPatch) -> None:

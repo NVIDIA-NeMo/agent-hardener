@@ -191,6 +191,24 @@ def test_a_symlink_counts_toward_the_digest_by_its_target(tmp_path: Path) -> Non
     assert staged_context_digest(root) != before
 
 
+def test_the_runs_own_telemetry_stays_out_of_the_context_and_its_digest(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    events = project / spec.atof_path
+    events.parent.mkdir(parents=True)
+    build = tmp_path / "build"
+
+    events.write_text('{"run": 1}\n', encoding="utf-8")
+    stage_relay_victim_build(spec, project, build)
+    first = staged_context_digest(build)
+    events.write_text('{"run": 2}\n', encoding="utf-8")
+    stage_relay_victim_build(spec, project, build)
+
+    assert staged_context_digest(build) == first
+    assert not (build / "artifacts" / "relay").exists()
+    assert "artifacts/relay" in (build / ".dockerignore").read_text(encoding="utf-8").splitlines()
+
+
 def test_staging_keeps_the_sandbox_records(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
@@ -440,6 +458,29 @@ def test_prepare_relay_victim_stages_and_patches_policy(tmp_path: Path) -> None:
     assert prepared.build_context.exists()
     patched = yaml.safe_load(prepared.policy_path.read_text(encoding="utf-8"))
     assert "relay_victim_backends" in patched["network_policies"]
+
+
+def test_prepare_keeps_the_providers_env_file_out_of_the_staged_context(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = _make_project(tmp_path)
+    (project / "secrets").mkdir()
+    (project / "secrets" / "prod.env").write_text("INFERENCE_API_KEY=secret\n", encoding="utf-8")
+    monkeypatch.chdir(project)
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    base = OpenShellConfig(
+        gateway="g",
+        sandbox="sbx",
+        policy_path=_policy(tmp_path),
+        cwd=tmp_path,
+        relay_victim=spec,
+        provider_env_file=Path("secrets/prod.env"),
+    )
+
+    prepared = prepare_relay_victim(base)
+
+    assert prepared.build_context is not None
+    assert not (prepared.build_context.parent / "secrets" / "prod.env").exists()
 
 
 def test_the_launch_command_pins_the_in_sandbox_atof_path(tmp_path: Path) -> None:
@@ -788,7 +829,7 @@ def test_bind_provider_credentials_binds_only_inspected_endpoints() -> None:
     assert [e.get("credential_binding") for e in endpoints] == [{"provider": "secrets"}, None, None, None]
 
 
-def test_backend_manager_health_gates_a_backend_it_does_not_start(
+def test_backend_manager_leaves_the_health_of_a_backend_it_does_not_start_alone(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[tuple[str, float]] = []
@@ -802,4 +843,4 @@ def test_backend_manager_health_gates_a_backend_it_does_not_start(
 
     assert manager.up([spec], tmp_path).ok
     assert runner.commands == []
-    assert calls == [("http://finance.ns.svc:8086/health", 120.0)]
+    assert calls == []

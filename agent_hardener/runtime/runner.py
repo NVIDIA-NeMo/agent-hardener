@@ -250,11 +250,22 @@ class Mission:
         """The pre-built image the running sandbox was created from, when ``--victim-image`` is not repeated.
 
         Without it a ``--reuse`` after a ``--victim-image`` run would see a fingerprint mismatch, tear the good
-        sandbox down, and fall into a local ``docker build`` on the very host that has no Docker.
+        sandbox down, and fall into a local ``docker build`` on the very host that has no Docker. Adopted only
+        while the recorded fingerprint still matches, so a changed agent is rebuilt from the configured source.
         """
         if self._base_config.image is not None:
             return None
-        return read_victim_image(self._base_config.cwd or Path.cwd(), self._base_config.sandbox)
+        cwd = self._base_config.cwd or Path.cwd()
+        recorded = read_victim_image(cwd, self._base_config.sandbox)
+        if recorded is None:
+            return None
+        adopted = replace(self._base_config, image=recorded)
+        fingerprint = _agent_fingerprint(self.ctx.session_config, adopted)
+        return (
+            recorded
+            if _read_fingerprint(agent_fingerprint_path(cwd, self._base_config.sandbox)) == fingerprint
+            else None
+        )
 
     def _open_sinks(self, sinks: contextlib.ExitStack) -> None:
         """Wire the per-run agent-hardener.log capture and the multicast structured-event bus onto *sinks*."""

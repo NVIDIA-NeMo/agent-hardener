@@ -542,19 +542,24 @@ def _image_lifecycle(
     )
 
 
+_STAGED_DIGEST = "a" * 64
+
+
 @pytest.mark.parametrize(
     ("in_image", "expected"),
     [
-        ("abc\n", None),
-        ("other\n", "was built from a different staged context"),
+        (f"{_STAGED_DIGEST}\n", None),
+        (f"Welcome to the sandbox\n{_STAGED_DIGEST}\n", None),
+        (f"{'b' * 64}\n", "was built from a different staged context"),
         ("", "has no staged-context digest"),
+        ("Welcome to the sandbox\n", "has no staged-context digest"),
     ],
 )
 def test_image_context_drift_compares_the_image_digest_to_the_staged_one(
     tmp_path: Path, in_image: str, expected: str | None
 ) -> None:
     (tmp_path / "openshell-shims").mkdir()
-    (tmp_path / "openshell-shims" / "context_digest").write_text("abc\n", encoding="utf-8")
+    (tmp_path / "openshell-shims" / "context_digest").write_text(f"{_STAGED_DIGEST}\n", encoding="utf-8")
     runner = SequenceRunner([(0, in_image)])
     drift = _image_lifecycle(tmp_path, runner, image="reg/agent:1").image_context_drift()
 

@@ -19,6 +19,8 @@ from __future__ import annotations
 import shutil
 from typing import TYPE_CHECKING
 
+from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, SHIM_DIR
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -50,7 +52,7 @@ produced. The Dockerfile layers `plugins.toml` onto that image and replaces its 
 with one that drops the OpenShell proxy shim, so the agent code is exactly what was tested.
 """
 
-_PREBUILT_SHIM_OVERRIDE = "COPY sitecustomize.py /app/openshell-shims/sitecustomize.py\n"
+_PREBUILT_SHIM_OVERRIDE = f"COPY sitecustomize.py {IMAGE_SHIM_PATH}/sitecustomize.py\n"
 
 _README = """\
 # Hardened image — {agent}
@@ -141,12 +143,12 @@ def write_hardened_bundle(
         if build_root is None:
             raise ValueError("a hardened bundle needs a staged build context or a pre-built image")
         shutil.copytree(build_root, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
-        _strip_sandbox_shim(destination / "openshell-shims" / "sitecustomize.py")
+        _strip_sandbox_shim(destination / SHIM_DIR / "sitecustomize.py")
         source = _STAGED_SOURCE
     else:
         destination.mkdir(parents=True)
         dockerfile_text = f"FROM {image}\n"
-        staged_shim = build_root / "openshell-shims" / "sitecustomize.py" if build_root else None
+        staged_shim = build_root / SHIM_DIR / "sitecustomize.py" if build_root else None
         if staged_shim is not None and staged_shim.is_file():
             shutil.copyfile(staged_shim, destination / "sitecustomize.py")
             _strip_sandbox_shim(destination / "sitecustomize.py")

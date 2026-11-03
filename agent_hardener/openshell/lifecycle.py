@@ -14,6 +14,7 @@ plumbing lives in :class:`~agent_hardener.openshell.command.OpenShellCommandExec
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 import time
 from pathlib import Path
@@ -47,6 +48,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger("agent_hardener.session")
+
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 #: The provider type the manifest names for "the victim's secrets"; backed by a generated profile.
 GENERIC_PROVIDER_TYPE = "generic"
@@ -153,10 +156,10 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         )
         if not result.ok:
             return None
-        found = result.output.strip()
-        if found == staged.read_text(encoding="utf-8").strip():
+        lines = result.output.split()
+        if staged.read_text(encoding="utf-8").strip() in lines:
             return None
-        if not found:
+        if not any(_SHA256_HEX.fullmatch(line) for line in lines):
             return (
                 f"victim image {self.config.image} has no staged-context digest; build it from `agent-hardener stage`"
             )

@@ -1118,6 +1118,9 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
         def runs_configured_image(self) -> bool:
             return True
 
+        def image_context_drift(self) -> str | None:
+            return None
+
         def up(self) -> OpenShellCommandResult:
             events.append("up")
             return _ok("brought-up") if up_ok else OpenShellCommandResult(ok=False, command=[], output="build failed")
