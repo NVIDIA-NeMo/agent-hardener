@@ -114,6 +114,31 @@ def test_a_pre_built_image_is_layered_not_rebuilt(tmp_path: Path) -> None:
     assert "Built from `registry.example.com/ledger:1`" in (bundle / "README.md").read_text()
 
 
+def test_a_pre_built_image_gets_the_sandbox_proxy_shim_stripped(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, image="registry.example.com/ledger:1")
+
+    assert "COPY sitecustomize.py /app/openshell-shims/sitecustomize.py" in (bundle / "Dockerfile").read_text()
+    shim = (bundle / "sitecustomize.py").read_text()
+    assert "aiohttp" not in shim
+    assert shim.strip()
+
+
+def test_a_pre_built_image_without_a_staged_context_is_layered_as_is(tmp_path: Path) -> None:
+    plugins = tmp_path / "plugins.toml"
+    plugins.write_text("version = 1\n", encoding="utf-8")
+    bundle = write_hardened_bundle(
+        build_root=None,
+        plugins_toml=plugins,
+        destination=tmp_path / "hardened-image",
+        agent="ledger",
+        run_id="r",
+        image="registry.example.com/ledger:1",
+    )
+
+    assert "sitecustomize" not in (bundle / "Dockerfile").read_text()
+    assert not (bundle / "sitecustomize.py").exists()
+
+
 def test_a_bundle_needs_a_build_root_or_an_image(tmp_path: Path) -> None:
     plugins = tmp_path / "plugins.toml"
     plugins.write_text("", encoding="utf-8")

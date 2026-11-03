@@ -24,10 +24,16 @@ from agent_hardener.openshell.policy_egress import (
     inject_backend_egress,
     reconcile_shared_endpoint_settings,
 )
-from agent_hardener.openshell.relay_victim import GUARDRAIL_PACKAGE, dockerfile_env, stage_relay_victim_build
+from agent_hardener.openshell.relay_victim import (
+    GUARDRAIL_PACKAGE,
+    dockerfile_env,
+    stage_relay_victim_build,
+    staged_context_digest,
+)
 from agent_hardener.providers import backends
 from agent_hardener.providers.backends import BackendManager
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
+from agent_hardener.swarm_tracker import agent_fingerprint_path, read_victim_image, write_victim_image
 from agent_hardener.tools import openshell as tool
 from agent_hardener.tools.openshell import _launch_env, openshell_config, prepare_relay_victim, sandbox_is_ready
 
@@ -129,6 +135,7 @@ def test_stage_leaves_dotenv_and_the_secrets_file_out_of_the_build_context(tmp_p
     (project / "config").mkdir()
     (project / "config" / "prod.env").write_text("GITHUB_TOKEN=secret\n", encoding="utf-8")
     (project / ".env.example").write_text("INFERENCE_API_KEY=\n", encoding="utf-8")
+    (project / ".env.local").write_text("INFERENCE_API_KEY=secret\n", encoding="utf-8")
     spec = RelayVictimSpec(
         project_dir=project,
         dockerfile="Dockerfile.byo",
@@ -139,11 +146,62 @@ def test_stage_leaves_dotenv_and_the_secrets_file_out_of_the_build_context(tmp_p
     stage_relay_victim_build(spec, tmp_path, build)
 
     assert not (build / ".env").exists()
+    assert not (build / ".env.local").exists()
     assert not (build / "config" / "prod.env").exists()
     assert (build / ".env.example").is_file()
     dockerignore = (build / ".dockerignore").read_text(encoding="utf-8").splitlines()
-    assert ".env" in dockerignore
-    assert "config/prod.env" in dockerignore
+    assert {".env", ".env.*", "config/prod.env"} <= set(dockerignore)
+    assert dockerignore.index("!.env.example") > dockerignore.index(".env.*")
+
+
+def test_stage_keeps_the_shims_in_an_allowlist_style_dockerignore(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    (project / ".dockerignore").write_text("*\n!agents_lab\n", encoding="utf-8")
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    stage_relay_victim_build(spec, tmp_path, tmp_path / "build")
+
+    lines = (tmp_path / "build" / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert lines[-1] == "!openshell-shims"
+
+
+def test_stage_stamps_a_digest_that_follows_the_staged_context(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    build = tmp_path / "build"
+    stamp = build / "openshell-shims" / "context_digest"
+
+    stage_relay_victim_build(spec, tmp_path, build)
+    first = stamp.read_text(encoding="utf-8").strip()
+    stage_relay_victim_build(spec, tmp_path, build)
+    assert stamp.read_text(encoding="utf-8").strip() == first == staged_context_digest(build)
+
+    (project / "pyproject.toml").write_text("[project]\nname='changed'\n", encoding="utf-8")
+    stage_relay_victim_build(spec, tmp_path, build)
+    assert stamp.read_text(encoding="utf-8").strip() != first
+
+
+def test_a_symlink_counts_toward_the_digest_by_its_target(tmp_path: Path) -> None:
+    root = tmp_path / "ctx"
+    root.mkdir()
+    (root / "link").symlink_to("a")
+    before = staged_context_digest(root)
+    (root / "link").unlink()
+    (root / "link").symlink_to("b")
+
+    assert staged_context_digest(root) != before
+
+
+def test_staging_keeps_the_sandbox_records(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    write_victim_image(tmp_path, "sb", "reg/agent:1")
+    fingerprint = agent_fingerprint_path(tmp_path, "sb")
+    fingerprint.write_text("fp\n", encoding="utf-8")
+
+    stage_relay_victim_build(spec, tmp_path, tmp_path / ".agent-hardener" / "builds" / "sb")
+
+    assert read_victim_image(tmp_path, "sb") == "reg/agent:1"
+    assert fingerprint.read_text(encoding="utf-8") == "fp\n"
 
 
 def test_stage_extends_the_projects_dockerignore_instead_of_replacing_it(tmp_path: Path) -> None:

@@ -31,6 +31,7 @@ from agent_hardener.openshell.config import (
     OpenShellConfig,
     SubprocessCommandRunner,
 )
+from agent_hardener.openshell.relay_victim import CONTEXT_DIGEST_FILE, IMAGE_CONTEXT_DIGEST_PATH, SHIM_DIR
 from agent_hardener.openshell.support import (
     combine_results,
     is_sandbox_not_found,
@@ -139,6 +140,30 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if self.config.image is None:
             return True
         return read_victim_image(self._builds_cwd(), self.config.sandbox) == self.config.image
+
+    def image_context_drift(self) -> str | None:
+        """Say so when the sandbox's pre-built image was not built from the context staged now; else None."""
+        if self.config.image is None or self.config.build_context is None:
+            return None
+        staged = self.config.build_context.parent / SHIM_DIR / CONTEXT_DIGEST_FILE
+        if not staged.is_file():
+            return None
+        result = self._exec.run(
+            self._sandbox_exec_args('cat "$1" 2>/dev/null || true', "sh", IMAGE_CONTEXT_DIGEST_PATH)
+        )
+        if not result.ok:
+            return None
+        found = result.output.strip()
+        if found == staged.read_text(encoding="utf-8").strip():
+            return None
+        if not found:
+            return (
+                f"victim image {self.config.image} has no staged-context digest; build it from `agent-hardener stage`"
+            )
+        return (
+            f"victim image {self.config.image} was built from a different staged context than this config "
+            "produces; rebuild it from `agent-hardener stage`"
+        )
 
     def _builds_cwd(self) -> Path:
         return self.config.cwd or Path.cwd()

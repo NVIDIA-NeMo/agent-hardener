@@ -542,6 +542,50 @@ def _image_lifecycle(
     )
 
 
+@pytest.mark.parametrize(
+    ("in_image", "expected"),
+    [
+        ("abc\n", None),
+        ("other\n", "was built from a different staged context"),
+        ("", "has no staged-context digest"),
+    ],
+)
+def test_image_context_drift_compares_the_image_digest_to_the_staged_one(
+    tmp_path: Path, in_image: str, expected: str | None
+) -> None:
+    (tmp_path / "openshell-shims").mkdir()
+    (tmp_path / "openshell-shims" / "context_digest").write_text("abc\n", encoding="utf-8")
+    runner = SequenceRunner([(0, in_image)])
+    drift = _image_lifecycle(tmp_path, runner, image="reg/agent:1").image_context_drift()
+
+    assert (drift is None) if expected is None else (expected in (drift or ""))
+    assert runner.commands[0][-1] == "/app/openshell-shims/context_digest"
+
+
+@pytest.mark.parametrize("case", ["no-image", "no-stamp", "exec-fails"])
+def test_image_context_drift_stays_quiet_when_it_cannot_tell(tmp_path: Path, case: str) -> None:
+    if case != "no-stamp":
+        (tmp_path / "openshell-shims").mkdir()
+        (tmp_path / "openshell-shims" / "context_digest").write_text("abc\n", encoding="utf-8")
+    runner = SequenceRunner([(1, "sandbox unreachable")])
+    if case == "no-image":
+        (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
+        lifecycle = OpenShellLifecycle(
+            OpenShellConfig(
+                gateway="gw",
+                sandbox="sb",
+                policy_path=tmp_path / "policy.yaml",
+                build_context=tmp_path / "Dockerfile",
+                cwd=tmp_path,
+            ),
+            runner=runner,
+        )
+    else:
+        lifecycle = _image_lifecycle(tmp_path, runner, image="reg/agent:1")
+
+    assert lifecycle.image_context_drift() is None
+
+
 @pytest.mark.parametrize("with_context", [True, False], ids=["staged-context-present", "image-only"])
 def test_lifecycle_creates_from_victim_image_without_a_local_build(tmp_path: Path, with_context: bool) -> None:
     runner = SequenceRunner([(0, "gateway ok"), (1, "sandbox missing"), (0, "sandbox created"), (0, "Phase: Ready")])

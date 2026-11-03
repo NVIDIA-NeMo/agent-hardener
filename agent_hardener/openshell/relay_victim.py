@@ -14,6 +14,7 @@ thing we add is the egress shim the sandbox needs to route their traffic through
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shlex
 import shutil
@@ -37,7 +38,13 @@ if TYPE_CHECKING:
 
 # Kept out of the staged build context, which may be uploaded and built elsewhere (``agent-hardener stage``).
 # ``.env`` is the secrets convention; secrets reach the sandbox via the OpenShell provider, never the image.
-STAGED_CONTEXT_EXCLUDES = (".git", ".venv", "__pycache__", "*.pyc", ".agent-hardener", ".env")
+STAGED_CONTEXT_EXCLUDES = (".git", ".venv", "__pycache__", "*.pyc", ".agent-hardener", ".env", ".env.*")
+STAGED_CONTEXT_KEEPS = (".env.example",)
+
+SHIM_DIR = "openshell-shims"
+#: Written into the shim directory so a pre-built image carries the digest of the context it was built from.
+CONTEXT_DIGEST_FILE = "context_digest"
+IMAGE_CONTEXT_DIGEST_PATH = f"/app/{SHIM_DIR}/{CONTEXT_DIGEST_FILE}"
 
 # System-policy layer Relay discovers plugin config from. Agent Hardener uploads the guardrails the
 # defenders produce here; the user/project layers are deliberately not used, because NeMo Fabric
@@ -170,7 +177,7 @@ def _inject_shim_dir(build_root: Path, staged_dockerfile: Path) -> None:
     COPY runs as the build daemon. The launcher still prepends ``PYTHONPATH`` (see prepare_relay_victim),
     since OpenShell replaces the image's ``PATH`` with its own.
     """
-    shim_dir = build_root / "openshell-shims"
+    shim_dir = build_root / SHIM_DIR
     shim_dir.mkdir(exist_ok=True)
     (shim_dir / "sitecustomize.py").write_text(_SHIM_PY, encoding="utf-8")
     with staged_dockerfile.open("a", encoding="utf-8") as dockerfile:
@@ -194,7 +201,7 @@ def _stage_guardrail_plugin(build_root: Path) -> None:
     step: the victim gets four Python files, not Agent Hardener's dependency tree. The victim imports it
     as ``agent_hardener_guardrail`` and calls ``connect_victim()``.
     """
-    destination = build_root / "openshell-shims" / GUARDRAIL_PACKAGE
+    destination = build_root / SHIM_DIR / GUARDRAIL_PACKAGE
     if destination.exists():
         shutil.rmtree(destination)
     shutil.copytree(_PLUGIN_SOURCE, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
@@ -262,7 +269,21 @@ def stage_relay_victim_build(spec: RelayVictimSpec, cwd: Path, build_root: Path)
         _inject_hermes_wiring(staged_dockerfile)
 
     _append_dockerignore(build_root, project_dir, secrets_file)
+    (build_root / SHIM_DIR / CONTEXT_DIGEST_FILE).write_text(staged_context_digest(build_root) + "\n", encoding="utf-8")
     return staged_dockerfile
+
+
+def staged_context_digest(build_root: Path) -> str:
+    """Hash every staged file except the digest itself, so a rebuilt context and its image can be compared."""
+    digest = hashlib.sha256()
+    stamp = build_root / SHIM_DIR / CONTEXT_DIGEST_FILE
+    for path in sorted(build_root.rglob("*")):
+        if path == stamp or (path.is_dir() and not path.is_symlink()):
+            continue
+        content = str(path.readlink()).encode() if path.is_symlink() else path.read_bytes()
+        digest.update(path.relative_to(build_root).as_posix().encode() + b"\0")
+        digest.update(hashlib.sha256(content).digest())
+    return digest.hexdigest()
 
 
 def _resolve_secrets_file(spec: RelayVictimSpec, cwd: Path) -> Path | None:
@@ -276,7 +297,7 @@ def _staging_ignore(secrets_file: Path | None) -> Callable[[str, list[str]], set
     by_pattern = shutil.ignore_patterns(*STAGED_CONTEXT_EXCLUDES)
 
     def ignore(directory: str, names: list[str]) -> set[str]:
-        ignored = set(by_pattern(directory, names))
+        ignored = set(by_pattern(directory, names)) - set(STAGED_CONTEXT_KEEPS)
         if secrets_file is not None and secrets_file.parent == Path(directory).resolve():
             ignored.add(secrets_file.name)
         return ignored
@@ -293,7 +314,7 @@ def _append_dockerignore(build_root: Path, project_dir: Path, secrets_file: Path
     existing = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
     present = {line.strip() for line in existing.splitlines()}
     missing = [entry for entry in entries if entry not in present]
-    if not missing:
-        return
+    # Re-included last so an allowlist-style ``*`` in the project's file cannot drop them.
+    reincluded = [f"!{name}" for name in (*STAGED_CONTEXT_KEEPS, SHIM_DIR)]
     separator = "" if not existing or existing.endswith("\n") else "\n"
-    dockerignore.write_text(existing + separator + "\n".join(missing) + "\n", encoding="utf-8")
+    dockerignore.write_text(existing + separator + "\n".join([*missing, *reincluded]) + "\n", encoding="utf-8")

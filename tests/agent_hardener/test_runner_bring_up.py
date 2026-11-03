@@ -120,6 +120,15 @@ def test_reuse_rebuilds_and_says_why_when_a_different_agent_was_built_before(bui
     assert _REUSING in again.lines
 
 
+def test_a_victim_image_built_from_another_context_is_warned_about(build_mission: BuildMission) -> None:
+    harness = build_mission(no_cleanup=True)
+    harness.lifecycle.drift = "victim image reg/agent:1 was built from a different staged context"
+
+    harness.run()
+
+    assert "warning: victim image reg/agent:1 was built from a different staged context" in harness.lines
+
+
 def test_reuse_with_no_record_of_a_previous_build_rebuilds(build_mission: BuildMission) -> None:
     harness = build_mission(skip_initial_up=True, no_cleanup=True)
 

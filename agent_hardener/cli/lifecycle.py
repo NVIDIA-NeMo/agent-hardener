@@ -12,7 +12,7 @@ import typer
 
 from agent_hardener.cli._app import DEFAULT_ENV_FILE, DEFAULT_MANIFEST, VICTIM_IMAGE_OPTION, app
 from agent_hardener.cli._errors import cli_error_boundary
-from agent_hardener.display.console import emit, status_factory
+from agent_hardener.display.console import emit, status_factory, warn
 from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
 
 if TYPE_CHECKING:
@@ -65,8 +65,12 @@ def up(
         load_local_env(env_file)
         victim_control = with_victim_image(load_config(str(config)).victim_control, victim_image)
         config_obj = prepare_relay_victim(openshell_config(victim_control))
+        lifecycle = OpenShellLifecycle(config_obj)
         with status_factory("Building and starting sandbox"):
-            result = OpenShellLifecycle(config_obj).up()
+            result = lifecycle.up()
+        drift = lifecycle.image_context_drift() if result.ok else None
+        if drift:
+            warn(drift)
         _report(result)
 
 

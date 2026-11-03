@@ -335,6 +335,9 @@ class Mission:
             _write_fingerprint(fp_path, fp)
         else:
             self._announce("reusing sandbox (agent fingerprint matches)")
+        drift = self._lifecycle.image_context_drift()
+        if drift:
+            self._announce(f"warning: {drift}")
         # Ensure the victim is serving before synth probes it (wait_for_health is idempotent).
         health_url = target_health_url(cfg.target.base_url)
         if health_url:

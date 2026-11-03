@@ -46,9 +46,11 @@ Dockerfile is yours with two lines appended, and `plugins.toml` is the config th
 
 _PREBUILT_SOURCE = """\
 Built from `{image}`, the pre-built image this run validated, plus the guardrails the war-game
-produced. The Dockerfile only layers `plugins.toml` onto that image, so the result is exactly what
-was tested. The image still carries the OpenShell proxy shim it was staged with.
+produced. The Dockerfile layers `plugins.toml` onto that image and replaces its `sitecustomize.py`
+with one that drops the OpenShell proxy shim, so the agent code is exactly what was tested.
 """
+
+_PREBUILT_SHIM_OVERRIDE = "COPY sitecustomize.py /app/openshell-shims/sitecustomize.py\n"
 
 _README = """\
 # Hardened image — {agent}
@@ -118,8 +120,8 @@ def write_hardened_bundle(
 
     Args:
         build_root: The run's staged build context — the user's project plus the appended Dockerfile
-            and ``openshell-shims/``. Ignored when ``image`` is given: that tree was re-staged for the
-            run's policy but never built, so shipping it would package something the run did not test.
+            and ``openshell-shims/``. When ``image`` is given only its ``sitecustomize.py`` is used: that
+            tree was re-staged but never built, so shipping it would package something the run did not test.
         plugins_toml: The run's final guardrail config.
         destination: Directory to write (replaced if it exists).
         agent: Agent name, for the image tag in the README.
@@ -143,7 +145,13 @@ def write_hardened_bundle(
         source = _STAGED_SOURCE
     else:
         destination.mkdir(parents=True)
-        (destination / "Dockerfile").write_text(f"FROM {image}\n", encoding="utf-8")
+        dockerfile_text = f"FROM {image}\n"
+        staged_shim = build_root / "openshell-shims" / "sitecustomize.py" if build_root else None
+        if staged_shim is not None and staged_shim.is_file():
+            shutil.copyfile(staged_shim, destination / "sitecustomize.py")
+            _strip_sandbox_shim(destination / "sitecustomize.py")
+            dockerfile_text += _PREBUILT_SHIM_OVERRIDE
+        (destination / "Dockerfile").write_text(dockerfile_text, encoding="utf-8")
         source = _PREBUILT_SOURCE.format(image=image)
     shutil.copyfile(plugins_toml, destination / "plugins.toml")
 

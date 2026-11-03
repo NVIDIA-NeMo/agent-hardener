@@ -1052,6 +1052,9 @@ def test_up_command(monkeypatch: pytest.MonkeyPatch) -> None:
         def up(self) -> OpenShellCommandResult:
             return _ok("brought-up")
 
+        def image_context_drift(self) -> str | None:
+            return None
+
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
     result = runner.invoke(app, ["up", "--config", "x.yaml"])
     assert result.exit_code == 0
@@ -1073,6 +1076,9 @@ def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPa
         def up(self) -> OpenShellCommandResult:
             return _ok("brought-up")
 
+        def image_context_drift(self) -> str | None:
+            return "victim image reg/agent:1 was built from a different staged context"
+
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
     result = runner.invoke(app, ["up", "--victim-image", "reg/agent:1"])
 
@@ -1080,6 +1086,7 @@ def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPa
     (victim_control,) = seen
     assert victim_control.config == {"sandbox": "sb", "image": "reg/agent:1"}
     assert "brought-up" in result.output
+    assert "different staged context" in result.output
 
 
 def test_stage_prints_the_staged_build_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

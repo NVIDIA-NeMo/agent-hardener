@@ -21,7 +21,7 @@ _VICTIM_ACTIVE_STATE = "victim-active-state"
 _VICTIM_STATE = "victim-state"
 _INIT = "init"
 _AGENT_HARDENER = ".agent-hardener"
-_BUILDS = "builds"
+_SANDBOXES = "sandboxes"
 _BENIGN_PROFILES = "benign_profiles"
 
 
@@ -136,12 +136,12 @@ def run_logs_root(root_dir: Path) -> Path:
 
 def agent_fingerprint_path(cwd: Path, sandbox: str) -> Path:
     """Sidecar recording the fingerprint of the agent last built into ``sandbox`` (GLOBAL scope; not created here)."""
-    return cwd / _AGENT_HARDENER / _BUILDS / sandbox / "agent_fingerprint.txt"
+    return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "agent_fingerprint.txt"
 
 
 def victim_image_path(cwd: Path, sandbox: str) -> Path:
     """Sidecar recording the pre-built image ``sandbox`` was last created from (GLOBAL scope; not created here)."""
-    return cwd / _AGENT_HARDENER / _BUILDS / sandbox / "victim_image.txt"
+    return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "victim_image.txt"
 
 
 def read_victim_image(cwd: Path, sandbox: str) -> str | None:
