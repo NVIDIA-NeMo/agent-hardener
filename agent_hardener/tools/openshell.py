@@ -130,11 +130,15 @@ def openshell_config(config: VictimControlConfig) -> OpenShellConfig:
     return OpenShellConfig.from_mapping(config.config)
 
 
-def with_victim_image(config: VictimControlConfig, image: str | None) -> VictimControlConfig:
+def with_victim_image(
+    config: VictimControlConfig, image: str | None, *, allow_context_drift: bool = False
+) -> VictimControlConfig:
     """Point the sandbox at a pre-built victim image (one built from the ``agent-hardener stage`` context)."""
     if image is None:
         return config
-    return config.model_copy(update={"config": {**config.config, "image": image}})
+    return config.model_copy(
+        update={"config": {**config.config, "image": image, "allow_context_drift": allow_context_drift}}
+    )
 
 
 def sandbox_is_ready(config: OpenShellConfig) -> bool:
@@ -348,10 +352,10 @@ def managed_victim_sandbox(
         result = lifecycle.up()
         if not result.ok:
             raise RuntimeError(result.output)
-    drift = lifecycle.image_context_drift()
-    if drift:
-        warn(drift)
     try:
+        drift = lifecycle.image_context_drift()
+        if drift:
+            warn(drift)
         verify_relay_instrumentation(prepared, base_url=base_url)
         yield openshell
     finally:

@@ -12,7 +12,13 @@ import click
 import typer
 from typer.core import TyperCommand
 
-from agent_hardener.cli._app import DEFAULT_ENV_FILE, DEFAULT_MANIFEST, VICTIM_IMAGE_OPTION, app
+from agent_hardener.cli._app import (
+    ALLOW_CONTEXT_DRIFT_OPTION,
+    DEFAULT_ENV_FILE,
+    DEFAULT_MANIFEST,
+    VICTIM_IMAGE_OPTION,
+    app,
+)
 from agent_hardener.display.console import fail, info, ok
 
 if TYPE_CHECKING:
@@ -148,6 +154,7 @@ def run(
         "and discovered-egress rules are still layered on top; defenders still harden it further.",
     ),
     victim_image: str | None = VICTIM_IMAGE_OPTION,
+    allow_context_drift: bool = ALLOW_CONTEXT_DRIFT_OPTION,
 ) -> None:
     """Run the full attack/defend/validate cycle against the configured agent.
 
@@ -180,7 +187,11 @@ def run(
         session_config = _apply_benign_suite(benign_suite, session_config)
         if victim_image is not None:
             session_config = session_config.model_copy(
-                update={"victim_control": with_victim_image(session_config.victim_control, victim_image)}
+                update={
+                    "victim_control": with_victim_image(
+                        session_config.victim_control, victim_image, allow_context_drift=allow_context_drift
+                    )
+                }
             )
 
         # --reuse resolves to the skip_initial_up primitive: skip the rebuild only if a Ready sandbox

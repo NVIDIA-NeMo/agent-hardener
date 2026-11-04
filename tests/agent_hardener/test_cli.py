@@ -110,7 +110,11 @@ def test_run_victim_image_reaches_the_sandbox_config(tmp_path: Path, monkeypatch
     assert result.exit_code == 0
     assert "Using pre-built victim image: registry.example.com/agent:1" in result.output
     (config,) = captured
-    assert config.victim_control.config == {"sandbox": "sb", "image": "registry.example.com/agent:1"}
+    assert config.victim_control.config == {
+        "sandbox": "sb",
+        "image": "registry.example.com/agent:1",
+        "allow_context_drift": False,
+    }
 
 
 @pytest.mark.parametrize("command", ["run", "up", "synth-benign"])
@@ -1080,11 +1084,11 @@ def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPa
             return "victim image reg/agent:1 was built from a different staged context"
 
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
-    result = runner.invoke(app, ["up", "--victim-image", "reg/agent:1"])
+    result = runner.invoke(app, ["up", "--victim-image", "reg/agent:1", "--allow-context-drift"])
 
     assert result.exit_code == 0
     (victim_control,) = seen
-    assert victim_control.config == {"sandbox": "sb", "image": "reg/agent:1"}
+    assert victim_control.config == {"sandbox": "sb", "image": "reg/agent:1", "allow_context_drift": True}
     assert "brought-up" in result.output
     assert "different staged context" in result.output
 
@@ -1160,7 +1164,7 @@ def test_synth_benign_victim_image_reaches_the_sandbox_config(monkeypatch: pytes
     result = runner.invoke(app, ["synth-benign", "--victim-image", "reg/agent:1"])
 
     assert result.exit_code == 0
-    assert seen[0].config == {"sandbox": "sb", "image": "reg/agent:1"}
+    assert seen[0].config == {"sandbox": "sb", "image": "reg/agent:1", "allow_context_drift": False}
 
 
 def test_synth_benign_reuse_skips_build_and_teardown(monkeypatch: pytest.MonkeyPatch) -> None:

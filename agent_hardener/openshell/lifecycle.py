@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import yaml  # type: ignore[import-untyped]
 
+from agent_hardener.errors import VictimBuildError
 from agent_hardener.openshell._forward import ForwardMixin
 from agent_hardener.openshell._polling import PollingMixin, wait_for_http_health
 from agent_hardener.openshell._victim import VictimMixin
@@ -145,7 +146,11 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         return read_victim_image(self._builds_cwd(), self.config.sandbox) == self.config.image
 
     def image_context_drift(self) -> str | None:
-        """Say so when the sandbox's pre-built image was not built from the context staged now; else None."""
+        """Fail when the sandbox's pre-built image was not built from the context staged now.
+
+        Returns the mismatch as a warning instead when ``allow_context_drift`` is set; None when they match
+        or there is nothing to compare.
+        """
         if self.config.image is None or self.config.build_context is None:
             return None
         staged = self.config.build_context.parent / SHIM_DIR / CONTEXT_DIGEST_FILE
@@ -159,13 +164,17 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         lines = result.output.split()
         if staged.read_text(encoding="utf-8").strip() in lines:
             return None
-        if not any(_SHA256_HEX.fullmatch(line) for line in lines):
-            return (
-                f"victim image {self.config.image} has no staged-context digest; build it from `agent-hardener stage`"
+        if any(_SHA256_HEX.fullmatch(line) for line in lines):
+            drift = (
+                f"victim image {self.config.image} was built from a different staged context than this config produces"
             )
-        return (
-            f"victim image {self.config.image} was built from a different staged context than this config "
-            "produces; rebuild it from `agent-hardener stage`"
+        else:
+            drift = f"victim image {self.config.image} has no staged-context digest"
+        if self.config.allow_context_drift:
+            return drift
+        raise VictimBuildError(
+            drift,
+            remediation="Rebuild the image from `agent-hardener stage`, or pass --allow-context-drift to run it anyway.",
         )
 
     def _builds_cwd(self) -> Path:

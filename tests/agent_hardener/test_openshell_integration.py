@@ -13,6 +13,7 @@ import yaml
 
 from agent_hardener.agents.victims.openshell_victim import build_payload
 from agent_hardener.config import parse_config_data
+from agent_hardener.errors import VictimBuildError
 from agent_hardener.models import (
     AgentConfig,
     AgentRunInput,
@@ -523,7 +524,12 @@ def test_lifecycle_passes_an_image_reference_build_context_through(tmp_path: Pat
 
 
 def _image_lifecycle(
-    tmp_path: Path, runner: SequenceRunner, *, image: str, with_context: bool = True
+    tmp_path: Path,
+    runner: SequenceRunner,
+    *,
+    image: str,
+    with_context: bool = True,
+    allow_context_drift: bool = False,
 ) -> OpenShellLifecycle:
     if with_context:
         (tmp_path / "Dockerfile").write_text("FROM scratch\n", encoding="utf-8")
@@ -535,6 +541,7 @@ def _image_lifecycle(
                 "policy_path": str(tmp_path / "policy.yaml"),
                 "build_context": str(tmp_path / "Dockerfile") if with_context else None,
                 "image": image,
+                "allow_context_drift": allow_context_drift,
                 "cwd": str(tmp_path),
             }
         ),
@@ -561,10 +568,20 @@ def test_image_context_drift_compares_the_image_digest_to_the_staged_one(
     (tmp_path / "openshell-shims").mkdir()
     (tmp_path / "openshell-shims" / "context_digest").write_text(f"{_STAGED_DIGEST}\n", encoding="utf-8")
     runner = SequenceRunner([(0, in_image)])
-    drift = _image_lifecycle(tmp_path, runner, image="reg/agent:1").image_context_drift()
+    drift = _image_lifecycle(tmp_path, runner, image="reg/agent:1", allow_context_drift=True).image_context_drift()
 
     assert (drift is None) if expected is None else (expected in (drift or ""))
     assert runner.commands[0][-1] == "/app/openshell-shims/context_digest"
+
+
+def test_image_context_drift_fails_unless_allowed(tmp_path: Path) -> None:
+    (tmp_path / "openshell-shims").mkdir()
+    (tmp_path / "openshell-shims" / "context_digest").write_text(f"{_STAGED_DIGEST}\n", encoding="utf-8")
+    lifecycle = _image_lifecycle(tmp_path, SequenceRunner([(0, f"{'b' * 64}\n")]), image="reg/agent:1")
+
+    with pytest.raises(VictimBuildError, match="different staged context") as raised:
+        lifecycle.image_context_drift()
+    assert "--allow-context-drift" in raised.value.remediation
 
 
 @pytest.mark.parametrize("case", ["no-image", "no-stamp", "exec-fails"])

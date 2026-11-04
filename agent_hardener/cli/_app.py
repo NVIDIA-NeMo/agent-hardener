@@ -52,3 +52,10 @@ VICTIM_IMAGE_OPTION = typer.Option(
         "`agent-hardener stage` writes."
     ),
 )
+
+ALLOW_CONTEXT_DRIFT_OPTION = typer.Option(
+    False,
+    "--allow-context-drift",
+    help="Run a --victim-image that was not built from the context `agent-hardener stage` writes now, "
+    "with a warning instead of failing.",
+)

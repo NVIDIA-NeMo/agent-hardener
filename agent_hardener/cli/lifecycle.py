@@ -10,7 +10,13 @@ from typing import TYPE_CHECKING
 
 import typer
 
-from agent_hardener.cli._app import DEFAULT_ENV_FILE, DEFAULT_MANIFEST, VICTIM_IMAGE_OPTION, app
+from agent_hardener.cli._app import (
+    ALLOW_CONTEXT_DRIFT_OPTION,
+    DEFAULT_ENV_FILE,
+    DEFAULT_MANIFEST,
+    VICTIM_IMAGE_OPTION,
+    app,
+)
 from agent_hardener.cli._errors import cli_error_boundary
 from agent_hardener.display.console import emit, status_factory, warn
 from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
@@ -48,6 +54,7 @@ def up(
     config: Path = typer.Option(DEFAULT_MANIFEST, "--config", "-c"),
     env_file: Path = typer.Option(DEFAULT_ENV_FILE, "--env-file"),
     victim_image: str | None = VICTIM_IMAGE_OPTION,
+    allow_context_drift: bool = ALLOW_CONTEXT_DRIFT_OPTION,
 ) -> None:
     """Build and start the OpenShell sandbox for the configured agent."""
     from agent_hardener.config import load_config
@@ -63,7 +70,9 @@ def up(
     with cli_error_boundary():
         configure_local_docker_host()
         load_local_env(env_file)
-        victim_control = with_victim_image(load_config(str(config)).victim_control, victim_image)
+        victim_control = with_victim_image(
+            load_config(str(config)).victim_control, victim_image, allow_context_drift=allow_context_drift
+        )
         config_obj = prepare_relay_victim(openshell_config(victim_control))
         lifecycle = OpenShellLifecycle(config_obj)
         with status_factory("Building and starting sandbox"):

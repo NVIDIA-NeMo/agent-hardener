@@ -224,13 +224,14 @@ def test_staging_keeps_the_sandbox_records(tmp_path: Path) -> None:
 
 def test_stage_extends_the_projects_dockerignore_instead_of_replacing_it(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
-    (project / ".dockerignore").write_text("*.pem\nsecrets/\n.git", encoding="utf-8")
+    (project / ".dockerignore").write_text("*.pem\nsecrets/\n.git\n.env.example", encoding="utf-8")
     spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
     stage_relay_victim_build(spec, tmp_path, tmp_path / "build")
 
     lines = (tmp_path / "build" / ".dockerignore").read_text(encoding="utf-8").splitlines()
-    assert lines[:3] == ["*.pem", "secrets/", ".git"]
+    assert lines[-5:] == ["*.pem", "secrets/", ".git", ".env.example", "!openshell-shims"]
     assert lines.count(".git") == 1
+    assert lines.index("!.env.example") < lines.index(".env.example")
     assert {".venv", "__pycache__", "*.pyc", ".agent-hardener", ".env"} <= set(lines)
 
 

@@ -310,14 +310,12 @@ def _staging_ignore(excluded: set[Path]) -> Callable[[str, list[str]], set[str]]
 
 
 def _append_dockerignore(build_root: Path, project_dir: Path, excluded: set[Path]) -> None:
-    """Extend the project's own ``.dockerignore`` (copied in, if any) rather than replace it."""
+    """Wrap the project's own ``.dockerignore`` (copied in, if any) rather than replace it."""
     entries = list(STAGED_CONTEXT_EXCLUDES)
     entries += sorted(path.relative_to(project_dir).as_posix() for path in excluded if path.is_relative_to(project_dir))
     dockerignore = build_root / ".dockerignore"
-    existing = dockerignore.read_text(encoding="utf-8") if dockerignore.is_file() else ""
-    present = {line.strip() for line in existing.splitlines()}
-    missing = [entry for entry in entries if entry not in present]
-    # Re-included last so an allowlist-style ``*`` in the project's file cannot drop them.
-    reincluded = [f"!{name}" for name in (*STAGED_CONTEXT_KEEPS, SHIM_DIR)]
-    separator = "" if not existing or existing.endswith("\n") else "\n"
-    dockerignore.write_text(existing + separator + "\n".join([*missing, *reincluded]) + "\n", encoding="utf-8")
+    existing = dockerignore.read_text(encoding="utf-8").splitlines() if dockerignore.is_file() else []
+    present = {line.strip() for line in existing}
+    ours = [entry for entry in (*entries, *(f"!{name}" for name in STAGED_CONTEXT_KEEPS)) if entry not in present]
+    # Project lines follow ours so its exclusions win; the shim dir is re-included last.
+    dockerignore.write_text("\n".join([*ours, *existing, f"!{SHIM_DIR}"]) + "\n", encoding="utf-8")

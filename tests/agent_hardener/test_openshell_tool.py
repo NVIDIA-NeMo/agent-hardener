@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
+from agent_hardener.errors import VictimBuildError
 from agent_hardener.models import VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
@@ -329,7 +330,7 @@ class _Sandbox:
     ) -> None:
         self.events: list[str] = []
         self.verify_error: Exception | None = None
-        self.drift: str | None = None
+        self.drift: str | Exception | None = None
         outer = self
 
         class Lifecycle:
@@ -348,6 +349,8 @@ class _Sandbox:
                 outer.events.append(f"down:{self.config}")
 
             def image_context_drift(self) -> str | None:
+                if isinstance(outer.drift, Exception):
+                    raise outer.drift
                 return outer.drift
 
         def verify(prepared: str, *, base_url: str | None) -> None:
@@ -388,6 +391,16 @@ def test_a_mismatched_victim_image_is_warned_about_before_verification(monkeypat
         pass
 
     assert sandbox.events[1] == "warn:victim image reg/agent:1 was built from a different staged context"
+
+
+def test_a_failed_image_context_check_tears_the_sandbox_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _Sandbox(monkeypatch)
+    sandbox.drift = VictimBuildError("victim image reg/agent:1 was built from a different staged context")
+
+    with pytest.raises(VictimBuildError), sandbox.enter(reuse=False, no_cleanup=False):
+        pass
+
+    assert sandbox.events == ["up:prepared-base", "down:base"]
 
 
 def test_a_ready_sandbox_is_reused_and_left_running(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -466,5 +479,7 @@ def test_with_victim_image_sets_image_and_keeps_other_keys() -> None:
     assert tool.with_victim_image(victim_control, "registry.example.com/agent:1").config == {
         "sandbox": "sb",
         "image": "registry.example.com/agent:1",
+        "allow_context_drift": False,
     }
+    assert tool.with_victim_image(victim_control, "reg/agent:1", allow_context_drift=True).config["allow_context_drift"]
     assert victim_control.config == {"sandbox": "sb"}
