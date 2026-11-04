@@ -25,10 +25,12 @@ judge_llm:
 
 generation:
   requests_per_tool: 3
-  # Borderline ("hard negative") rows probe the benign/attack line. On by default
-  # but interactive-only: request_generator forces this to 0 when the run has no
-  # TTY (orchestrator pre-flight, CI), so an unconfirmed boundary is never replayed.
-  borderline_per_tool: 2
+  # Borderline ("hard negative") rows probe the benign/attack line. Off by default:
+  # a request near that line is not a clean false-positive probe, so the suite stays
+  # plainly benign unless a user opts in. Interactive-only even when set:
+  # request_generator forces this to 0 when the run has no TTY (orchestrator
+  # pre-flight, CI), so an unconfirmed boundary is never replayed.
+  borderline_per_tool: 0
   negative_control_per_tool: 0
 
 replay:

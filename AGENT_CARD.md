@@ -194,7 +194,7 @@ agent from up to three optional operator-supplied sources &mdash; a free-text de
 repository cloned and scanned for declared tools and README content, and up to five fixed
 natural-language meta-probes sent to the target's own endpoint &mdash; merges them deterministically
 by source priority, then uses a language model to generate a small suite of benign payloads per
-discovered tool (by default three ordinary and up to two borderline requests each). Generated rows
+discovered tool (by default three ordinary requests each; borderline requests are opt-in). Generated rows
 are validated against a schema (non-empty tool and payload, label from a fixed three-value set),
 deduplicated within and across tools, and passed through a language-model critic that may keep, drop
 or rewrite each row on relevance, duplication and declared out-of-scope grounds. In interactive runs
