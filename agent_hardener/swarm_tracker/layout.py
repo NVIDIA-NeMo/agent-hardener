@@ -21,7 +21,7 @@ _VICTIM_ACTIVE_STATE = "victim-active-state"
 _VICTIM_STATE = "victim-state"
 _INIT = "init"
 _AGENT_HARDENER = ".agent-hardener"
-_BUILDS = "builds"
+_SANDBOXES = "sandboxes"
 _BENIGN_PROFILES = "benign_profiles"
 
 
@@ -136,7 +136,30 @@ def run_logs_root(root_dir: Path) -> Path:
 
 def agent_fingerprint_path(cwd: Path, sandbox: str) -> Path:
     """Sidecar recording the fingerprint of the agent last built into ``sandbox`` (GLOBAL scope; not created here)."""
-    return cwd / _AGENT_HARDENER / _BUILDS / sandbox / "agent_fingerprint.txt"
+    return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "agent_fingerprint.txt"
+
+
+def victim_image_path(cwd: Path, sandbox: str) -> Path:
+    """Sidecar recording the pre-built image ``sandbox`` was last created from (GLOBAL scope; not created here)."""
+    return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "victim_image.txt"
+
+
+def read_victim_image(cwd: Path, sandbox: str) -> str | None:
+    """The pre-built image ``sandbox`` was created from, or None after a local build or when unknown."""
+    try:
+        return victim_image_path(cwd, sandbox).read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def write_victim_image(cwd: Path, sandbox: str, image: str | None) -> None:
+    """Record (or, for a locally built sandbox, forget) the pre-built image ``sandbox`` was created from."""
+    path = victim_image_path(cwd, sandbox)
+    if image is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(image + "\n", encoding="utf-8")
 
 
 def benign_profiles_dir(root_dir: Path, target: str) -> Path:

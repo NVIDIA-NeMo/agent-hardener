@@ -12,12 +12,13 @@ the full config as an escape hatch.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml  # type: ignore[import-untyped]
-from pydantic import Field
+from pydantic import Field, field_validator, model_validator
 
 from agent_hardener.config import parse_config_data
 from agent_hardener.models import AgentHardenerModel, DefenderSettings, GarakSettings, RelayVictimSpec, SessionConfig
@@ -37,13 +38,46 @@ logger = logging.getLogger(__name__)
 
 
 class BackendManifest(AgentHardenerModel):
-    """A host-side backend the agent's tools call, in user-facing manifest form."""
+    """A backend the agent's tools call, in user-facing manifest form.
+
+    By default it runs on the host and the sandbox reaches it via ``host.docker.internal``. Set ``host``
+    to reach one running elsewhere, such as a Kubernetes service.
+    """
 
     name: str = Field(min_length=1)
-    compose_file: str | None = None  # omit for an already-running host service (Agent Hardener only opens the route)
+    compose_file: str | None = None  # omit for an already-running service (Agent Hardener only opens the route)
     compose_project: str | None = None
     health_url: str | None = None
     ports: list[int] = Field(default_factory=list)
+    host: str | None = None
+    # OpenShell blocks private addresses (e.g. a cluster service IP) unless they are listed here.
+    allowed_ips: list[str] = Field(default_factory=list)
+
+    @field_validator("host")
+    @classmethod
+    def _bare_hostname(cls, value: str | None) -> str | None:
+        host = (value or "").strip()
+        if not host:
+            return None
+        if "://" in host or "/" in host or (":" in host and not _is_ipv6(host)):
+            raise ValueError(f"backend host must be a bare hostname or IP, not {host!r}; put the port in ports")
+        return host
+
+    @model_validator(mode="after")
+    def _route_needs_ports(self) -> BackendManifest:
+        if (self.host or self.allowed_ips) and not self.ports:
+            raise ValueError(f"backend '{self.name}' sets host/allowed_ips but no ports, so nothing would be opened")
+        if self.host and self.compose_file:
+            raise ValueError(f"backend '{self.name}' sets both host and compose_file; compose starts it on this host")
+        return self
+
+
+def _is_ipv6(host: str) -> bool:
+    try:
+        ipaddress.IPv6Address(host)
+    except ValueError:
+        return False
+    return True
 
 
 class AgentSpec(AgentHardenerModel):
@@ -93,6 +127,15 @@ def load_manifest(path: str | Path) -> AgentManifest:
     return AgentManifest.model_validate(data)
 
 
+def _backend_endpoint(backend: BackendManifest, port: int) -> dict[str, Any]:
+    endpoint: dict[str, Any] = {"port": port}
+    if backend.host:
+        endpoint["host"] = backend.host
+    if backend.allowed_ips:
+        endpoint["allowed_ips"] = backend.allowed_ips
+    return endpoint
+
+
 def _relay_victim_block(agent: AgentSpec, backends: list[BackendManifest]) -> dict[str, Any]:
     backend_specs = [
         {
@@ -100,7 +143,7 @@ def _relay_victim_block(agent: AgentSpec, backends: list[BackendManifest]) -> di
             "compose_file": backend.compose_file,
             "compose_project": backend.compose_project,
             "health_url": backend.health_url,
-            "allowlist": [{"port": port} for port in backend.ports],
+            "allowlist": [_backend_endpoint(backend, port) for port in backend.ports],
         }
         for backend in backends
     ]
@@ -112,6 +155,7 @@ def _relay_victim_block(agent: AgentSpec, backends: list[BackendManifest]) -> di
         "victim_binaries": agent.binaries,
         "relay_artifacts": agent.relay_artifacts,
         "agent_env": agent.env,
+        "secrets_file": agent.secrets_file,
         "backends": backend_specs,
         "egress": agent.egress,
         "discover_egress": agent.discover_egress,
@@ -453,6 +497,8 @@ def render_manifest_yaml(manifest: dict) -> str:
             "#   ports: [8086]\n"
             "#   health_url: http://127.0.0.1:8086/health  # optional\n"
             "#   compose_project: my-project               # optional\n"
+            "#   host: my-service.ns.svc                   # optional: reach a service that is not on this host\n"
+            "#   allowed_ips: [10.96.0.0/12]               # optional: private ranges OpenShell may otherwise block\n"
         )
         base = base.replace("backends: []\n", "backends: []\n" + backend_stubs, 1)
 

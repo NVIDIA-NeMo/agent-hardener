@@ -102,6 +102,10 @@ backends:
     compose_file: ../agents-lab/services/finance_backend/docker-compose.yaml
     health_url: http://127.0.0.1:8086/health
     ports: [8086]
+  # - name: ledger                      # a service that is not on this host: only the route is opened
+  #   host: ledger.ns.svc
+  #   ports: [8087]
+  #   allowed_ips: [10.96.0.0/12]       # private ranges OpenShell would otherwise block
 ```
 
 The minimum a user must supply: `agent.project_dir` + `agent.workflow`, and `agent.secrets` (env-var
@@ -111,6 +115,13 @@ how the environment is built, the workflow is what gets served and hardened. Eve
 sandbox, policy, the attacker/defender/validator suite — is defaulted (override via an `overrides:`
 block or a full session config). Useful commands: `uv run agent-hardener run --rounds N`, `--no-cleanup`,
 `uv run agent-hardener synth-benign` (generate/refresh the benign suite), `uv run agent-hardener up|down|status`.
+
+On a host without Docker, `uv run agent-hardener stage` writes the victim's build context and prints its
+directory. Build and push that directory with any image builder, then pass the result to
+`run --victim-image <ref>` (also accepted by `up` and `synth-benign`). The image must come from the `stage`
+output of the same manifest and agent-hardener version you run with: `run` re-stages the context to derive
+the sandbox policy and launch environment. `stage` stamps a digest of the context into the image, and
+`up`, `run` and `synth-benign` warn (but carry on) when the image's digest is missing or differs.
 
 Garak's agent_breaker probe is run from a `garak-scan.yaml` config that `init` scaffolds and
 `run` regenerates with the resolved victim endpoint. To tune it (models, victim port, attempts), add a
@@ -445,7 +456,8 @@ Useful run controls:
 ```text
 --rounds N         Carry generated policy/workflow forward across N hardening rounds.
 --replay           Skip live attackers; replay hits from the latest run instead.
---reuse            Skip sandbox rebuild if it is already running.
+--reuse            Skip sandbox rebuild if it is already running; a --victim-image sandbox is reused as-is.
+--victim-image     Create the sandbox from a pre-built image (see `agent-hardener stage`) instead of docker build.
 --no-cleanup       Leave sandbox running after the run.
 --verbose          Show raw output and full report detail.
 ```

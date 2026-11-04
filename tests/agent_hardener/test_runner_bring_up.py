@@ -55,7 +55,7 @@ def test_without_backends_nothing_is_started(build_mission: BuildMission) -> Non
 
     harness.run()
 
-    assert "backend setup: starting host backends" not in harness.lines
+    assert "backend setup: starting backends" not in harness.lines
 
 
 @pytest.mark.usefixtures("relay_probe")
@@ -64,7 +64,7 @@ def test_backends_are_announced_and_their_build_output_goes_to_the_run_log(build
 
     harness.run()
 
-    assert "backend setup: starting host backends" in harness.lines
+    assert "backend setup: starting backends" in harness.lines
     assert "backends ready" in harness.lines
     assert "compose output" in harness.run_log
 
@@ -74,7 +74,7 @@ def test_a_backend_that_fails_to_start_surfaces_the_error_and_stops_the_run(buil
     harness = build_mission(backends=("db",), no_cleanup=True)
     harness.backends.up_result = _failed("port in use")
 
-    with pytest.raises(MissionError, match="host backend startup failed"):
+    with pytest.raises(MissionError, match="backend startup failed"):
         harness.run()
 
     assert "port in use" in harness.lines
@@ -118,6 +118,15 @@ def test_reuse_rebuilds_and_says_why_when_a_different_agent_was_built_before(bui
     again = build_mission(start_command="run-new", skip_initial_up=True, no_cleanup=True)
     again.run()
     assert _REUSING in again.lines
+
+
+def test_a_victim_image_built_from_another_context_is_warned_about(build_mission: BuildMission) -> None:
+    harness = build_mission(no_cleanup=True)
+    harness.lifecycle.drift = "victim image reg/agent:1 was built from a different staged context"
+
+    harness.run()
+
+    assert "warning: victim image reg/agent:1 was built from a different staged context" in harness.lines
 
 
 def test_reuse_with_no_record_of_a_previous_build_rebuilds(build_mission: BuildMission) -> None:
@@ -236,3 +245,46 @@ def test_the_relay_probe_hits_the_victim_and_syncs_the_atof_log_from_the_sandbox
     assert "Checking Relay instrumentation" in harness.statuses
     assert "relay instrumentation confirmed (4 event(s))" in harness.lines
     assert any("dirty scope stack" in line for line in harness.lines) is quarantined
+
+
+def test_reuse_adopts_the_pre_built_image_the_sandbox_was_created_from(build_mission: BuildMission) -> None:
+    build_mission(image="reg/agent:1", no_cleanup=True).run()
+    reused = build_mission(skip_initial_up=True, no_cleanup=True)
+
+    reused.run()
+
+    assert reused.lifecycle.calls == []
+    assert reused.lifecycle.config.image == "reg/agent:1"
+    assert "reusing the pre-built victim image recorded for this sandbox: reg/agent:1" in reused.lines
+    assert _REUSING in reused.lines
+
+
+def test_reuse_rebuilds_a_changed_agent_from_its_source_not_the_recorded_image(build_mission: BuildMission) -> None:
+    build_mission(image="reg/agent:1", start_command="run-old", no_cleanup=True).run()
+    rebuilt = build_mission(start_command="run-new", skip_initial_up=True, no_cleanup=True)
+
+    rebuilt.run()
+
+    assert rebuilt.lifecycle.calls == ["down", "up"]
+    assert rebuilt.lifecycle.config.image is None
+
+
+def test_an_explicit_image_wins_over_the_recorded_one(build_mission: BuildMission) -> None:
+    build_mission(image="reg/agent:1", no_cleanup=True).run()
+    rebuilt = build_mission(image="reg/agent:2", skip_initial_up=True, no_cleanup=True)
+
+    rebuilt.run()
+
+    assert rebuilt.lifecycle.calls == ["down", "up"]
+    assert rebuilt.lifecycle.config.image == "reg/agent:2"
+
+
+def test_a_local_build_forgets_the_recorded_image(build_mission: BuildMission) -> None:
+    build_mission(image="reg/agent:1", no_cleanup=True).run()
+    build_mission(start_command="run-new", no_cleanup=True).run()
+    reused = build_mission(start_command="run-new", skip_initial_up=True, no_cleanup=True)
+
+    reused.run()
+
+    assert reused.lifecycle.config.image is None
+    assert _REUSING in reused.lines

@@ -17,10 +17,25 @@ import pytest
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import Mission, MissionResult
+from agent_hardener.swarm_tracker import write_victim_image
 
 
 def command_result(output: str = "", *, ok: bool = True) -> OpenShellCommandResult:
     return OpenShellCommandResult(ok=ok, command=[], output=output)
+
+
+@dataclass(frozen=True)
+class FakeOpenShellConfig:
+    """The ``OpenShellConfig`` fields the mission reads; a dataclass so ``replace`` works as in production."""
+
+    relay_victim: Any
+    cwd: Path
+    sandbox: str
+    start_command: str
+    build_context: Path | None
+    image: str | None
+    policy_path: Path | None
+    health_timeout: float = 5.0
 
 
 class FakeLifecycle:
@@ -33,6 +48,7 @@ class FakeLifecycle:
         self.diagnostics = command_result()
         self.fetch_error: Exception | None = None
         self.fetched: list[tuple[str, Path]] = []
+        self.drift: str | None = None
 
     def down(self) -> OpenShellCommandResult:
         self.calls.append("down")
@@ -40,7 +56,12 @@ class FakeLifecycle:
 
     def up(self, _policy: object) -> OpenShellCommandResult:
         self.calls.append("up")
+        if self.up_result.ok:
+            write_victim_image(self.config.cwd, self.config.sandbox, self.config.image)
         return self.up_result
+
+    def image_context_drift(self) -> str | None:
+        return self.drift
 
     def collect_victim_diagnostics(self) -> OpenShellCommandResult:
         return self.diagnostics
@@ -119,6 +140,7 @@ def build_mission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuildMissi
         atof_path: Path | None = None,
         backends: tuple[str, ...] = (),
         build_context: Path | None = None,
+        image: str | None = None,
         start_command: str = "run",
         policy_path: Path | None = None,
         skip_initial_up: bool = False,
@@ -131,13 +153,13 @@ def build_mission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuildMissi
             if atof_path or backends
             else None
         )
-        base_config = SimpleNamespace(
+        base_config = FakeOpenShellConfig(
             relay_victim=relay_victim,
             cwd=tmp_path,
-            health_timeout=5.0,
             sandbox="sb",
             start_command=start_command,
             build_context=build_context,
+            image=image,
             policy_path=policy_path,
         )
         session = SimpleNamespace(

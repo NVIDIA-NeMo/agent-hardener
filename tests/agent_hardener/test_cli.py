@@ -17,7 +17,7 @@ from agent_hardener.cli import app
 from agent_hardener.config import load_config
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
 from agent_hardener.manifest import build_backend, build_manifest, render_manifest_yaml
-from agent_hardener.models import SessionConfig
+from agent_hardener.models import SessionConfig, VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.project import (
     append_env,
@@ -97,6 +97,33 @@ def test_run_replay_resolves_latest_hitlog_from_run_logs(tmp_path: Path, monkeyp
     (config,) = captured
     assert config.attackers == []
     assert [attack.path for attack in config.preloaded_attacks] == [hitlog.resolve()]
+
+
+def test_run_victim_image_reaches_the_sandbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session_config = _replay_session_config(tmp_path).model_copy(
+        update={"victim_control": VictimControlConfig(type="openshell", config={"sandbox": "sb"})}
+    )
+    captured = _patch_run_command(monkeypatch, session_config)
+
+    result = runner.invoke(app, ["run", "--victim-image", "registry.example.com/agent:1"])
+
+    assert result.exit_code == 0
+    assert "Using pre-built victim image: registry.example.com/agent:1" in result.output
+    (config,) = captured
+    assert config.victim_control.config == {
+        "sandbox": "sb",
+        "image": "registry.example.com/agent:1",
+        "allow_context_drift": False,
+    }
+
+
+@pytest.mark.parametrize("command", ["run", "up", "synth-benign"])
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_victim_image_is_rejected_before_anything_runs(command: str, value: str) -> None:
+    result = runner.invoke(app, [command, "--victim-image", value])
+
+    assert result.exit_code == 2
+    assert "name an image reference" in result.output
 
 
 def test_run_replay_fails_without_hitlog(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1029,10 +1056,55 @@ def test_up_command(monkeypatch: pytest.MonkeyPatch) -> None:
         def up(self) -> OpenShellCommandResult:
             return _ok("brought-up")
 
+        def image_context_drift(self) -> str | None:
+            return None
+
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
     result = runner.invoke(app, ["up", "--config", "x.yaml"])
     assert result.exit_code == 0
+
+
+def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_common(monkeypatch, base_config="cfg")
+    seen: list[object] = []
+    monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda vc: seen.append(vc) or "cfg")
+    monkeypatch.setattr(
+        "agent_hardener.config.load_config",
+        lambda _p: SimpleNamespace(victim_control=VictimControlConfig(type="openshell", config={"sandbox": "sb"})),
+    )
+
+    class FakeLifecycle:
+        def __init__(self, _cfg: object) -> None:
+            pass
+
+        def up(self) -> OpenShellCommandResult:
+            return _ok("brought-up")
+
+        def image_context_drift(self) -> str | None:
+            return "victim image reg/agent:1 was built from a different staged context"
+
+    monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
+    result = runner.invoke(app, ["up", "--victim-image", "reg/agent:1", "--allow-context-drift"])
+
+    assert result.exit_code == 0
+    (victim_control,) = seen
+    assert victim_control.config == {"sandbox": "sb", "image": "reg/agent:1", "allow_context_drift": True}
     assert "brought-up" in result.output
+    assert "different staged context" in result.output
+
+
+def test_stage_prints_the_staged_build_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_common(monkeypatch, base_config=SimpleNamespace(relay_victim="spec", build_context=tmp_path / "Dockerfile"))
+    result = runner.invoke(app, ["stage", "--config", "x.yaml"])
+    assert result.exit_code == 0
+    assert result.output.strip() == str(tmp_path)
+
+
+def test_stage_fails_without_a_victim_build(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_common(monkeypatch, base_config=SimpleNamespace(relay_victim=None, build_context=None))
+    result = runner.invoke(app, ["stage", "--config", "x.yaml"])
+    assert result.exit_code == 1
+    assert "no victim build to stage" in result.output
 
 
 def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: bool = True) -> None:
@@ -1046,6 +1118,12 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
     class FakeLifecycle:
         def __init__(self, _cfg: object) -> None:
             pass
+
+        def runs_configured_image(self) -> bool:
+            return True
+
+        def image_context_drift(self) -> str | None:
+            return None
 
         def up(self) -> OpenShellCommandResult:
             events.append("up")
@@ -1068,6 +1146,25 @@ def test_synth_benign_manages_sandbox_lifecycle(monkeypatch: pytest.MonkeyPatch)
     result = runner.invoke(app, ["synth-benign", "--config", "x.yaml"])
     assert result.exit_code == 0
     assert events == ["up", "synth", "down"]  # builds, synthesizes, tears down
+
+
+def test_synth_benign_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    _patch_synth(monkeypatch, events)
+    seen: list[object] = []
+    monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda vc: seen.append(vc) or "cfg")
+    monkeypatch.setattr(
+        "agent_hardener.config.load_config",
+        lambda _p: SimpleNamespace(
+            victim_control=VictimControlConfig(type="openshell", config={"sandbox": "sb"}),
+            target=SimpleNamespace(base_url=None),
+        ),
+    )
+
+    result = runner.invoke(app, ["synth-benign", "--victim-image", "reg/agent:1"])
+
+    assert result.exit_code == 0
+    assert seen[0].config == {"sandbox": "sb", "image": "reg/agent:1", "allow_context_drift": False}
 
 
 def test_synth_benign_reuse_skips_build_and_teardown(monkeypatch: pytest.MonkeyPatch) -> None:

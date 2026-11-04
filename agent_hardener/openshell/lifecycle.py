@@ -14,6 +14,7 @@ plumbing lives in :class:`~agent_hardener.openshell.command.OpenShellCommandExec
 from __future__ import annotations
 
 import logging
+import re
 import shlex
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from typing import TYPE_CHECKING
 
 import yaml  # type: ignore[import-untyped]
 
+from agent_hardener.errors import VictimBuildError
 from agent_hardener.openshell._forward import ForwardMixin
 from agent_hardener.openshell._polling import PollingMixin, wait_for_http_health
 from agent_hardener.openshell._victim import VictimMixin
@@ -31,6 +33,7 @@ from agent_hardener.openshell.config import (
     OpenShellConfig,
     SubprocessCommandRunner,
 )
+from agent_hardener.openshell.relay_victim import CONTEXT_DIGEST_FILE, IMAGE_CONTEXT_DIGEST_PATH, SHIM_DIR
 from agent_hardener.openshell.support import (
     combine_results,
     is_sandbox_not_found,
@@ -40,11 +43,14 @@ from agent_hardener.openshell.support import (
     read_env_file,
 )
 from agent_hardener.relay_plugin.config import judge_credentials
+from agent_hardener.swarm_tracker.layout import read_victim_image, write_victim_image
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
 logger = logging.getLogger("agent_hardener.session")
+
+_SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 #: The provider type the manifest names for "the victim's secrets"; backed by a generated profile.
 GENERIC_PROVIDER_TYPE = "generic"
@@ -95,7 +101,11 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         )
 
     def up(self, policy_path: Path | None = None) -> OpenShellCommandResult:
-        """Create the sandbox when a build context is configured."""
+        """Create the sandbox when a build context or a pre-built image is configured.
+
+        An existing sandbox is kept, unless it was created from a different pre-built image than the one now
+        configured: then it is replaced, since nothing else would ever switch it.
+        """
         effective_policy_path = policy_path or self.config.policy_path
         results = self._ensure_gateway_started()
         if not results[-1].ok:
@@ -103,8 +113,15 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
 
         sandbox_status = self.status()
         results.append(sandbox_status)
-        if self.config.build_context is None:
+        if self.config.build_context is None and self.config.image is None:
             return combine_results(results, ok=results[-1].ok)
+
+        if sandbox_status.ok and not self.runs_configured_image():
+            logger.info("sandbox setup: replacing sandbox=%s, created from another image", self.config.sandbox)
+            results.append(self.down())
+            if not results[-1].ok:
+                return combine_results(results)
+            sandbox_status = OpenShellCommandResult(ok=False, command=[], output="replaced")
 
         if not sandbox_status.ok:
             if is_transient_transport_failure(sandbox_status.output):
@@ -122,10 +139,52 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         # The gateway is a system service (brew/systemd); all that can be done here is confirm it answers.
         return [self._exec.run(["gateway", "info", "--gateway", self.config.gateway])]
 
+    def runs_configured_image(self) -> bool:
+        """False only when a pre-built image is configured and the sandbox was recorded as created from another."""
+        if self.config.image is None:
+            return True
+        return read_victim_image(self._builds_cwd(), self.config.sandbox) == self.config.image
+
+    def image_context_drift(self) -> str | None:
+        """Fail when the sandbox's pre-built image was not built from the context staged now.
+
+        Returns the mismatch as a warning instead when ``allow_context_drift`` is set; None when they match
+        or there is nothing to compare.
+        """
+        if self.config.image is None or self.config.build_context is None:
+            return None
+        staged = self.config.build_context.parent / SHIM_DIR / CONTEXT_DIGEST_FILE
+        if not staged.is_file():
+            return None
+        result = self._exec.run(
+            self._sandbox_exec_args('cat "$1" 2>/dev/null || true', "sh", IMAGE_CONTEXT_DIGEST_PATH)
+        )
+        if not result.ok:
+            return None
+        lines = result.output.split()
+        if staged.read_text(encoding="utf-8").strip() in lines:
+            return None
+        if any(_SHA256_HEX.fullmatch(line) for line in lines):
+            drift = (
+                f"victim image {self.config.image} was built from a different staged context than this config produces"
+            )
+        else:
+            drift = f"victim image {self.config.image} has no staged-context digest"
+        if self.config.allow_context_drift:
+            return drift
+        raise VictimBuildError(
+            drift,
+            remediation="Rebuild the image from `agent-hardener stage`, or pass --allow-context-drift to run it anyway.",
+        )
+
+    def _builds_cwd(self) -> Path:
+        return self.config.cwd or Path.cwd()
+
     def _create_sandbox(self, effective_policy_path: Path) -> list[OpenShellCommandResult]:
         build = self._build_image()
         if not build.ok:
             return [build]
+        write_victim_image(self._builds_cwd(), self.config.sandbox, self.config.image)
         args = self._sandbox_create_args(effective_policy_path, image=build.output.strip())
         logger.info(
             "sandbox create command sandbox=%s command=%s",
@@ -151,9 +210,12 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
     def _build_image(self) -> OpenShellCommandResult:
         """Build the staged Dockerfile into a local image; ``output`` carries the image reference.
 
-        ``sandbox create --from`` takes an image reference only, built with the gateway's container engine. A ``build_context`` that is
-        not a local path is taken to already be an image reference and passed through untouched.
+        ``sandbox create --from`` takes an image reference only, built with the gateway's container engine. A
+        configured ``image`` is used as-is with no local build, for hosts without Docker that build the staged
+        context elsewhere. A ``build_context`` that is not a local path is likewise passed through untouched.
         """
+        if self.config.image:
+            return OpenShellCommandResult(ok=True, command=[], output=self.config.image)
         context = self.config.build_context
         assert context is not None  # guarded by up()
         if not context.exists():

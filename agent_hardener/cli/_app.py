@@ -29,3 +29,33 @@ app = typer.Typer(
 
 DEFAULT_MANIFEST = Path("agent-hardener.yaml")
 DEFAULT_ENV_FILE = Path(".env")
+
+
+def _victim_image(value: str | None) -> str | None:
+    if value is None:
+        return None
+    image = value.strip()
+    if not image:
+        raise typer.BadParameter("name an image reference, e.g. registry.example.com/agent:1")
+    from agent_hardener.display.console import info
+
+    info(f"Using pre-built victim image: {image}")
+    return image
+
+
+VICTIM_IMAGE_OPTION = typer.Option(
+    None,
+    "--victim-image",
+    callback=_victim_image,
+    help=(
+        "Pre-built victim image to run instead of building locally with docker. Build it from the context "
+        "`agent-hardener stage` writes."
+    ),
+)
+
+ALLOW_CONTEXT_DRIFT_OPTION = typer.Option(
+    False,
+    "--allow-context-drift",
+    help="Run a --victim-image that was not built from the context `agent-hardener stage` writes now, "
+    "with a warning instead of failing.",
+)

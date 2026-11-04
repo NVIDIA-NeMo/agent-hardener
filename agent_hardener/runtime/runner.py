@@ -19,7 +19,7 @@ import contextlib
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -51,7 +51,13 @@ from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
 from agent_hardener.runtime.adapters import build_uploaders
 from agent_hardener.runtime.event_sink import make_http_event_sink
 from agent_hardener.runtime.orchestrator import Orchestrator
-from agent_hardener.swarm_tracker import OPENSHELL_LOGS, RunLayout, agent_fingerprint_path, victim_active_state_dir
+from agent_hardener.swarm_tracker import (
+    OPENSHELL_LOGS,
+    RunLayout,
+    agent_fingerprint_path,
+    read_victim_image,
+    victim_active_state_dir,
+)
 from agent_hardener.tools.openshell import (
     openshell_config,
     prepare_relay_victim,
@@ -116,11 +122,14 @@ def _agent_fingerprint(session_config: SessionConfig, openshell_config: OpenShel
     """Deterministic identity of the agent a sandbox should be running.
 
     Combines the victim's workflow config contents with the sandbox name, start
-    command, and build context. Recorded when we build a sandbox and re-checked
+    command, build context, and pre-built image. Recorded when we build a sandbox and re-checked
     on ``--reuse`` so a different agent under the same sandbox name is detected.
     """
     h = hashlib.sha256()
-    for part in (openshell_config.sandbox, openshell_config.start_command, str(openshell_config.build_context or "")):
+    parts = [openshell_config.sandbox, openshell_config.start_command, str(openshell_config.build_context or "")]
+    if openshell_config.image:
+        parts.append(openshell_config.image)
+    for part in parts:
         h.update((part or "").encode("utf-8"))
         h.update(b"\x00")
     workflow = session_config.target.agent_relay_plugins
@@ -210,6 +219,9 @@ class Mission:
         """Resolve the victim build config, run layout, lifecycle, uploaders, and host backends."""
         cfg = self.ctx.session_config
         self._base_config = prepare_relay_victim(openshell_config(cfg.victim_control))
+        self._adopted_image = self._recorded_victim_image() if self.ctx.skip_initial_up else None
+        if self._adopted_image:
+            self._base_config = replace(self._base_config, image=self._adopted_image)
         # Seed the run from the inferred (egress-injected) policy, not the raw template, so defenders start
         # from the deployed policy (the workflow is already seeded via storage).
         if self._base_config.policy_path is not None:
@@ -233,6 +245,27 @@ class Mission:
         self._backend_specs = list(self._base_config.relay_victim.backends) if self._base_config.relay_victim else []
         self._backend_cwd = self._base_config.cwd or Path.cwd()
         self._backend_manager = BackendManager() if self._backend_specs else None
+
+    def _recorded_victim_image(self) -> str | None:
+        """The pre-built image the running sandbox was created from, when ``--victim-image`` is not repeated.
+
+        Without it a ``--reuse`` after a ``--victim-image`` run would see a fingerprint mismatch, tear the good
+        sandbox down, and fall into a local ``docker build`` on the very host that has no Docker. Adopted only
+        while the recorded fingerprint still matches, so a changed agent is rebuilt from the configured source.
+        """
+        if self._base_config.image is not None:
+            return None
+        cwd = self._base_config.cwd or Path.cwd()
+        recorded = read_victim_image(cwd, self._base_config.sandbox)
+        if recorded is None:
+            return None
+        adopted = replace(self._base_config, image=recorded)
+        fingerprint = _agent_fingerprint(self.ctx.session_config, adopted)
+        return (
+            recorded
+            if _read_fingerprint(agent_fingerprint_path(cwd, self._base_config.sandbox)) == fingerprint
+            else None
+        )
 
     def _open_sinks(self, sinks: contextlib.ExitStack) -> None:
         """Wire the per-run agent-hardener.log capture and the multicast structured-event bus onto *sinks*."""
@@ -273,14 +306,14 @@ class Mission:
     # --- phases ---
 
     def _start_backends(self) -> None:
-        """Start any host-side backends the victim's tools call."""
+        """Start the compose-managed backends the victim's tools call and wait for every backend's health."""
         if not self._backend_manager:
             return
-        self._announce("backend setup: starting host backends")
+        self._announce("backend setup: starting backends")
         backend_up = self._backend_manager.up(self._backend_specs, self._backend_cwd)
         if not backend_up.ok:
             self._announce(backend_up.output)  # real error: surface even when quiet
-            raise MissionError("host backend startup failed")
+            raise MissionError("backend startup failed")
         self._detail(backend_up.output)
         self._announce("backends ready")
 
@@ -288,10 +321,12 @@ class Mission:
         """Stand the victim up once at the baseline: build/reuse the sandbox and gate health (synth is separate)."""
         cfg, base_config = self.ctx.session_config, self._base_config
         # --reuse only sets skip_initial_up, which matches by sandbox NAME. Gate reuse on an agent
-        # fingerprint (workflow + start command + build context) so a different agent under the same name
-        # forces a rebuild instead of probing the wrong victim.
+        # fingerprint (workflow + start command + build context + image) so a different agent under the same
+        # name forces a rebuild instead of probing the wrong victim.
         fp = _agent_fingerprint(cfg, base_config)
         fp_path = agent_fingerprint_path(base_config.cwd or Path.cwd(), base_config.sandbox)
+        if self._adopted_image:
+            self._announce(f"reusing the pre-built victim image recorded for this sandbox: {self._adopted_image}")
         reuse_ok = self.ctx.skip_initial_up and _read_fingerprint(fp_path) == fp
         if self.ctx.skip_initial_up and not reuse_ok:
             self._announce(
@@ -311,6 +346,9 @@ class Mission:
             _write_fingerprint(fp_path, fp)
         else:
             self._announce("reusing sandbox (agent fingerprint matches)")
+        drift = self._lifecycle.image_context_drift()
+        if drift:
+            self._announce(f"warning: {drift}")
         # Ensure the victim is serving before synth probes it (wait_for_health is idempotent).
         health_url = target_health_url(cfg.target.base_url)
         if health_url:
@@ -480,13 +518,14 @@ class Mission:
         return reports
 
     def _write_hardened_bundle(self) -> None:
-        """Assemble the run's deployable artifact: the staged image plus the guardrails it validated.
+        """Assemble the run's deployable artifact: the image the run validated plus its guardrails.
 
         Best-effort. The bundle is the *useful* output, but a packaging failure must not discard a run
         whose report is already written — the operator is told, and the evidence survives either way.
         """
         spec = self._base_config.relay_victim
-        if spec is None or self._base_config.build_context is None:
+        build_context, image = self._base_config.build_context, self._base_config.image
+        if spec is None or (build_context is None and image is None):
             return
         run_dir = RunLayout(self.ctx.session_config.storage.root_dir, self._run_id).run_dir
         active_state = victim_active_state_dir(run_dir)
@@ -499,12 +538,13 @@ class Mission:
         try:
             bundle = write_hardened_bundle(
                 # build_context is the staged *Dockerfile*; the bundle is its whole directory.
-                build_root=self._base_config.build_context.parent,
+                build_root=build_context.parent if build_context else None,
                 plugins_toml=plugins_toml,
                 destination=run_dir / "hardened-image",
                 agent=self.ctx.session_config.target.name,
                 run_id=self._run_id,
                 policy=policy,
+                image=image,
             )
         except Exception:
             self._run_log.warning("could not assemble the hardened image bundle", exc_info=True)

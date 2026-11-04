@@ -125,6 +125,51 @@ def test_expand_builds_relay_victim_and_backends() -> None:
     assert osc.relay_victim.backends[0].allowlist[0].port == 8086
 
 
+def test_expand_points_a_backend_at_a_non_host_address() -> None:
+    backend = {"name": "finance", "ports": [8086], "host": "finance.ns.svc", "allowed_ips": ["10.96.0.0/12"]}
+    config = expand(AgentManifest.model_validate({**AGENT, "backends": [backend]}), base_dir=REPO_ROOT)
+    relay_victim = openshell_config(config.victim_control).relay_victim
+    assert relay_victim is not None
+    (endpoint,) = relay_victim.backends[0].allowlist
+    assert (endpoint.host, endpoint.port, endpoint.allowed_ips) == ("finance.ns.svc", 8086, ["10.96.0.0/12"])
+
+
+def test_expand_carries_the_secrets_file_so_staging_can_exclude_it() -> None:
+    config = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT)
+    relay_victim = openshell_config(config.victim_control).relay_victim
+    assert relay_victim is not None
+    assert relay_victim.secrets_file == Path(".env")
+
+
+@pytest.mark.parametrize(
+    ("backend", "message"),
+    [
+        ({"name": "f", "ports": [8086], "host": "http://finance.ns.svc"}, "bare hostname"),
+        ({"name": "f", "ports": [8086], "host": "finance.ns.svc:8086"}, "bare hostname"),
+        ({"name": "f", "host": "finance.ns.svc"}, "no ports"),
+        ({"name": "f", "allowed_ips": ["10.0.0.5/32"]}, "no ports"),
+        (
+            {"name": "f", "ports": [8086], "host": "finance.ns.svc", "compose_file": "x.yaml"},
+            "both host and compose_file",
+        ),
+    ],
+)
+def test_backend_rejects_routes_that_would_silently_do_nothing(backend: dict[str, object], message: str) -> None:
+    with pytest.raises(ValidationError, match=message):
+        AgentManifest.model_validate({**AGENT, "backends": [backend]})
+
+
+@pytest.mark.parametrize("host", ["finance.ns.svc", "10.96.4.2", "fd00::10"])
+def test_a_backend_host_may_be_a_name_or_an_ip(host: str) -> None:
+    manifest = AgentManifest.model_validate({**AGENT, "backends": [{"name": "f", "ports": [8086], "host": host}]})
+    assert manifest.backends[0].host == host
+
+
+def test_a_blank_backend_host_means_the_default() -> None:
+    manifest = AgentManifest.model_validate({**AGENT, "backends": [{"name": "f", "ports": [8086], "host": "  "}]})
+    assert manifest.backends[0].host is None
+
+
 def test_expand_carries_the_users_image_and_binaries() -> None:
     raw = {
         "agent": {

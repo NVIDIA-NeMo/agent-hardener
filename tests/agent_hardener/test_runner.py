@@ -62,7 +62,6 @@ def _run_log_path(root_dir: Path) -> Path:
 
 
 def _base_config(relay_victim: object = None) -> SimpleNamespace:
-    # Includes the fields the loop-1 agent fingerprint reads (sandbox/start_command/build_context).
     return SimpleNamespace(
         relay_victim=relay_victim,
         cwd=None,
@@ -70,6 +69,7 @@ def _base_config(relay_victim: object = None) -> SimpleNamespace:
         sandbox="agent-hardener-test",
         start_command="run",
         build_context=None,
+        image=None,
         policy_path=None,  # real OpenShellConfig always has one; None here skips the initial-state seed
     )
 
@@ -230,6 +230,9 @@ def test_run_mission_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -254,6 +257,9 @@ def test_run_mission_always_writes_full_report_to_log(monkeypatch: pytest.Monkey
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -313,6 +319,9 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("agent_hardener.runtime.runner.Orchestrator", CapturingOrchestrator)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -353,6 +362,9 @@ def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.Mo
     downs: list[str] = []
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -380,6 +392,9 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -410,6 +425,9 @@ def test_run_mission_emits_status_events(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("agent_hardener.runtime.runner.wait_for_health", lambda _u, _t: None)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -445,6 +463,9 @@ def test_run_mission_tees_detail_to_log_and_surfaces_errors(monkeypatch: pytest.
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -473,6 +494,9 @@ def test_run_mission_failure_output_surfaced_to_highlights(monkeypatch: pytest.M
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -512,6 +536,9 @@ def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.Monkey
     monkeypatch.setattr("agent_hardener.runtime.runner.Orchestrator", CapturingOrchestrator)
 
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def __init__(
             self, cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
         ) -> None:
@@ -540,6 +567,9 @@ def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.Monkey
 
 def _teardown_mission(tmp_path: Path, diagnostics: OpenShellCommandResult, calls: list[str]) -> Mission:
     class FakeLifecycle:
+        def image_context_drift(self) -> None:
+            return None
+
         def collect_victim_diagnostics(self) -> OpenShellCommandResult:
             calls.append("diagnostics")
             return diagnostics

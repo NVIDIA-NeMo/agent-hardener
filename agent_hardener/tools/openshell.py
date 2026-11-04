@@ -20,6 +20,7 @@ import yaml  # type: ignore[import-untyped]
 
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
+from agent_hardener.display.console import warn
 from agent_hardener.openshell.egress import (
     CodeEgressSource,
     DockerfileEnvEgressSource,
@@ -36,7 +37,7 @@ from agent_hardener.openshell.policy_egress import (
     normalize_host_gateway_allowed_ips,
     reconcile_shared_endpoint_settings,
 )
-from agent_hardener.openshell.relay_victim import dockerfile_env, stage_relay_victim_build
+from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, dockerfile_env, stage_relay_victim_build
 from agent_hardener.preflight.relay import RELAY_PROBE_PROMPT, RELAY_PROBE_TIMEOUT_SECONDS, check_relay_instrumentation
 from agent_hardener.relay_plugin.config import judge_endpoint
 from agent_hardener.relay_plugin.victim import ARTIFACTS_ENV, SANDBOX_ARTIFACTS_DIR
@@ -129,6 +130,17 @@ def openshell_config(config: VictimControlConfig) -> OpenShellConfig:
     return OpenShellConfig.from_mapping(config.config)
 
 
+def with_victim_image(
+    config: VictimControlConfig, image: str | None, *, allow_context_drift: bool = False
+) -> VictimControlConfig:
+    """Point the sandbox at a pre-built victim image (one built from the ``agent-hardener stage`` context)."""
+    if image is None:
+        return config
+    return config.model_copy(
+        update={"config": {**config.config, "image": image, "allow_context_drift": allow_context_drift}}
+    )
+
+
 def sandbox_is_ready(config: OpenShellConfig) -> bool:
     """Return True when the configured sandbox already exists and is ``Ready``.
 
@@ -137,6 +149,14 @@ def sandbox_is_ready(config: OpenShellConfig) -> bool:
     """
     status = OpenShellLifecycle(config).status()
     return status.ok and "Ready" in status.output
+
+
+def _provider_env_files(config: OpenShellConfig, cwd: Path) -> list[Path]:
+    """Every file the provider could read secrets from: it opens ``provider_env_file`` from the process cwd."""
+    env_file = config.provider_env_file
+    if env_file is None:
+        return []
+    return [env_file] if env_file.is_absolute() else [Path.cwd() / env_file, cwd / env_file]
 
 
 def prepare_relay_victim(config: OpenShellConfig) -> OpenShellConfig:
@@ -152,7 +172,7 @@ def prepare_relay_victim(config: OpenShellConfig) -> OpenShellConfig:
         return config
     cwd = config.cwd or Path.cwd()
     build_root = cwd / ".agent-hardener" / "builds" / config.sandbox
-    staged_dockerfile = stage_relay_victim_build(spec, cwd, build_root)
+    staged_dockerfile = stage_relay_victim_build(spec, cwd, build_root, also_exclude=_provider_env_files(config, cwd))
 
     project_dir = spec.project_dir if spec.project_dir.is_absolute() else cwd / spec.project_dir
     project_dir = project_dir.resolve()
@@ -236,7 +256,7 @@ def _launch_env(spec: RelayVictimSpec, image_env: dict[str, str]) -> str:
     so it arrives as part of (1).
     """
     env = dict(image_env)
-    env["PYTHONPATH"] = _prepend("/app/openshell-shims", image_env.get("PYTHONPATH"), "${PYTHONPATH:-}")
+    env["PYTHONPATH"] = _prepend(IMAGE_SHIM_PATH, image_env.get("PYTHONPATH"), "${PYTHONPATH:-}")
     bin_dirs = _victim_bin_dirs(spec.victim_binaries)
     if bin_dirs or "PATH" in image_env:
         fallback = "${PATH:-/usr/local/bin:/usr/bin:/bin}"
@@ -325,13 +345,17 @@ def managed_victim_sandbox(
     docker build plus the whole benign interview first.
     """
     openshell = openshell_config(config)
-    reused = reuse and sandbox_is_ready(openshell)
+    reused = reuse and sandbox_is_ready(openshell) and OpenShellLifecycle(openshell).runs_configured_image()
     prepared = prepare_relay_victim(openshell)
+    lifecycle = OpenShellLifecycle(prepared)
     if not reused:
-        result = OpenShellLifecycle(prepared).up()
+        result = lifecycle.up()
         if not result.ok:
             raise RuntimeError(result.output)
     try:
+        drift = lifecycle.image_context_drift()
+        if drift:
+            warn(drift)
         verify_relay_instrumentation(prepared, base_url=base_url)
         yield openshell
     finally:
