@@ -120,8 +120,8 @@ Structural sources outrank inferential ones. When the same tool name appears in 
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `synth_llm.model` | `nvidia/nemotron-3-super-120b-a12b` | All synthesis LLM calls |
-| `judge_llm.model` | `nvidia/nemotron-3-super-120b-a12b` | Judge verdicts |
+| `synth_llm.model` | `nvidia/nemotron-3-ultra-550b-a55b` | All synthesis LLM calls |
+| `judge_llm.model` | `nvidia/nemotron-3-ultra-550b-a55b` | Judge verdicts |
 | `generation.requests_per_tool` | `3` | Benign rows generated per tool |
 | `generation.borderline_per_tool` | `0` | Borderline rows per tool — off by default; interactive-only (forced to 0 with no TTY); see above |
 | `generation.negative_control_per_tool` | `0` | Intentionally zero |

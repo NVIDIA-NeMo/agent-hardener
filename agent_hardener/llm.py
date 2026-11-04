@@ -27,7 +27,7 @@ from agent_hardener.relay_plugin.config import no_reasoning_body
 DEFAULT_BASE_URL = os.environ.get("AGENT_HARDENER_BASE_URL") or "https://integrate.api.nvidia.com/v1"
 # Default model for callers that don't thread one through their own config (e.g. defenders). Overridable
 # via AGENT_HARDENER_MODEL — the single lever for the "analysis" model across defenders + benign validator.
-DEFAULT_MODEL = os.environ.get("AGENT_HARDENER_MODEL") or "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_MODEL = os.environ.get("AGENT_HARDENER_MODEL") or "nvidia/nemotron-3-ultra-550b-a55b"
 
 
 def build_chat_model(

@@ -19,8 +19,8 @@ OUT_DIR=$(mkdir -p "$3" && cd "$3" && pwd)
 INFERENCE_HOST=integrate.api.nvidia.com
 INFERENCE_BASE_URL=https://${INFERENCE_HOST}/v1
 VICTIM_MODEL=${VICTIM_MODEL:-nvidia/nemotron-3.5-lightning-30b-a3b}
-# agent-hardener's default (nemotron-3-super-120b) is listed on build.nvidia.com but 404s on chat
-# for this key, so both roles are pinned; the guardrail judge falls back to the analysis model.
+# Both roles are pinned so CI stays stable when agent-hardener's default changes; the guardrail
+# judge falls back to the analysis model.
 MODEL_FLAGS=(
     --attack-model "${ATTACK_MODEL:-nvidia/nemotron-3-ultra-550b-a55b}"
     --analysis-model "${ANALYSIS_MODEL:-$VICTIM_MODEL}"
