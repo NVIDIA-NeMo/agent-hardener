@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from typing import Any
 
 import httpx
 
@@ -36,7 +37,7 @@ class Validation:
     """A model choice's verdict; ``available`` lists what the credentials can reach for a helpful error."""
 
     ok: bool
-    reason: str = ""  # "", "auth", "unreachable", "unknown_model"
+    reason: str = ""  # "", "auth", "unreachable", "unknown_model", "timeout", "error"
     available: list[str] = field(default_factory=list)
     detail: str = ""
 
@@ -63,7 +64,30 @@ def validate_choice(model: str | None, base_url: str, api_key: str | None) -> Va
     return Validation(ok=True, available=ids)
 
 
-def _raise_if_bad(label: str, model: str | None, base_url: str, verdict: Validation) -> None:
+def probe_generation(
+    model: str, base_url: str, api_key: str | None, *, timeout: float, extra_body: dict[str, Any] | None = None
+) -> Validation:
+    """Ask *model* for one token at ``{base_url}/chat/completions`` (best-effort; never raises).
+
+    Catches what ``/models`` can't: an endpoint that lists the model but never answers a request.
+    """
+    url = base_url.rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    payload = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1, **(extra_body or {})}
+    try:
+        resp = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+    except httpx.TimeoutException:
+        return Validation(ok=False, reason="timeout", detail=f"no response within {timeout:g}s")
+    except httpx.HTTPError as exc:
+        return Validation(ok=False, reason="unreachable", detail=str(exc) or exc.__class__.__name__)
+    if resp.status_code in (401, 403):
+        return Validation(ok=False, reason="auth", detail=f"HTTP {resp.status_code}")
+    if resp.status_code >= 400:
+        return Validation(ok=False, reason="error", detail=f"HTTP {resp.status_code}: {resp.text[:200]}")
+    return Validation(ok=True)
+
+
+def raise_if_unavailable(label: str, model: str | None, base_url: str, verdict: Validation) -> None:
     """Turn a failed :class:`Validation` into a :class:`ModelUnavailableError` (no-op when ok)."""
     if verdict.ok:
         return
@@ -71,6 +95,10 @@ def _raise_if_bad(label: str, model: str | None, base_url: str, verdict: Validat
         raise ModelUnavailableError(f"The {label} model credentials were rejected by {base_url} ({verdict.detail}).")
     if verdict.reason == "unreachable":
         raise ModelUnavailableError(f"Could not reach the {label} model endpoint {base_url} ({verdict.detail}).")
+    if verdict.reason in ("timeout", "error"):
+        raise ModelUnavailableError(
+            f"The {label} model {model!r} at {base_url} failed a one-token test request ({verdict.detail})."
+        )
     available = ", ".join(verdict.available[:20]) or "none"
     raise ModelUnavailableError(
         f"The {label} model {model!r} is not available at {base_url}. Reachable models: {available}."
@@ -94,7 +122,7 @@ def preflight_configured_models() -> None:
             ),
         )
     if os.environ.get("AGENT_HARDENER_MODEL"):
-        _raise_if_bad(
+        raise_if_unavailable(
             "analysis",
             DEFAULT_MODEL,
             DEFAULT_BASE_URL,
@@ -104,4 +132,4 @@ def preflight_configured_models() -> None:
     if attack_model:
         attack_uri = os.environ.get("GARAK_RED_TEAM_MODEL_URI") or _ATTACK_DEFAULT_URI
         attack_key = os.environ.get(NIM_API_KEY) or inference_api_key()
-        _raise_if_bad("attack", attack_model, attack_uri, validate_choice(attack_model, attack_uri, attack_key))
+        raise_if_unavailable("attack", attack_model, attack_uri, validate_choice(attack_model, attack_uri, attack_key))
