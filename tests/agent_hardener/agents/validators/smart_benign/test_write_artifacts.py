@@ -65,6 +65,7 @@ def test_all_artifacts_land_in_the_target_dir_creating_parents(tmp_path: Path) -
 
     assert sorted(p.relative_to(target).as_posix() for p in _written(delta)) == [
         "input_hash.txt",
+        "interview.json",
         "profile.json",
         "requests.csv",
         "sources/api_prober.json",
@@ -72,7 +73,7 @@ def test_all_artifacts_land_in_the_target_dir_creating_parents(tmp_path: Path) -
     ]
     assert all(p.is_file() for p in _written(delta))
     assert "errors" not in delta
-    assert delta["source_note"] == f"wrote 5 artifact(s) to {target}"
+    assert delta["source_note"] == f"wrote 6 artifact(s) to {target}"
     assert (target / "input_hash.txt").read_text(encoding="utf-8") == "hash-1\n"
     assert json.loads((target / "sources" / "api_prober.json").read_text(encoding="utf-8")) == {"note": "probed 3/5"}
 
@@ -90,7 +91,49 @@ def test_no_source_notes_means_no_sources_dir(tmp_path: Path) -> None:
     delta = asyncio.run(wr.write(_state(tmp_path, profile=_profile())))
 
     assert not (tmp_path / "sources").exists()
-    assert len(_written(delta)) == 3
+    assert len(_written(delta)) == 4
+
+
+def test_without_an_interview_the_log_is_empty_and_there_is_no_pre_interview_profile(tmp_path: Path) -> None:
+    asyncio.run(wr.write(_state(tmp_path, profile=_profile())))
+
+    assert json.loads((tmp_path / "interview.json").read_text(encoding="utf-8")) == {"rounds": []}
+    assert not (tmp_path / "profile.pre_interview.json").exists()
+
+
+def test_an_interview_writes_its_rounds_and_the_profile_it_started_from(tmp_path: Path) -> None:
+    log = [{"round": 1, "questions": [{"gap": "g", "options": []}], "answers": [{"gap": "g", "answer": "a"}]}]
+    before = _profile("before")
+
+    asyncio.run(wr.write(_state(tmp_path, profile=_profile(), interview_log=log, pre_interview_profile=before)))
+
+    assert json.loads((tmp_path / "interview.json").read_text(encoding="utf-8")) == {"rounds": log}
+    saved = (tmp_path / "profile.pre_interview.json").read_text(encoding="utf-8")
+    assert VictimCapabilityProfile.model_validate_json(saved) == before
+
+
+def test_source_details_sit_beside_the_note_even_without_one(tmp_path: Path) -> None:
+    details: dict[str, dict[str, Any]] = {"api_probe": {"exchanges": [{"question": "Q", "answer": "A"}]}, "x": {"n": 2}}
+
+    asyncio.run(
+        wr.write(_state(tmp_path, profile=_profile(), source_notes={"api_probe": "probed"}, source_details=details))
+    )
+
+    sources = tmp_path / "sources"
+    assert json.loads((sources / "api_probe.json").read_text(encoding="utf-8")) == {
+        "note": "probed",
+        "exchanges": [{"question": "Q", "answer": "A"}],
+    }
+    assert json.loads((sources / "x.json").read_text(encoding="utf-8")) == {"note": "", "n": 2}
+
+
+def test_write_usage_creates_the_dir_and_rounds_the_wall_time(tmp_path: Path) -> None:
+    path = wr.write_usage(tmp_path / "new", {"m": {"input_tokens": 3, "output_tokens": 1}}, 1.23456)
+
+    assert json.loads(path.read_text(encoding="utf-8")) == {
+        "wall_seconds": 1.235,
+        "models": {"m": {"input_tokens": 3, "output_tokens": 1}},
+    }
 
 
 def test_requests_csv_keeps_awkward_payloads_intact_and_loads_back(tmp_path: Path) -> None:

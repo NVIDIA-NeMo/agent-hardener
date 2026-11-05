@@ -40,6 +40,9 @@ def exit_adapter(sub: ApiProberState) -> dict[str, object]:
         delta["partials"] = {"api_probe": sub.tools}
     if sub.source_note:
         delta["source_notes"] = {"api_probe": sub.source_note}
+    if sub.probe_responses or sub.probe_errors:
+        exchanges = [{"question": question, "answer": answer} for question, answer in sub.probe_responses]
+        delta["source_details"] = {"api_probe": {"exchanges": exchanges, "probe_errors": sub.probe_errors}}
     if sub.errors:
         delta["errors"] = sub.errors
     return delta

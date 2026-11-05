@@ -72,6 +72,10 @@ class SynthState(AgentHardenerModel):
     source_notes: Annotated[dict[str, str], or_] = Field(default_factory=dict)
     errors: Annotated[list[str], add] = Field(default_factory=list)
     interviewer_answers: Annotated[list[tuple[str, str, str]], add] = Field(default_factory=list)
+    # One record per interview round: the questions as asked (options, recommended flag) and the raw answers.
+    interview_log: Annotated[list[dict[str, Any]], add] = Field(default_factory=list)
+    # Structured per-source detail, written beside the note in ``sources/<source>.json``.
+    source_details: Annotated[dict[str, dict[str, Any]], or_] = Field(default_factory=dict)
 
     # --- Inputs / config (set once at entry) ---
     max_interview_questions: int = Field(default=10, ge=1)
@@ -79,6 +83,7 @@ class SynthState(AgentHardenerModel):
 
     # --- Single-writer fields ---
     profile: VictimCapabilityProfile | None = None
+    pre_interview_profile: VictimCapabilityProfile | None = None
     gaps: list[str] = Field(default_factory=list)
     requests: list[GeneratedRequest] = Field(default_factory=list)
     interview_questions_asked: int = Field(default=0, ge=0)

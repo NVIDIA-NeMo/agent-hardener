@@ -5,8 +5,9 @@
 
 from __future__ import annotations
 
-from .adapters import entry_adapter, exit_adapter
+from .adapters import entry_adapter, exit_adapter, target_dir
 from .agent import build_profile_writer_agent
+from .nodes.write import write_usage
 from .state import ProfileWriterState
 
 __all__ = [
@@ -14,4 +15,6 @@ __all__ = [
     "build_profile_writer_agent",
     "entry_adapter",
     "exit_adapter",
+    "target_dir",
+    "write_usage",
 ]

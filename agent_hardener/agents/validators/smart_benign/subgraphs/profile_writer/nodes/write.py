@@ -1,14 +1,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Persist the synth artifacts to disk: profile.json, requests.csv, sources/, input_hash.txt."""
+"""Persist the synth artifacts to disk.
+
+profile.json, requests.csv, sources/, input_hash.txt, interview.json, and profile.pre_interview.json
+when an interview ran. usage.json is written by the driver after the graph finishes.
+"""
 
 from __future__ import annotations
 
 import csv
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -36,8 +40,13 @@ async def write(state: ProfileWriterState) -> dict[str, object]:
         state.target_dir.mkdir(parents=True, exist_ok=True)
         written.append(_write_profile(state.target_dir, state))
         written.append(_write_requests_csv(state.target_dir, state.requests))
-        written.extend(_write_source_notes(state.target_dir, state.source_notes))
+        written.extend(_write_source_notes(state.target_dir, state.source_notes, state.source_details))
         written.append(_write_input_hash(state.target_dir, state.profile.input_hash))
+        written.append(_write_json(state.target_dir / "interview.json", {"rounds": state.interview_log}))
+        if state.pre_interview_profile is not None:
+            path = state.target_dir / "profile.pre_interview.json"
+            path.write_text(state.pre_interview_profile.model_dump_json(indent=2), encoding="utf-8")
+            written.append(path)
     except OSError as exc:
         logger.exception("profile_writer file I/O failed")
         return {
@@ -70,17 +79,27 @@ def _write_requests_csv(target_dir: Path, requests: list[GeneratedRequest]) -> P
     return path
 
 
-def _write_source_notes(target_dir: Path, notes: dict[str, str]) -> list[Path]:
-    if not notes:
+def write_usage(target_dir: Path, usage: dict[str, Any], wall_seconds: float) -> Path:
+    """Persist per-model token usage and wall time; written by the driver once the graph has finished."""
+    target_dir.mkdir(parents=True, exist_ok=True)
+    return _write_json(target_dir / "usage.json", {"wall_seconds": round(wall_seconds, 3), "models": usage})
+
+
+def _write_json(path: Path, data: object) -> Path:
+    path.write_text(json.dumps(data, indent=2, default=str), encoding="utf-8")
+    return path
+
+
+def _write_source_notes(target_dir: Path, notes: dict[str, str], details: dict[str, dict[str, Any]]) -> list[Path]:
+    sources = sorted(notes.keys() | details.keys())
+    if not sources:
         return []
     sources_dir = target_dir / "sources"
     sources_dir.mkdir(exist_ok=True)
-    out: list[Path] = []
-    for source, note in notes.items():
-        path = sources_dir / f"{source}.json"
-        path.write_text(json.dumps({"note": note}, indent=2), encoding="utf-8")
-        out.append(path)
-    return out
+    return [
+        _write_json(sources_dir / f"{source}.json", {"note": notes.get(source, ""), **details.get(source, {})})
+        for source in sources
+    ]
 
 
 def _write_input_hash(target_dir: Path, input_hash: str) -> Path:
