@@ -26,6 +26,7 @@ from agent_hardener.openshell.policy_egress import (
 )
 from agent_hardener.openshell.relay_victim import (
     GUARDRAIL_PACKAGE,
+    RUN_WRITABLE_DIRS,
     dockerfile_env,
     stage_relay_victim_build,
     staged_context_digest,
@@ -127,6 +128,34 @@ def test_stage_copies_project_dockerfile_and_injects_shim(tmp_path: Path) -> Non
     assert "COPY openshell-shims/ /app/openshell-shims/" in staged_text
     shim = (build / "openshell-shims" / "sitecustomize.py").read_text(encoding="utf-8")
     assert 'kw.setdefault("trust_env", True)' in shim
+
+
+def _stage_with_dockerfile(tmp_path: Path, dockerfile: str) -> str:
+    project = _make_project(tmp_path)
+    (project / "Dockerfile.byo").write_text(dockerfile, encoding="utf-8")
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    return stage_relay_victim_build(spec, tmp_path, tmp_path / "build").read_text(encoding="utf-8")
+
+
+def test_stage_makes_the_run_dirs_writable_by_any_sandbox_uid_and_keeps_the_runtime_user(tmp_path: Path) -> None:
+    # A Kubernetes sandbox runs as one configured uid, not the image's `sandbox` user that owns these dirs.
+    staged = _stage_with_dockerfile(
+        tmp_path, 'FROM python:3.12 AS build\nUSER builder\nFROM python:3.12-slim\nUSER sandbox\nCMD ["true"]\n'
+    )
+
+    tail = staged.split("# --- Agent Hardener: dirs the run writes, writable by any sandbox uid ---\n")[1]
+    assert tail.splitlines() == [
+        "USER root",
+        f"RUN mkdir -p {' '.join(RUN_WRITABLE_DIRS)} && chmod -R a+rwX {' '.join(RUN_WRITABLE_DIRS)}",
+        "USER sandbox",
+    ]
+    assert {"/etc/nemo-relay", SANDBOX_ARTIFACTS_DIR} == set(RUN_WRITABLE_DIRS)
+
+
+def test_stage_restores_no_user_when_the_final_stage_sets_none(tmp_path: Path) -> None:
+    staged = _stage_with_dockerfile(tmp_path, "FROM python:3.12 AS build\nUSER builder\nFROM python:3.12-slim\n")
+
+    assert staged.rstrip().splitlines()[-1].startswith("RUN mkdir -p ")
 
 
 def test_stage_leaves_dotenv_and_the_secrets_file_out_of_the_build_context(tmp_path: Path) -> None:
