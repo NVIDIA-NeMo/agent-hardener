@@ -31,8 +31,8 @@ COPY agent.py server.py /app/
 # Where each round's guardrails are uploaded, and where the ATOF stream is written. Both must exist
 # and be writable by the runtime user before the victim starts — a missing /etc/nemo-relay fails the
 # run at deploy with `mkdir: cannot create directory '/etc/nemo-relay': Permission denied`.
-RUN mkdir -p /etc/nemo-relay /home/sandbox/.agent-hardener/relay \
- && chown -R sandbox:sandbox /etc/nemo-relay /home/sandbox/.agent-hardener /app
+RUN mkdir -p /etc/nemo-relay /tmp/agent-hardener/relay \
+ && chown -R sandbox:sandbox /etc/nemo-relay /tmp/agent-hardener /app
 
 ENV PORT=8000
 # Unbuffered so tool output and tracebacks reach `docker logs` as they happen.
