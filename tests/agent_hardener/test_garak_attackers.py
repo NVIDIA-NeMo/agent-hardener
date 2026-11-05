@@ -111,6 +111,14 @@ def test_non_nemotron_models_get_no_reasoning_toggle() -> None:
     assert "extra_params" not in detector["detector_model_config"]
 
 
+def test_model_clients_do_not_inherit_garaks_request_timeout() -> None:
+    config = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    probe = config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
+    detector = config["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
+    assert "timeout" in probe["red_team_model_config"]["suppressed_params"]
+    assert "timeout" in detector["detector_model_config"]["suppressed_params"]
+
+
 def test_apply_runtime_fields_overlays_and_preserves_base() -> None:
     base = build_agent_breaker_config(target_uri="http://old", report_dir="x", report_prefix="y")
     resolved = apply_runtime_fields(base, target_uri="http://new", report_dir="rd", report_prefix="rp")

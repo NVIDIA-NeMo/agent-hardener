@@ -41,7 +41,8 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
 # Empty by default: see the skip_codes comment in build_agent_breaker_config.
 DEFAULT_SKIP_CODES: list[int] = []
 
-_SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
+# "timeout" keeps garak's 60s generator default off the client, which reasoning models outrun.
+_SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed", "timeout"]
 
 
 def _model_config(uri: str, model_name: str, max_tokens: int) -> dict[str, Any]:
