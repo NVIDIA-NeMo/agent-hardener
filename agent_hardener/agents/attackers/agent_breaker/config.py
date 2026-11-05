@@ -44,12 +44,14 @@ DEFAULT_MODEL_TIMEOUT_SECONDS = 600
 DEFAULT_SKIP_CODES: list[int] = []
 
 _SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
+#: Match garak's AgentBreakerResult default so its structured verdict is not truncated.
+_MODEL_MAX_TOKENS = 8192
 
 
-def _model_config(uri: str, model_name: str, max_tokens: int, timeout: int) -> dict[str, Any]:
+def _model_config(uri: str, model_name: str, timeout: int) -> dict[str, Any]:
     config: dict[str, Any] = {
         "uri": uri,
-        "max_tokens": max_tokens,
+        "max_tokens": _MODEL_MAX_TOKENS,
         "timeout": timeout,
         "suppressed_params": list(_SUPPRESSED_PARAMS),
     }
@@ -82,6 +84,12 @@ def _resolve(key: str, default: Any, overrides: dict[str, Any]) -> Any:
     return env_value if env_value else default
 
 
+def resolve_model_timeout(overrides: dict[str, Any] | None = None) -> int | None:
+    """Return the explicitly configured model timeout (override, then env), or ``None`` when unset."""
+    value = _resolve("model_timeout", None, overrides or {})
+    return None if value is None else int(value)
+
+
 def build_agent_breaker_config(
     *,
     target_uri: str,
@@ -112,7 +120,7 @@ def build_agent_breaker_config(
     red_team_model = _resolve("red_team_model_name", DEFAULT_RED_TEAM_MODEL_NAME, overrides)
     detector_model = _resolve("detector_model_name", DEFAULT_DETECTOR_MODEL_NAME, overrides)
     generations = int(_resolve("generations", DEFAULT_GENERATIONS, overrides))
-    model_timeout = int(_resolve("model_timeout", DEFAULT_MODEL_TIMEOUT_SECONDS, overrides))
+    model_timeout = resolve_model_timeout(overrides) or DEFAULT_MODEL_TIMEOUT_SECONDS
     return {
         "run": {"generations": generations},
         "plugins": {
@@ -153,7 +161,6 @@ def build_agent_breaker_config(
                         "red_team_model_config": _model_config(
                             _resolve("red_team_model_uri", DEFAULT_MODEL_URI, overrides),
                             red_team_model,
-                            8192,
                             model_timeout,
                         ),
                     }
@@ -165,10 +172,8 @@ def build_agent_breaker_config(
                         "detector_model_type": _resolve("detector_model_type", DEFAULT_DETECTOR_MODEL_TYPE, overrides),
                         "detector_model_name": detector_model,
                         "detector_model_config": _model_config(
-                            # Match garak's AgentBreakerResult default so its structured verdict is not truncated.
                             _resolve("detector_model_uri", DEFAULT_MODEL_URI, overrides),
                             detector_model,
-                            8192,
                             model_timeout,
                         ),
                     }
@@ -185,11 +190,14 @@ def apply_runtime_fields(
     target_uri: str,
     report_dir: str,
     report_prefix: str,
+    model_timeout: int | None = None,
 ) -> dict[str, Any]:
     """Return a copy of ``config`` with the resolved per-run fields forced.
 
     Lets a user-edited scaffold (model settings, probe params) survive while guaranteeing the
-    target ``uri`` and reporting destination always match the current run.
+    target ``uri`` and reporting destination always match the current run. An explicit
+    ``model_timeout`` replaces the scaffold's model timeouts; otherwise a scaffold without one
+    gets the default rather than garak's 60s.
     """
     resolved = copy.deepcopy(config)
     plugins = resolved.setdefault("plugins", {})
@@ -197,5 +205,17 @@ def apply_runtime_fields(
     generator["uri"] = target_uri
     # A scaffold authored before this setting gets the default rather than an inherited NAT-ism.
     generator.setdefault("skip_codes", list(DEFAULT_SKIP_CODES))
+    for model_config in _model_configs(plugins):
+        if model_timeout is not None:
+            model_config["timeout"] = model_timeout
+        else:
+            model_config.setdefault("timeout", DEFAULT_MODEL_TIMEOUT_SECONDS)
     resolved["reporting"] = {"report_dir": report_dir, "report_prefix": report_prefix}
     return resolved
+
+
+def _model_configs(plugins: dict[str, Any]) -> list[dict[str, Any]]:
+    probe = ((plugins.get("probes") or {}).get("agent_breaker") or {}).get("AgentBreaker") or {}
+    detector = ((plugins.get("detectors") or {}).get("agent_breaker") or {}).get("AgentBreakerResult") or {}
+    candidates = (probe.get("red_team_model_config"), detector.get("detector_model_config"))
+    return [config for config in candidates if isinstance(config, dict)]

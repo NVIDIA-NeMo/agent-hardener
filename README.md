@@ -361,7 +361,7 @@ Add a `garak:` block to the manifest (or set the matching field in a full sessio
 | `detector_model_type` | `nim` | `GARAK_DETECTOR_MODEL_TYPE` | Detector (judge) model generator type |
 | `detector_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_DETECTOR_MODEL_NAME` | Detector model name |
 | `detector_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_DETECTOR_MODEL_URI` | Detector model endpoint |
-| `model_timeout` | `600` | `GARAK_MODEL_TIMEOUT` | Seconds allowed per red-team or detector model call |
+| `model_timeout` | `600` | `GARAK_MODEL_TIMEOUT` | Client timeout, in seconds, on each red-team or detector model request (a timed-out request may be retried) |
 | `max_attempts_per_tool` | `5` | `GARAK_MAX_ATTEMPTS_PER_TOOL` | Exploit attempts per discovered tool |
 | `generations` | `1` | `GARAK_GENERATIONS` | garak `run.generations` |
 
