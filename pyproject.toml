@@ -33,7 +33,7 @@ dependencies = [
     "langchain-openai>=1.1.9,<2.0",
     "fastapi>=0.115,<1.0",
     "uvicorn>=0.30,<1.0",
-    "nemo-relay==0.10.0",
+    "nemo-relay>=0.11.0,<0.12",
     "tomli-w>=1.2,<2",
     "jinja2>=3.1,<4",
 ]
@@ -53,6 +53,7 @@ dev = [
     "mypy>=1.0.0",
     "ruff>=0.12.2",
     "detect-secrets>=1.5.0",
+    "langchain>=1.0,<1.3",
 ]
 
 # NOTE: garak is intentionally NOT a dependency. It pulls torch>=2.6.0, which would bloat the

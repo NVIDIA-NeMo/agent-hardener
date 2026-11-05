@@ -11,19 +11,22 @@ the closures themselves.
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import sys
+import typing
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
+from langchain_core.messages import ToolMessage
 
 from agent_hardener.relay_plugin import plugin
 from agent_hardener.relay_plugin.config import Guardrail
 from agent_hardener.relay_plugin.latch import BlockedRequests
 
 nemo_relay = pytest.importorskip("nemo_relay")
-BestEffortAnyCodec = pytest.importorskip("nemo_relay.typed").BestEffortAnyCodec
+LangChainToolResultCodec = pytest.importorskip("nemo_relay.integrations.langchain._tool_codec").LangChainToolResultCodec
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Callable
@@ -171,7 +174,6 @@ def test_request_key_is_empty_when_there_is_nothing_to_key_on(
 
 
 def test_request_key_swallows_a_failing_relay(monkeypatch: pytest.MonkeyPatch) -> None:
-
     def boom() -> None:
         raise RuntimeError("no active scope")
 
@@ -220,10 +222,27 @@ def test_latched_tool_passes_calls_through_until_the_request_is_blocked(blocked:
     assert "send_email" in str(refused.result)
 
 
+_LLM_CONTEXT = object()
+
+
+@pytest.mark.parametrize(
+    ("factory", "relay_type"),
+    [
+        (plugin._latched_llm, nemo_relay.LlmExecutionIntercept),
+        (plugin._latched_llm_stream, nemo_relay.LlmStreamExecutionIntercept),
+    ],
+    ids=["llm", "llm-stream"],
+)
+def test_latched_llm_intercepts_take_the_arguments_relay_passes(factory: Any, relay_type: Any) -> None:
+    relay_args = typing.get_args(relay_type)[0]
+
+    assert len(inspect.signature(factory(_MESSAGE)).parameters) == len(relay_args)
+
+
 def test_latched_llm_lets_an_unblocked_request_reach_the_provider() -> None:
     next_call, seen = _downstream("provider answer")
 
-    result = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _OPENAI_REQUEST, next_call))
+    result = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _OPENAI_REQUEST, _LLM_CONTEXT, next_call))
 
     assert result == "provider answer"
     assert seen == [(_OPENAI_REQUEST,)]
@@ -234,8 +253,8 @@ def test_latched_llm_answers_a_blocked_request_locally_exactly_once(blocked: Blo
     next_call, seen = _downstream("provider answer")
     intercept = plugin._latched_llm(_MESSAGE)
 
-    first = asyncio.run(intercept("model", _OPENAI_REQUEST, next_call))
-    second = asyncio.run(intercept("model", _OPENAI_REQUEST, next_call))
+    first = asyncio.run(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, next_call))
+    second = asyncio.run(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, next_call))
 
     assert first["choices"][0]["message"]["content"] == _MESSAGE
     assert first["choices"][0]["message"]["tool_calls"] == []
@@ -248,7 +267,7 @@ def test_latched_llm_answers_a_langchain_harness_in_its_own_envelope(blocked: Bl
     blocked.mark("req-1")
     next_call, _ = _downstream()
 
-    payload = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _LANGCHAIN_REQUEST, next_call))
+    payload = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _LANGCHAIN_REQUEST, _LLM_CONTEXT, next_call))
 
     (envelope,) = payload.values()
     assert envelope["messages"][0]["data"]["content"] == _MESSAGE
@@ -261,7 +280,7 @@ def test_latched_llm_fails_open_on_an_unrecognised_request_and_keeps_the_latch(
     next_call, seen = _downstream("provider answer")
 
     with caplog.at_level(logging.WARNING, logger="agent_hardener.relay_plugin"):
-        result = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _UNKNOWN_REQUEST, next_call))
+        result = asyncio.run(plugin._latched_llm(_MESSAGE)("model", _UNKNOWN_REQUEST, _LLM_CONTEXT, next_call))
 
     assert result == "provider answer"
     assert len(seen) == 1
@@ -283,7 +302,7 @@ def _stream_next(chunks: list[Any]) -> Any:
 def test_latched_stream_passes_the_providers_chunks_through_when_not_blocked() -> None:
     intercept = plugin._latched_llm_stream(_MESSAGE)
 
-    chunks = asyncio.run(_collect(intercept(_OPENAI_REQUEST, _stream_next(["a", "b"]))))
+    chunks = asyncio.run(_collect(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, _stream_next(["a", "b"]))))
 
     assert chunks == ["a", "b"]
 
@@ -292,7 +311,7 @@ def test_latched_stream_replays_the_refusal_when_blocked(blocked: BlockedRequest
     blocked.mark("req-1")
     intercept = plugin._latched_llm_stream(_MESSAGE)
 
-    chunks = asyncio.run(_collect(intercept(_OPENAI_REQUEST, _stream_next(["provider"]))))
+    chunks = asyncio.run(_collect(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, _stream_next(["provider"]))))
 
     assert [chunk["choices"][0]["finish_reason"] for chunk in chunks] == [None, "stop"]
     assert chunks[0]["choices"][0]["delta"]["content"] == _MESSAGE
@@ -307,7 +326,7 @@ def test_latched_stream_fails_open_without_an_openai_shaped_request(
     intercept = plugin._latched_llm_stream(_MESSAGE)
 
     with caplog.at_level(logging.WARNING, logger="agent_hardener.relay_plugin"):
-        chunks = asyncio.run(_collect(intercept(request_, _stream_next(["provider"]))))
+        chunks = asyncio.run(_collect(intercept("model", request_, _LLM_CONTEXT, _stream_next(["provider"]))))
 
     assert chunks == ["provider"]
     assert "did not recognise the harness stream shape" in caplog.text
@@ -349,18 +368,31 @@ def test_forward_accepts_a_bare_payload_from_harnesses_without_a_result_attribut
     assert built == [({"plain": "dict"}, {"annotation": None})]
 
 
-def test_refusal_payload_is_a_tool_message_answering_the_recorded_call() -> None:
+def test_refusal_payload_decodes_as_a_tool_message_through_relays_langchain_codec() -> None:
     payload = plugin._refusal_payload("blocked", "transfer_funds", "call-7")
 
-    message = BestEffortAnyCodec().from_json(payload)
+    message = LangChainToolResultCodec("call-7").from_json(payload)
+    assert isinstance(message, ToolMessage)
     assert message.tool_call_id == "call-7"
     assert message.content == "blocked"
+    assert message.status == "error"
 
 
 def test_refusal_payload_falls_back_to_the_tool_name_without_a_call_id() -> None:
-    message = BestEffortAnyCodec().from_json(plugin._refusal_payload("blocked", "transfer_funds", None))
+    payload = plugin._refusal_payload("blocked", "transfer_funds", None)
 
-    assert message.tool_call_id == "transfer_funds"
+    assert LangChainToolResultCodec("transfer_funds").from_json(payload).tool_call_id == "transfer_funds"
+
+
+def test_refusal_payload_uses_the_generic_codec_without_relays_langchain_integration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "nemo_relay.integrations.langchain._tool_codec", None)
+
+    payload = plugin._refusal_payload("blocked", "transfer_funds", "call-7")
+
+    assert payload["__nv_pydantic__"] == "langchain_core.messages.tool.ToolMessage"
+    assert payload["data"]["tool_call_id"] == "call-7"
 
 
 def test_refusal_payload_is_the_plain_reason_when_langchain_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
