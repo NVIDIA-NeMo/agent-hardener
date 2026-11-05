@@ -258,21 +258,30 @@ def _final_stage_user(staged_dockerfile: Path) -> str | None:
     return user
 
 
+def _ancestors(directories: Iterable[str]) -> list[str]:
+    """Every directory above *directories* except ``/``, outermost first."""
+    found = {str(parent) for directory in directories for parent in PurePosixPath(directory).parents}
+    return sorted(found - {"/"}, key=lambda path: (path.count("/"), path))
+
+
 def _inject_writable_run_dirs(staged_dockerfile: Path) -> None:
     """Make the directories a run writes into writable by whichever uid the sandbox runs as.
 
     Images chown these to their own ``sandbox`` user, which OpenShell's Docker driver runs the victim as.
-    Its Kubernetes driver runs every sandbox as one configured uid instead (10001 by default), which cannot
-    write them, so the guardrail upload fails. ``a+rwX`` serves both. Appended last and run as root,
-    then the final stage's own ``USER`` is restored, so the image's runtime user does not change.
+    Its Kubernetes driver runs every sandbox as one configured uid instead (10001 by default), which can
+    neither write them nor pass through a ``0700`` home to reach them, so the guardrail upload and the
+    ATOF sink fail. The dirs get ``a+rwX`` and their ancestors ``a+x`` (traverse, not list). Appended last
+    and run as root, then the final stage's own ``USER`` is restored, so the runtime user does not change.
     """
     restore = _final_stage_user(staged_dockerfile)
     dirs = " ".join(shlex.quote(directory) for directory in RUN_WRITABLE_DIRS)
+    ancestors = " ".join(shlex.quote(directory) for directory in _ancestors(RUN_WRITABLE_DIRS))
     with staged_dockerfile.open("a", encoding="utf-8") as dockerfile:
         dockerfile.write(
             "\n# --- Agent Hardener: dirs the run writes, writable by any sandbox uid ---\n"
             "USER root\n"
-            f"RUN mkdir -p {dirs} && chmod -R a+rwX {dirs}\n" + (f"USER {restore}\n" if restore else "")
+            f"RUN mkdir -p {dirs} && chmod a+x {ancestors} && chmod -R a+rwX {dirs}\n"
+            + (f"USER {restore}\n" if restore else "")
         )
 
 
