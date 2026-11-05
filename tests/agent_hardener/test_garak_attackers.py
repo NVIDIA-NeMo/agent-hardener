@@ -111,12 +111,24 @@ def test_non_nemotron_models_get_no_reasoning_toggle() -> None:
     assert "extra_params" not in detector["detector_model_config"]
 
 
-def test_model_clients_do_not_inherit_garaks_request_timeout() -> None:
+def test_model_clients_get_a_timeout_long_enough_for_reasoning_models() -> None:
     config = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
     probe = config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
     detector = config["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
-    assert "timeout" in probe["red_team_model_config"]["suppressed_params"]
-    assert "timeout" in detector["detector_model_config"]["suppressed_params"]
+    for model_config in (probe["red_team_model_config"], detector["detector_model_config"]):
+        assert model_config["timeout"] == 600
+        assert "timeout" not in model_config["suppressed_params"]
+
+
+def test_model_timeout_is_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GARAK_MODEL_TIMEOUT", "1200")
+    from_env = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    explicit = build_agent_breaker_config(
+        target_uri="http://v", report_dir="d", report_prefix="p", overrides={"model_timeout": 900}
+    )
+    assert from_env["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]["red_team_model_config"]["timeout"] == 1200
+    detector = explicit["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
+    assert detector["detector_model_config"]["timeout"] == 900
 
 
 def test_apply_runtime_fields_overlays_and_preserves_base() -> None:

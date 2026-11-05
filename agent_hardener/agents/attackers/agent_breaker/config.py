@@ -38,15 +38,21 @@ DEFAULT_GENERATIONS = 1
 #: than bounding it. Once a *released* nemo-fabric carries #268, bound turns with
 #: ``runtime.max_turns`` in the victim's ``agent.yaml`` and leave this as a backstop.
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
+#: Cap on one red-team or detector model call. Replaces garak's 60s, which reasoning models outrun.
+DEFAULT_MODEL_TIMEOUT_SECONDS = 600
 # Empty by default: see the skip_codes comment in build_agent_breaker_config.
 DEFAULT_SKIP_CODES: list[int] = []
 
-# "timeout" keeps garak's 60s generator default off the client, which reasoning models outrun.
-_SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed", "timeout"]
+_SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
 
 
-def _model_config(uri: str, model_name: str, max_tokens: int) -> dict[str, Any]:
-    config: dict[str, Any] = {"uri": uri, "max_tokens": max_tokens, "suppressed_params": list(_SUPPRESSED_PARAMS)}
+def _model_config(uri: str, model_name: str, max_tokens: int, timeout: int) -> dict[str, Any]:
+    config: dict[str, Any] = {
+        "uri": uri,
+        "max_tokens": max_tokens,
+        "timeout": timeout,
+        "suppressed_params": list(_SUPPRESSED_PARAMS),
+    }
     if (body := no_reasoning_body(model_name)) is not None:
         config["extra_params"] = {"extra_body": body}
     return config
@@ -63,6 +69,7 @@ OVERRIDE_KEYS = (
     "max_attempts_per_tool",
     "generations",
     "request_timeout",
+    "model_timeout",
 )
 
 
@@ -105,6 +112,7 @@ def build_agent_breaker_config(
     red_team_model = _resolve("red_team_model_name", DEFAULT_RED_TEAM_MODEL_NAME, overrides)
     detector_model = _resolve("detector_model_name", DEFAULT_DETECTOR_MODEL_NAME, overrides)
     generations = int(_resolve("generations", DEFAULT_GENERATIONS, overrides))
+    model_timeout = int(_resolve("model_timeout", DEFAULT_MODEL_TIMEOUT_SECONDS, overrides))
     return {
         "run": {"generations": generations},
         "plugins": {
@@ -143,7 +151,10 @@ def build_agent_breaker_config(
                         "red_team_model_type": _resolve("red_team_model_type", DEFAULT_RED_TEAM_MODEL_TYPE, overrides),
                         "red_team_model_name": red_team_model,
                         "red_team_model_config": _model_config(
-                            _resolve("red_team_model_uri", DEFAULT_MODEL_URI, overrides), red_team_model, 8192
+                            _resolve("red_team_model_uri", DEFAULT_MODEL_URI, overrides),
+                            red_team_model,
+                            8192,
+                            model_timeout,
                         ),
                     }
                 }
@@ -158,6 +169,7 @@ def build_agent_breaker_config(
                             _resolve("detector_model_uri", DEFAULT_MODEL_URI, overrides),
                             detector_model,
                             8192,
+                            model_timeout,
                         ),
                     }
                 }
