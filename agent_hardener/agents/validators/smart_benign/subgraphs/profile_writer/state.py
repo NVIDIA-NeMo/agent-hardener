@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pydantic import Field
 
@@ -26,6 +27,9 @@ class ProfileWriterState(AgentHardenerModel):
     profile: VictimCapabilityProfile | None = None
     requests: list[GeneratedRequest] = Field(default_factory=list)
     source_notes: dict[str, str] = Field(default_factory=dict)
+    source_details: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    interview_log: list[dict[str, Any]] = Field(default_factory=list)
+    pre_interview_profile: VictimCapabilityProfile | None = None
 
     # --- Output (read by exit_adapter) ---
     written_files: list[Path] = Field(default_factory=list)

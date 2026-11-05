@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any, cast
 import httpx
 import pytest
 
+from agent_hardener.agents.validators.smart_benign.subgraphs.api_prober import exit_adapter
 from agent_hardener.agents.validators.smart_benign.subgraphs.api_prober.nodes import probe as pb
 from agent_hardener.agents.validators.smart_benign.subgraphs.api_prober.state import ApiProberState
 
@@ -158,3 +159,15 @@ def test_a_dead_endpoint_fails_every_probe_without_raising(monkeypatch: pytest.M
     assert delta["probe_responses"] == []
     assert len(_errors(delta)) == len(pb.PROBES)
     assert all("connection refused" in e for e in _errors(delta))
+
+
+def test_exit_adapter_keeps_the_raw_exchanges_and_probe_errors() -> None:
+    sub = _state(probe_responses=[("Q?", "A.")], probe_errors=["probe failed [x]: timeout"])
+
+    assert exit_adapter(sub)["source_details"] == {
+        "api_probe": {"exchanges": [{"question": "Q?", "answer": "A."}], "probe_errors": ["probe failed [x]: timeout"]}
+    }
+
+
+def test_exit_adapter_adds_no_details_when_nothing_was_probed() -> None:
+    assert "source_details" not in exit_adapter(_state())

@@ -126,12 +126,16 @@ def _interview_ask_node(state: SynthState) -> dict[str, object]:
         if str(a.get("answer", "")).strip()
     ]
     asked = state.interview_questions_asked + max(len(collected), len(questions), 1)
-    return {
+    delta: dict[str, object] = {
         "interviewer_answers": collected,
         "interview_questions_asked": asked,
         "interview_rounds": state.interview_rounds + 1,
         "composed_questions": [],
+        "interview_log": [{"round": state.interview_rounds + 1, "questions": questions, "answers": answers or []}],
     }
+    if state.interview_rounds == 0:
+        delta["pre_interview_profile"] = state.profile
+    return delta
 
 
 def build_synth_graph(checkpointer: BaseCheckpointSaver | None = None) -> CompiledStateGraph:

@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agent_hardener.agents.validators.smart_benign import driver, validator
-from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
+from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest, VictimCapabilityProfile
 from agent_hardener.agents.validators.smart_benign.state import SynthState
 from agent_hardener.loggers import using_event_sink
 from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
@@ -286,3 +288,35 @@ def test_run_synth_dag_emits_synth_phase(tmp_path: Path, monkeypatch: pytest.Mon
     assert isinstance(result, SynthState)
     assert ("synth_phase", {"phase": "gap_detector", "label": validator._PROGRESS_LABELS["gap_detector"]}) in seen
     assert all(payload.get("phase") != "not_a_phase" for _event, payload in seen)
+
+
+def _drive_to(final_state: SynthState, monkeypatch: pytest.MonkeyPatch) -> None:
+    class _FakeGraph:
+        async def astream(self, _state: Any, _config: Any, stream_mode: Any) -> Any:
+            yield ("values", final_state)
+
+    monkeypatch.setattr(driver, "build_synth_graph", lambda **_kwargs: _FakeGraph())
+    asyncio.run(driver.drive_synth(final_state, answer_provider=_no_answers))
+
+
+def test_drive_synth_writes_usage_beside_the_profile(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    inputs = validator._build_inputs(_request(tmp_path), _agent())
+    profile = VictimCapabilityProfile(
+        target_name="victim", input_hash="h", generated_at=datetime(2026, 1, 2, tzinfo=UTC)
+    )
+
+    _drive_to(SynthState(inputs=inputs, artifact_dir=tmp_path, profile=profile), monkeypatch)
+
+    usage = json.loads((tmp_path / "usage.json").read_text(encoding="utf-8"))
+    assert usage["models"] == {}  # the fake graph made no LLM calls
+    assert usage["wall_seconds"] >= 0
+
+
+def test_drive_synth_writes_no_usage_when_synthesis_produced_no_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    inputs = validator._build_inputs(_request(tmp_path), _agent())
+
+    _drive_to(SynthState(inputs=inputs, artifact_dir=tmp_path), monkeypatch)
+
+    assert not (tmp_path / "usage.json").exists()
