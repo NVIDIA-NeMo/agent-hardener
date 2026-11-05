@@ -154,6 +154,21 @@ def test_stage_leaves_dotenv_and_the_secrets_file_out_of_the_build_context(tmp_p
     assert dockerignore.index("!.env.example") > dockerignore.index(".env.*")
 
 
+def test_stage_leaves_per_run_manifest_copies_out_of_the_build_context(tmp_path: Path) -> None:
+    project = _make_project(tmp_path)
+    spec = RelayVictimSpec(project_dir=project, dockerfile="Dockerfile.byo", victim_binaries=["/app/.venv/bin/**"])
+    before = tmp_path / "before"
+    stage_relay_victim_build(spec, tmp_path, before)
+    (project / ".agent-hardener.nhx-agent-hardener-abc123.yaml").write_text("agent: {}\n", encoding="utf-8")
+
+    after = tmp_path / "after"
+    stage_relay_victim_build(spec, tmp_path, after)
+
+    assert not (after / ".agent-hardener.nhx-agent-hardener-abc123.yaml").exists()
+    assert ".agent-hardener.*" in (after / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert staged_context_digest(after) == staged_context_digest(before)
+
+
 def test_stage_keeps_the_shims_in_an_allowlist_style_dockerignore(tmp_path: Path) -> None:
     project = _make_project(tmp_path)
     (project / ".dockerignore").write_text("*\n!agents_lab\n", encoding="utf-8")

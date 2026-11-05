@@ -36,7 +36,17 @@ if TYPE_CHECKING:
     from agent_hardener.models import RelayVictimSpec
 
 # Secrets reach the sandbox through the OpenShell provider, so dotenv files never enter the staged context.
-STAGED_CONTEXT_EXCLUDES = (".git", ".venv", "__pycache__", "*.pyc", ".agent-hardener", ".env", ".env.*")
+# `.agent-hardener.*` covers per-run manifest copies a caller writes beside the config; they must not change the digest.
+STAGED_CONTEXT_EXCLUDES = (
+    ".git",
+    ".venv",
+    "__pycache__",
+    "*.pyc",
+    ".agent-hardener",
+    ".agent-hardener.*",
+    ".env",
+    ".env.*",
+)
 STAGED_CONTEXT_KEEPS = (".env.example",)
 
 SHIM_DIR = "openshell-shims"
