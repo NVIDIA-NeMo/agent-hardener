@@ -138,8 +138,7 @@ def _stage_with_dockerfile(tmp_path: Path, dockerfile: str) -> str:
 
 
 def test_stage_makes_the_run_dirs_writable_by_any_sandbox_uid_and_keeps_the_runtime_user(tmp_path: Path) -> None:
-    # A Kubernetes sandbox runs as one configured uid, not the image's `sandbox` user that owns these dirs,
-    # so it needs to write them and to pass through the (often 0700) home above them.
+    # A Kubernetes sandbox runs as one configured uid, not the image's `sandbox` user that owns these dirs.
     staged = _stage_with_dockerfile(
         tmp_path, 'FROM python:3.12 AS build\nUSER builder\nFROM python:3.12-slim\nUSER sandbox\nCMD ["true"]\n'
     )
@@ -147,8 +146,7 @@ def test_stage_makes_the_run_dirs_writable_by_any_sandbox_uid_and_keeps_the_runt
     tail = staged.split("# --- Agent Hardener: dirs the run writes, writable by any sandbox uid ---\n")[1]
     assert tail.splitlines() == [
         "USER root",
-        f"RUN mkdir -p {' '.join(RUN_WRITABLE_DIRS)} && chmod a+x /etc /home /home/sandbox "
-        f"/home/sandbox/.agent-hardener && chmod -R a+rwX {' '.join(RUN_WRITABLE_DIRS)}",
+        f"RUN mkdir -p {' '.join(RUN_WRITABLE_DIRS)} && chmod -R a+rwX {' '.join(RUN_WRITABLE_DIRS)}",
         "USER sandbox",
     ]
     assert {"/etc/nemo-relay", SANDBOX_ARTIFACTS_DIR} == set(RUN_WRITABLE_DIRS)

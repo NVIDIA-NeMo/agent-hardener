@@ -38,9 +38,9 @@ enabled = true
 
 [[components.config.atof.sinks]]
 type = "file"
-# Matches agent_hardener.relay_plugin.victim.SANDBOX_ARTIFACTS_DIR. Under /home/sandbox because every
-# policy template already grants that read-write, so telemetry needs no Landlock exception.
-output_directory = "/home/sandbox/.agent-hardener/relay"
+# Matches agent_hardener.relay_plugin.victim.SANDBOX_ARTIFACTS_DIR. Under /tmp because every policy
+# template grants it read-write and every compute driver lets the sandbox write there.
+output_directory = "/tmp/agent-hardener/relay"
 filename = "events.atof.jsonl"
 mode = "append"
 
