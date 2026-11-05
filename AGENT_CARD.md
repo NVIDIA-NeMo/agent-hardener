@@ -92,7 +92,7 @@ environments are not in scope for this release. <br>
 
 ## Reference(s): <br>
 * Repository: https://github.com/NVIDIA-NeMo/agent-hardener <br>
-* Default model: **NVIDIA Nemotron 3 Super** (`nvidia/nemotron-3-super-120b-a12b`) on
+* Default model: **NVIDIA Nemotron 3 Ultra** (`nvidia/nemotron-3-ultra-550b-a55b`) on
   build.nvidia.com, used for attack generation, attack-success detection and defender analysis.
   Agent Hardener invokes whatever endpoint and model the operator configures, so the model in use is
   a deployment choice, not a property of this release. <br>
@@ -194,7 +194,7 @@ agent from up to three optional operator-supplied sources &mdash; a free-text de
 repository cloned and scanned for declared tools and README content, and up to five fixed
 natural-language meta-probes sent to the target's own endpoint &mdash; merges them deterministically
 by source priority, then uses a language model to generate a small suite of benign payloads per
-discovered tool (by default three ordinary and up to two borderline requests each). Generated rows
+discovered tool (by default three ordinary requests each; borderline requests are opt-in). Generated rows
 are validated against a schema (non-empty tool and payload, label from a fixed three-value set),
 deduplicated within and across tools, and passed through a language-model critic that may keep, drop
 or rewrite each row on relevance, duplication and declared out-of-scope grounds. In interactive runs
@@ -326,7 +326,7 @@ API at `https://integrate.api.nvidia.com/v1` (build.nvidia.com)</b>, authenticat
 the in-victim guardrail judge. The content transmitted includes the adversarial prompts, the victim
 agent's responses to them &mdash; <b>which may contain whatever data the operator's agent can
 reach</b> &mdash; the attacked tool names and arguments, and the guardrail text derived from them.
-By default every role uses NVIDIA Nemotron 3 Super (`nvidia/nemotron-3-super-120b-a12b`). The endpoint is fully retargetable via `AGENT_HARDENER_BASE_URL` (and
+By default every role uses NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`). The endpoint is fully retargetable via `AGENT_HARDENER_BASE_URL` (and
 `GARAK_RED_TEAM_MODEL_URI` / `GARAK_DETECTOR_MODEL_URI`), so an operator may direct all inference to
 a self-hosted endpoint. Separately, `agent-hardener setup` downloads `garak==0.17.0` and its
 transitive dependencies from public PyPI; those transitive dependencies are not hash-pinned.
@@ -347,7 +347,7 @@ on the victim sandbox. <br>
 **Exposure to Threats** <br>
 **[x] External API/Connector/Service** &mdash; the tool calls an OpenAI-compatible LLM endpoint.
 The shipped default is <b>NVIDIA's hosted API on build.nvidia.com</b>
-(`https://integrate.api.nvidia.com/v1`), with NVIDIA Nemotron 3 Super as the default model. The operator can retarget every call to a self-hosted endpoint. NVIDIA operates no
+(`https://integrate.api.nvidia.com/v1`), with NVIDIA Nemotron 3 Ultra as the default model. The operator can retarget every call to a self-hosted endpoint. NVIDIA operates no
 service <em>specific to this release</em>; the default simply points at an existing NVIDIA service. <br>
 **[ ] Internal API/Connector/Service** <br>
 

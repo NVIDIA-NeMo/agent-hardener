@@ -60,7 +60,7 @@ backends:
 #
 #   • Attack   (garak red-team + detector) — set in the `garak:` block, or via GARAK_* env vars.
 #   • Analysis (defenders + benign validator) — the SHARED default model. Override for the whole run:
-#         AGENT_HARDENER_MODEL=nvidia/nemotron-3-super-120b-a12b
+#         AGENT_HARDENER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 #         AGENT_HARDENER_BASE_URL=https://integrate.api.nvidia.com/v1
 #   • Agent    (the victim's own LLM) — configured inside your agent, not here.
 #

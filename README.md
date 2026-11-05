@@ -265,8 +265,8 @@ Agent Hardener has three model groups, each with a built-in default you can over
 
 | Group | Covers | Default | Override |
 | --- | --- | --- | --- |
-| Attack | garak red-team + detector | `nvidia/nemotron-3-super-120b-a12b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
-| Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-super-120b-a12b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
+| Attack | garak red-team + detector | `nvidia/nemotron-3-ultra-550b-a55b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
+| Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-ultra-550b-a55b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
 | Safety | the guardrail judge that runs inside the victim | the analysis model | the guardrails defender's `safety_llm` (model); `AGENT_HARDENER_SAFETY_BASE_URL` / `AGENT_HARDENER_SAFETY_API_KEY` (endpoint and key, else the analysis ones) |
 | Agent | the victim's own LLM | your NAT workflow | the `llms:` block in your workflow |
 
@@ -274,7 +274,7 @@ The **analysis** lever is a single pair of env vars that retargets every default
 defenders and the benign validator) at once:
 
 ```bash
-export AGENT_HARDENER_MODEL=nvidia/nemotron-3-super-120b-a12b
+export AGENT_HARDENER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 export AGENT_HARDENER_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
@@ -356,10 +356,10 @@ Add a `garak:` block to the manifest (or set the matching field in a full sessio
 | `target_uri` | victim base_url | — | Full victim chat-completions URL (wins over `target_port`) |
 | `target_port` | victim port | — | Override just the port on the victim URL |
 | `red_team_model_type` | `nim.NVOpenAIChat` | `GARAK_RED_TEAM_MODEL_TYPE` | Red-team (attack) model generator type |
-| `red_team_model_name` | `nvidia/nemotron-3-super-120b-a12b` | `GARAK_RED_TEAM_MODEL_NAME` | Red-team model name |
+| `red_team_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_RED_TEAM_MODEL_NAME` | Red-team model name |
 | `red_team_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_RED_TEAM_MODEL_URI` | Red-team model endpoint |
 | `detector_model_type` | `nim` | `GARAK_DETECTOR_MODEL_TYPE` | Detector (judge) model generator type |
-| `detector_model_name` | `nvidia/nemotron-3-super-120b-a12b` | `GARAK_DETECTOR_MODEL_NAME` | Detector model name |
+| `detector_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_DETECTOR_MODEL_NAME` | Detector model name |
 | `detector_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_DETECTOR_MODEL_URI` | Detector model endpoint |
 | `max_attempts_per_tool` | `5` | `GARAK_MAX_ATTEMPTS_PER_TOOL` | Exploit attempts per discovered tool |
 | `generations` | `1` | `GARAK_GENERATIONS` | garak `run.generations` |
@@ -371,7 +371,7 @@ Example manifest block (attack a victim on a different port with a custom judge 
 ```yaml
 garak:
   target_port: 9001
-  detector_model_name: nvidia/nemotron-3-super-120b-a12b
+  detector_model_name: nvidia/nemotron-3-ultra-550b-a55b
   max_attempts_per_tool: 8
 ```
 

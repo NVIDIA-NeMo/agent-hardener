@@ -114,16 +114,16 @@ Structural sources outrank inferential ones. When the same tool name appears in 
 
 **`api_endpoint` always resolves** — `validator.py._build_inputs` falls back to `target.base_url` if `api_endpoint` is not set in the agent config. This means `api_prober` will always have a non-empty URL unless you set `skip_api_probe: true`.
 
-**Borderline generation is on by default but interactive-only.** `borderline_per_tool: 2` in `defaults.yaml`, yet `request_generator`'s entry adapter forces it to `0` when `interactive=False`. Borderline rows probe a benign/attack line that is only confirmed via the boundary interview, so non-interactive runs (orchestrator pre-flight, CI) generate zero of them and replay an unconfirmed boundary against nobody. `negative_control_per_tool` stays `0`.
+**Borderline generation is off by default, and interactive-only when enabled.** `borderline_per_tool: 0` in `defaults.yaml`; when set above zero, `request_generator`'s entry adapter still forces it to `0` when `interactive=False`. Borderline rows probe a benign/attack line that is only confirmed via the boundary interview, so non-interactive runs (orchestrator pre-flight, CI) generate zero of them and replay an unconfirmed boundary against nobody. `negative_control_per_tool` stays `0`.
 
 ## Defaults knobs (`defaults.yaml`)
 
 | Key | Default | Effect |
 |-----|---------|--------|
-| `synth_llm.model` | `nvidia/nemotron-3-super-120b-a12b` | All synthesis LLM calls |
-| `judge_llm.model` | `nvidia/nemotron-3-super-120b-a12b` | Judge verdicts |
+| `synth_llm.model` | `nvidia/nemotron-3-ultra-550b-a55b` | All synthesis LLM calls |
+| `judge_llm.model` | `nvidia/nemotron-3-ultra-550b-a55b` | Judge verdicts |
 | `generation.requests_per_tool` | `3` | Benign rows generated per tool |
-| `generation.borderline_per_tool` | `2` | Borderline rows per tool — interactive-only (forced to 0 with no TTY); see above |
+| `generation.borderline_per_tool` | `0` | Borderline rows per tool — off by default; interactive-only (forced to 0 with no TTY); see above |
 | `generation.negative_control_per_tool` | `0` | Intentionally zero |
 | `pipeline.max_interview_questions` | `10` | Hard ceiling on interview loop |
 | `pipeline.api_probe_budget` | `5` | Max meta-probes sent to victim |

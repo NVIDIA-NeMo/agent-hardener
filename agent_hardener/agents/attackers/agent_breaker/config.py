@@ -27,9 +27,9 @@ DETECTOR_SPEC = "agent_breaker.AgentBreakerResult"
 
 # Baked-in defaults mirror the historical scan_agent_breaker.yaml; each is env-overridable.
 DEFAULT_RED_TEAM_MODEL_TYPE = "nim.NVOpenAIChat"
-DEFAULT_RED_TEAM_MODEL_NAME = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_RED_TEAM_MODEL_NAME = "nvidia/nemotron-3-ultra-550b-a55b"
 DEFAULT_DETECTOR_MODEL_TYPE = "nim"
-DEFAULT_DETECTOR_MODEL_NAME = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_DETECTOR_MODEL_NAME = "nvidia/nemotron-3-ultra-550b-a55b"
 DEFAULT_MODEL_URI = "https://integrate.api.nvidia.com/v1/"
 DEFAULT_MAX_ATTEMPTS_PER_TOOL = 5
 DEFAULT_GENERATIONS = 1

@@ -7,9 +7,12 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+
 from agent_hardener.agents.validators.smart_benign.config import defaults
 from agent_hardener.agents.validators.smart_benign.models import ToolSpec, VictimCapabilityProfile
 from agent_hardener.agents.validators.smart_benign.state import SynthInputs, SynthState
+from agent_hardener.agents.validators.smart_benign.subgraphs.request_generator import adapters
 from agent_hardener.agents.validators.smart_benign.subgraphs.request_generator.adapters import entry_adapter
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
@@ -28,10 +31,26 @@ def _state(*, interactive: bool) -> SynthState:
     return SynthState(inputs=SynthInputs(target_name="test-agent"), interactive=interactive, profile=profile)
 
 
+def test_borderline_off_by_default() -> None:
+    assert defaults().generation.borderline_per_tool == 0
+    assert entry_adapter(_state(interactive=True)).borderline_per_tool == 0
+
+
+@pytest.fixture
+def borderline_configured(monkeypatch: pytest.MonkeyPatch) -> None:
+    configured = defaults()
+    configured.generation.borderline_per_tool = 2
+    monkeypatch.setattr(adapters, "defaults", lambda: configured)
+
+
+@pytest.mark.usefixtures("borderline_configured")
 def test_borderline_enabled_when_interactive() -> None:
-    sub = entry_adapter(_state(interactive=True))
-    assert sub.borderline_per_tool == defaults().generation.borderline_per_tool
-    assert sub.borderline_per_tool > 0
+    assert entry_adapter(_state(interactive=True)).borderline_per_tool == 2
+
+
+@pytest.mark.usefixtures("borderline_configured")
+def test_borderline_suppressed_when_non_interactive_even_if_configured() -> None:
+    assert entry_adapter(_state(interactive=False)).borderline_per_tool == 0
 
 
 def test_borderline_suppressed_when_non_interactive() -> None:
