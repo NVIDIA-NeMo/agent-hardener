@@ -29,11 +29,9 @@ kind = "observability"
 enabled = true
 
 [components.config]
-# Schema 3, not 4. NeMo Platform images pin nemo-relay 0.7.3 (the Fabric adapters cap it at <0.8),
-# which rejects 4 outright — and Relay fails the whole initialize(), so the guardrail component in
-# this same file never registers and the victim runs unguarded with nothing in the log but a debug
-# line. 0.8 still accepts 3, so 3 is the version that works on both.
-version = 3
+# Schema 4: nemo-relay 0.10+ (pinned here and in NeMo Helix) rejects 3, and a rejected schema fails
+# the whole initialize(), so the victim never starts.
+version = 4
 
 [components.config.atof]
 enabled = true
