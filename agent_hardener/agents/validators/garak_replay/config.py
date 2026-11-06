@@ -55,6 +55,7 @@ class ReplayConfig:
     github_comments_enabled: bool
     github_token: str | None
     concurrency: int
+    model_timeout: int | None = None
 
 
 def build_config(request: AgentRunInput, agent: AgentConfig) -> ReplayConfig:
@@ -99,6 +100,7 @@ def build_config(request: AgentRunInput, agent: AgentConfig) -> ReplayConfig:
             "attack_validator_hits",
             "AGENT_HARDENER_ATTACK_VALIDATOR_CONCURRENCY",
         ),
+        model_timeout=int(timeout) if (timeout := agent.config.get("model_timeout")) is not None else None,
     )
 
 
