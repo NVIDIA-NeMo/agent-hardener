@@ -569,6 +569,14 @@ def test_detector_model_settings_are_layered_over_seeded_defaults() -> None:
     assert detector["detector_model_config"] == {"max_tokens": 16}
 
 
+def test_replay_detector_uses_the_configured_model_timeout() -> None:
+    detector = detectors.detector_config_root("direct_prompt_injection", _replay_config(model_timeout=1500))[
+        "detectors"
+    ]["agent_breaker"]["AgentBreakerResult"]
+
+    assert detector["detector_model_config"]["timeout"] == 1500
+
+
 def test_override_file_replaces_seeded_detector_config(tmp_path: Path) -> None:
     override = tmp_path / "scan.yaml"
     override.write_text(

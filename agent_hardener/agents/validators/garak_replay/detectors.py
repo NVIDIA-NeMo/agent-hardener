@@ -44,7 +44,9 @@ def detector_config_root(attack_type: AttackType, config: ReplayConfig) -> dict[
     elif attack_type == "direct_prompt_injection":
         # Seed the agent_breaker detector model settings from the shared config builder so the
         # internal endpoint/model defaults match the attacker (single source of truth).
-        built = build_agent_breaker_config(target_uri="", report_dir="", report_prefix="")
+        built = build_agent_breaker_config(
+            target_uri="", report_dir="", report_prefix="", overrides={"model_timeout": config.model_timeout}
+        )
         root = {"detectors": built["plugins"]["detectors"]}
 
     class_config = root.setdefault("detectors", {}).setdefault(namespace, {}).setdefault(class_name, {})

@@ -105,6 +105,8 @@ class GarakSettings(AgentHardenerModel):
     #: Cap on a single attack turn, seconds. Raise for an agent whose turns are long —
     #: a sub-agent tool can push one turn past the default.
     request_timeout: int | None = None
+    #: Cap on one red-team or detector model call, seconds. Raise for a slow reasoning model.
+    model_timeout: int | None = Field(default=None, gt=0)
     generations: int | None = None
     # Hard cap (seconds) on the attacker's own execution. Heavy agents (many tools / long LLM chains)
     # can need well over the default; raise this rather than let a scan be killed mid-probe (which yields

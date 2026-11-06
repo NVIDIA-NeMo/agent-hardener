@@ -292,22 +292,25 @@ def _default_defenders(agent: AgentSpec, defenders_settings: DefenderSettings) -
     return defenders
 
 
-def _default_validators(port: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def _default_validators(port: int, garak: GarakSettings) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     replay_url = f"http://localhost:{port}/v1/chat/completions"
+    attack_config: dict[str, Any] = {
+        "kind": "attack",
+        "replay_url": replay_url,
+        "replay_mode": "openai_chat",
+        "model": "garak",
+        "confidence_cutoff": 0.7,
+        "store_full_replay": False,
+        "redact_outputs": True,
+    }
+    if garak.model_timeout is not None:
+        attack_config["model_timeout"] = garak.model_timeout
     attack = [
         {
             "name": "garak-attack-replay-validator",
             "implementation": "agent_hardener.agents.validators.garak_attack_replay:run",
             "timeout_seconds": 1200,
-            "config": {
-                "kind": "attack",
-                "replay_url": replay_url,
-                "replay_mode": "openai_chat",
-                "model": "garak",
-                "confidence_cutoff": 0.7,
-                "store_full_replay": False,
-                "redact_outputs": True,
-            },
+            "config": attack_config,
         }
     ]
     benign = [
@@ -347,8 +350,8 @@ def expand(
     policy at their single source here, so every derived key follows. Defenders still harden on top.
     """
     agent = manifest.agent
-    attack_validators, benign_validators = _default_validators(agent.port)
     garak = manifest.garak or GarakSettings()
+    attack_validators, benign_validators = _default_validators(agent.port, garak)
     # The guardrails defender needs the source workflow path to base its candidate on.
     target: dict[str, Any] = {
         "name": agent.name,
