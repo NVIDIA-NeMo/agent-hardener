@@ -18,6 +18,7 @@ sent to the provider, so the turn ends there.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 import logging
 import os
@@ -266,8 +267,8 @@ def _latched_tool(blocked_message: str) -> Callable[..., Any]:
 def _latched_llm(blocked_message: str) -> Callable[..., Any]:
     """Answer the model call from the plugin, so the agent stops instead of planning its next move."""
 
-    async def intercept(name: str, request: Any, next_call: Any) -> Any:
-        del name
+    async def intercept(name: str, request: Any, context: Any, next_call: Any) -> Any:
+        del name, context
         key = _request_key()
         if not _BLOCKED.is_blocked(key):
             return await next_call(request)
@@ -285,9 +286,10 @@ def _latched_llm(blocked_message: str) -> Callable[..., Any]:
 
 
 def _latched_llm_stream(blocked_message: str) -> Callable[..., Any]:
-    """The streaming twin of :func:`_latched_llm`. Note there is no ``name`` argument here."""
+    """The streaming twin of :func:`_latched_llm`."""
 
-    def intercept(request: Any, next_call: Any) -> Any:
+    def intercept(name: str, request: Any, context: Any, next_call: Any) -> Any:
+        del name, context
         key = _request_key()
         if not _BLOCKED.is_blocked(key):
             return _passthrough_stream(request, next_call)
@@ -327,7 +329,8 @@ def _refusal_payload(reason: str, tool_name: str, tool_call_id: str | None) -> A
     ``ToolMessage | Command`` on the way out (``deepagents/middleware/filesystem.py``, in
     ``_aintercept_large_tool_result``). ``to_json`` tags the value so ``from_json`` rebuilds a real
     ``ToolMessage``, satisfying both. A bare string fails the assertion; a bare ``ToolMessage``
-    fails serialisation.
+    fails serialisation. From Relay 0.11 the LangChain integration only decodes its own versioned
+    tool-result wrapper, so that codec is preferred when the integration is importable.
 
     ``tool_call_id`` has to be the one Relay recorded for this call. An allowed call keeps its id for
     free — the tool's own ``ToolMessage`` carries it through the codec untouched — but a refusal
@@ -348,9 +351,22 @@ def _refusal_payload(reason: str, tool_name: str, tool_call_id: str | None) -> A
         from nemo_relay.typed import BestEffortAnyCodec  # noqa: PLC0415
     except ImportError:
         return reason
-    return BestEffortAnyCodec().to_json(
-        ToolMessage(content=reason, tool_call_id=tool_call_id or tool_name, name=tool_name, status="error")
-    )
+    message = ToolMessage(content=reason, tool_call_id=tool_call_id or tool_name, name=tool_name, status="error")
+    codec = _langchain_tool_result_codec(message.tool_call_id) or BestEffortAnyCodec()
+    return codec.to_json(message)
+
+
+def _langchain_tool_result_codec(tool_call_id: str) -> Any | None:
+    """Relay's LangChain tool-result codec, or ``None`` where the integration is absent.
+
+    Relay keeps it in a private module, hence the guarded lookup; this reproduces exactly what
+    its LangChain middleware decodes, so a refusal round-trips like any real tool result.
+    """
+    try:
+        module = importlib.import_module("nemo_relay.integrations.langchain._tool_codec")
+    except ImportError:
+        return None
+    return module.LangChainToolResultCodec(tool_call_id)
 
 
 def register() -> None:
