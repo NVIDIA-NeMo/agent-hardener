@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from typing import TYPE_CHECKING, Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from agent_hardener.agents.validators.smart_benign import graph
+from agent_hardener.agents.validators.smart_benign.models import VictimCapabilityProfile
 from agent_hardener.agents.validators.smart_benign.state import SynthInputs, SynthState
 from agent_hardener.agents.validators.smart_benign.subgraphs import interviewer
 
@@ -197,6 +199,22 @@ def test_ask_node_with_no_answers_still_spends_budget_so_the_loop_terminates(
     assert out["interview_questions_asked"] == 5  # charged for every question that was put to the user
     assert out["interview_rounds"] == 2
     assert out["composed_questions"] == []
+
+
+def test_ask_node_logs_each_round_and_snapshots_the_profile_only_before_the_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    profile = VictimCapabilityProfile(target_name="t", input_hash="h", generated_at=datetime(2026, 1, 2, tzinfo=UTC))
+    questions = [{"gap": "g", "question": "Q?", "options": [{"label": "yes", "recommended": True}]}]
+    answers = [{"gap": "g", "answer": "yes"}]
+
+    first = _ask(monkeypatch, _state(profile=profile, composed_questions=questions), answers)
+    second = _ask(monkeypatch, _state(profile=profile, composed_questions=questions, interview_rounds=1), answers)
+
+    assert first["interview_log"] == [{"round": 1, "questions": questions, "answers": answers}]
+    assert first["pre_interview_profile"] == profile
+    assert cast("list[dict[str, Any]]", second["interview_log"])[0]["round"] == 2
+    assert "pre_interview_profile" not in second
 
 
 def test_ask_node_clears_the_staged_questions(monkeypatch: pytest.MonkeyPatch) -> None:

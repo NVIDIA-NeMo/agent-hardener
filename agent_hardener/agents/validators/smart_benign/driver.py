@@ -15,13 +15,16 @@ models; don't try to unify them.
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
+from langchain_core.callbacks import UsageMetadataCallbackHandler
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from .graph import build_synth_graph, quiet_warnings
 from .state import SynthState
+from .subgraphs import profile_writer
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
@@ -45,9 +48,12 @@ async def drive_synth(
     *on_node* (optional) is invoked with each node name as it completes, for progress reporting.
     """
     graph = build_synth_graph(checkpointer=MemorySaver())
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-    if lf_config and lf_config.get("callbacks"):
-        config["callbacks"] = lf_config["callbacks"]
+    usage = UsageMetadataCallbackHandler()
+    config: RunnableConfig = {
+        "configurable": {"thread_id": thread_id},
+        "callbacks": [*((lf_config or {}).get("callbacks") or []), usage],
+    }
+    started = time.monotonic()
     graph_input: Any = state
     with quiet_warnings():
         while True:
@@ -63,6 +69,11 @@ async def drive_synth(
                 elif mode == "values":  # full state snapshot after each step
                     final_values = chunk
             if interrupted is None:
-                return SynthState.model_validate(final_values)
+                final = SynthState.model_validate(final_values)
+                if final.profile is not None:  # beside the artifacts the writer produced, never on its own
+                    profile_writer.write_usage(
+                        profile_writer.target_dir(final), dict(usage.usage_metadata), time.monotonic() - started
+                    )
+                return final
             answers = await answer_provider(interrupted[0].value["questions"])
             graph_input = Command(resume=answers)

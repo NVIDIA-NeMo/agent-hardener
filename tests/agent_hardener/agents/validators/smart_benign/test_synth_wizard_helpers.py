@@ -197,14 +197,14 @@ def test_preseeded_interview_answers_are_not_reported_as_new(
 
 
 def test_tracing_callbacks_are_forwarded_only_when_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    handler = object()
     run = _Run(monkeypatch, tmp_path, _final(), _validator("smart"))
     run(no_interactive=True)
-    assert "callbacks" not in run.lf_configs[0]
-
-    handler = object()
     run.tracing = TracingContext(callbacks=[handler], enabled=True)
     run(no_interactive=True)
-    assert run.lf_configs[1]["callbacks"] == [handler]
+
+    assert handler not in run.lf_configs[0]["callbacks"]
+    assert handler in run.lf_configs[1]["callbacks"]
 
 
 def test_an_unknown_validator_name_aborts_before_running_synth(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
