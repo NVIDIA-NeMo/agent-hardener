@@ -130,11 +130,11 @@ collect_results() {
     cp "$validation" "$OUT_DIR/$AGENT.validation.json"
 }
 
-# The job's own error is only "exited with code 1"; agent-hardener's output is in the job's
-# synth-benign.log under the Helix jobs directory.
+# The job's own error is only "exited with code 1"; agent-hardener's output is in synth-benign.log
+# in the job's temp dir, which the CLI leaves behind. `|| true` because errexit still applies here.
 dump_synth_log() {
     local synth_log
-    synth_log=$(find "$HOME" "$HELIX_DIR" "${TMPDIR:-/tmp}" -name synth-benign.log -type f -exec ls -t {} + 2>/dev/null | head -1)
+    synth_log=$(ls -t "${TMPDIR:-/tmp}"/nemo-agent-hardener-*/persistent/synth-benign.log 2>/dev/null | head -1 || true)
     if [[ -z $synth_log ]]; then
         echo "No synth-benign.log found" >&2
         return
