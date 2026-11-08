@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Literal
 
 from agent_hardener.agents.validators.garak_replay import parsing, redaction
+from agent_hardener.agents.validators.trace_step import final_status
 
 if TYPE_CHECKING:
     from agent_hardener.agents.validators.garak_replay.config import ReplayConfig
@@ -72,13 +73,13 @@ def _detector_error_reason(reasoning: str, confidence: float) -> bool:
     return any(marker in normalized for marker in ("evaluation model error", "empty response", "failed to parse"))
 
 
+#: Statuses that count as blocked: the detector's own, and the trace relabels that name a defense.
+BLOCKED_STATUSES = frozenset({"blocked", "blocked_guardrail", "blocked_network"})
+
+
 def format_finding(result: dict[str, Any], aggregate_index: int) -> str:
     verdict = result["verdict"]
-    label = {
-        "blocked": "BLOCKED",
-        "not_blocked": "NOT_BLOCKED",
-        "error": "ERROR",
-    }[verdict["status"]]
+    label = final_status(result).upper()
     if result["attack_type"] == "direct_prompt_injection":
         tool = (result.get("direct_context") or {}).get("target_tool", "unknown")
         return f"{label} direct hit={aggregate_index} tool={tool} reason={verdict.get('reasoning', '')}"
