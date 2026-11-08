@@ -66,6 +66,9 @@ async def extract(state: ApiProberState) -> dict[str, object]:
             "errors": [*state.probe_errors, f"api_prober.extract: {exc}"],
         }
 
+    # Some probes answered, so failed ones are not fatal; they are kept in source_details.
+    if state.probe_errors:
+        logger.warning("api_prober: %d probe(s) failed: %s", len(state.probe_errors), state.probe_errors)
     tools = [
         ToolSpec(
             name=h.name,
@@ -81,5 +84,4 @@ async def extract(state: ApiProberState) -> dict[str, object]:
         "system_role": output.system_role,
         "out_of_scope": output.out_of_scope,
         "source_note": f"api_prober probed {len(state.probe_responses)}/{state.max_probes}; extracted {len(tools)} tool(s)",
-        "errors": list(state.probe_errors),
     }
