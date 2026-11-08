@@ -200,7 +200,10 @@ class DefenseStage:
         csv_path = benign_profiles_dir(self.config.storage.root_dir, self.config.target.name) / "requests.csv"
         if not csv_path.exists():
             return []
-        return [BenignRequest(payload=request.payload) for request in load_requests(csv_path)]
+        return [
+            BenignRequest(payload=request.payload, tool=request.tool or None, label=request.label)
+            for request in load_requests(csv_path)
+        ]
 
     async def _run_defender(
         self,

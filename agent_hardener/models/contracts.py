@@ -34,6 +34,10 @@ class BenignRequest(AgentHardenerModel):
     """Represents a baseline, normal user request for the defenders to protect."""
 
     payload: str
+    #: The tool the suite expects this request to exercise (the suite's ``tool`` column), when known.
+    tool: str | None = None
+    #: The suite's ``label`` column (``benign``, ``borderline_benign`` or ``negative_control``), when known.
+    label: str | None = None
 
 
 class AttackRecord(AgentHardenerModel):
@@ -64,6 +68,8 @@ class DefenderInput(AgentHardenerModel):
     agent_response: str
     attacked_tool: str
     benign_requests: list[str] = Field(default_factory=list)
+    #: The same requests with the tool each exercises and its label, for defenders that work per tool.
+    benign_suite: list[BenignRequest] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     #: The run's active-state NeMo Relay plugin config; the guardrails defender extends it.
     relay_plugins_path: Path | None = None

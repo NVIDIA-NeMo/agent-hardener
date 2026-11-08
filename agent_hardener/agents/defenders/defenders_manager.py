@@ -183,6 +183,7 @@ class DefendersManager:
                         agent_response=record_response,
                         attacked_tool=attacked_tool,
                         benign_requests=benign_requests,
+                        benign_suite=input_data.benign_requests,
                         context={**enriched_context, **defender.config},
                         relay_plugins_path=relay_plugins_path,
                         feedback=validation_feedback.get(defender.agent_id) if validation_feedback else None,

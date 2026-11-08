@@ -122,6 +122,9 @@ class DefenderSettings(AgentHardenerModel):
     # Fabric agent spawns an MCP subprocess and makes an LLM call per tool — can exceed the default
     # mid-refinement, which discards a guardrail that was nearly ready. Unset -> the built-in default.
     timeout_s: int | None = None
+    #: Feature flag: which guardrails defender runs. ``v2`` works from the attack prompt and response;
+    #: ``v3`` grounds each rail in the attack's execution trace, so it needs ``traces.provider: relay``.
+    guardrails_version: Literal["v2", "v3"] = "v2"
 
 
 class PreloadedAttackConfig(AgentHardenerModel):

@@ -20,6 +20,7 @@ from typing import Any, Literal
 import yaml  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
+from agent_hardener.agents.defenders.guardrails_defender import GUARDRAILS_VERSION_KEY
 from agent_hardener.config import parse_config_data
 from agent_hardener.models import (
     AgentHardenerModel,
@@ -284,17 +285,25 @@ def _default_defenders(agent: AgentSpec, defenders_settings: DefenderSettings) -
     # project has to contain, so there is nothing left to gate on. It derives the targeted tool per
     # attack record; ``guardrails_tool`` is only an optional hint, so it must NOT gate inclusion
     # (under NAT, gating on the workflow left the guardrails defender silently disabled).
+    version = defenders_settings.guardrails_version
+    guardrails_config: dict[str, Any] = {GUARDRAILS_VERSION_KEY: version}
+    if agent.guardrails_tool:
+        guardrails_config["target_tool"] = agent.guardrails_tool
+    if version == "v3":
+        # v3 grounds each rail in the attack's execution trace, so it always asks for traces; with the
+        # run's ``traces.provider`` off it gets none and writes no rails.
+        guardrails_config["use_traces"] = True
     defenders.append(
         {
             "name": "defender-guardrails",
-            "implementation": "agent_hardener.agents.defenders.guardrails_defender_v2.guardrails_defender_agent:run",
+            "implementation": "agent_hardener.agents.defenders.guardrails_defender:run",
             "timeout_seconds": timeout,
             "capabilities": (
                 "Mitigates prompt injection, unsafe tool invocations, sensitive content disclosure, "
                 "reconnaissance commands, and untrusted content handling through LLM-generated "
                 "guardrail rules."
             ),
-            "config": {"target_tool": agent.guardrails_tool} if agent.guardrails_tool else {},
+            "config": guardrails_config,
         }
     )
     return defenders
@@ -523,6 +532,11 @@ def render_manifest_yaml(manifest: dict) -> str:
         "#   red_team_model_name: nvidia/nemotron-3-ultra-550b-a55b   # also via GARAK_RED_TEAM_MODEL_NAME\n"
         "#   detector_model_name: nvidia/nemotron-3-ultra-550b-a55b\n"
         "#   max_attempts_per_tool: 5\n"
+        "\n"
+        "# Optional: defender settings. Omit for the defaults.\n"
+        "# defenders:\n"
+        "#   timeout_s: 900\n"
+        "#   guardrails_version: v2   # v2 (default) | v3 (trace-grounded; needs traces.provider: relay)\n"
         "\n"
         "# Optional: collect the victim's execution traces (what it actually called) from NeMo Relay.\n"
         "# Recorded for every round once on; a component consumes them only with `use_traces: true` in\n"
