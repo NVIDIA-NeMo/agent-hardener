@@ -4,7 +4,7 @@ Agent Hardener is licensed under Apache-2.0 (see `LICENSE`). It does not vendor 
 redistribute third-party source code; the packages below are its **runtime dependency
 closure**, resolved at install time from PyPI, and each remains under its own licence.
 
-Generated for **nvidia-agent-hardener 0.0.17** on 2026-10-19 from the
+Generated for **nvidia-agent-hardener 0.0.18** on 2026-11-08 from the
 resolved runtime closure (`uv export --no-dev`). Development-only dependencies are excluded from
 the distributed package and are not listed.
 
@@ -47,7 +47,7 @@ Every dependency is under a permissive or weak-copyleft licence. **There are no 
 | `markupsafe` | 3.0.3 | BSD-3-Clause |
 | `mdit-py-plugins` | 0.6.1 | MIT |
 | `mdurl` | 0.1.2 | MIT |
-| `nemo-relay` | 0.10.0 | Apache-2.0 |
+| `nemo-relay` | 0.11.1 | Apache-2.0 |
 | `openai` | 2.41.1 | Apache-2.0 |
 | `opentelemetry-api` | 1.41.1 | Apache-2.0 |
 | `opentelemetry-exporter-otlp-proto-common` | 1.41.1 | Apache-2.0 |
