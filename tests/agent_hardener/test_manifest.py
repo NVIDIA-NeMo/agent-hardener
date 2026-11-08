@@ -74,6 +74,18 @@ def test_attacker_timeout_overridable_via_garak() -> None:
     assert attacker.timeout_seconds == 900
 
 
+def test_model_timeout_reaches_the_attacker_and_replay_validator() -> None:
+    manifest = {**AGENT, "garak": {"model_timeout": 1500}}
+    config = expand(AgentManifest.model_validate(manifest), base_dir=REPO_ROOT)
+    assert config.attackers[0].config["model_timeout"] == 1500
+    assert config.attack_validators[0].config["model_timeout"] == 1500
+
+
+def test_model_timeout_must_be_positive() -> None:
+    with pytest.raises(ValidationError):
+        AgentManifest.model_validate({**AGENT, "garak": {"model_timeout": 0}})
+
+
 def test_expand_sets_swarm_tracker_storage() -> None:
     config = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT)
     # run-logs land under <root_dir>/run-logs/; victim paths seed init/ + victim-active-state/.

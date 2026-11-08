@@ -111,12 +111,54 @@ def test_non_nemotron_models_get_no_reasoning_toggle() -> None:
     assert "extra_params" not in detector["detector_model_config"]
 
 
+def test_model_clients_get_a_timeout_long_enough_for_reasoning_models() -> None:
+    config = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    probe = config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
+    detector = config["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
+    for model_config in (probe["red_team_model_config"], detector["detector_model_config"]):
+        assert model_config["timeout"] == 600
+        assert "timeout" not in model_config["suppressed_params"]
+
+
+def test_model_timeout_is_overridable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GARAK_MODEL_TIMEOUT", "1200")
+    from_env = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    explicit = build_agent_breaker_config(
+        target_uri="http://v", report_dir="d", report_prefix="p", overrides={"model_timeout": 900}
+    )
+    assert from_env["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]["red_team_model_config"]["timeout"] == 1200
+    detector = explicit["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
+    assert detector["detector_model_config"]["timeout"] == 900
+
+
 def test_apply_runtime_fields_overlays_and_preserves_base() -> None:
     base = build_agent_breaker_config(target_uri="http://old", report_dir="x", report_prefix="y")
     resolved = apply_runtime_fields(base, target_uri="http://new", report_dir="rd", report_prefix="rp")
     assert resolved["plugins"]["generators"]["rest"]["RestGenerator"]["uri"] == "http://new"
     assert resolved["reporting"] == {"report_dir": "rd", "report_prefix": "rp"}
     assert base["plugins"]["generators"]["rest"]["RestGenerator"]["uri"] == "http://old"  # original untouched
+
+
+def _model_configs(config: dict[str, Any]) -> list[dict[str, Any]]:
+    plugins = config["plugins"]
+    return [
+        plugins["probes"]["agent_breaker"]["AgentBreaker"]["red_team_model_config"],
+        plugins["detectors"]["agent_breaker"]["AgentBreakerResult"]["detector_model_config"],
+    ]
+
+
+def test_scaffold_without_a_model_timeout_gets_the_default() -> None:
+    base = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    for model_config in _model_configs(base):
+        del model_config["timeout"]
+    resolved = apply_runtime_fields(base, target_uri="http://v", report_dir="d", report_prefix="p")
+    assert [model_config["timeout"] for model_config in _model_configs(resolved)] == [600, 600]
+
+
+def test_explicit_model_timeout_replaces_the_scaffolds() -> None:
+    base = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
+    resolved = apply_runtime_fields(base, target_uri="http://v", report_dir="d", report_prefix="p", model_timeout=1500)
+    assert [model_config["timeout"] for model_config in _model_configs(resolved)] == [1500, 1500]
 
 
 # --- target uri resolution ----------------------------------------------------------------
@@ -252,6 +294,32 @@ def test_run_agent_breaker_scan_overlays_user_scaffold(tmp_path: Path, monkeypat
     probe = resolved["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
     assert probe["red_team_model_name"] == "user-edited"  # user edit survives
     assert resolved["plugins"]["generators"]["rest"]["RestGenerator"]["uri"] == "http://victim:8000/x"  # uri overlaid
+
+
+def test_model_timeout_override_reaches_a_scaffolded_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GARAK_COMMAND", "garak")
+    scaffold = tmp_path / "garak-scan.yaml"
+    scaffold.write_text(
+        yaml.safe_dump(build_agent_breaker_config(target_uri="http://v", report_dir="x", report_prefix="y")),
+        encoding="utf-8",
+    )
+
+    async def fake_runner(_command: list[str], _log: Path, _timeout: float | None, _env: dict[str, str] | None) -> int:
+        return 0
+
+    asyncio.run(
+        run_agent_breaker.run_agent_breaker_scan(
+            target_uri="http://victim:8000/x",
+            config_path=str(scaffold),
+            report_dir=str(tmp_path / "r"),
+            report_prefix="agent-breaker",
+            overrides={"model_timeout": 1200},
+            runner=fake_runner,
+        )
+    )
+    resolved = yaml.safe_load((tmp_path / "r" / "garak-agent-breaker.resolved.yaml").read_text())
+    assert [model_config["timeout"] for model_config in _model_configs(resolved)] == [1200, 1200]
 
 
 def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -25,6 +25,7 @@ from agent_hardener.agents.attackers.agent_breaker.config import (
     OVERRIDE_KEYS,
     apply_runtime_fields,
     build_agent_breaker_config,
+    resolve_model_timeout,
 )
 from agent_hardener.agents.attackers.hits import normalize_hit_record
 from agent_hardener.env import garak_command
@@ -202,7 +203,11 @@ async def run_agent_breaker_scan(
             target_uri=target_uri, report_dir=report_dir, report_prefix=report_prefix, overrides=overrides
         )
     resolved = apply_runtime_fields(
-        base, target_uri=target_uri, report_dir=str(report_dir_path), report_prefix=report_prefix
+        base,
+        target_uri=target_uri,
+        report_dir=str(report_dir_path),
+        report_prefix=report_prefix,
+        model_timeout=resolve_model_timeout(overrides),
     )
 
     # Co-locate the resolved config + garak log with the report/hitlog under report_dir. When the
