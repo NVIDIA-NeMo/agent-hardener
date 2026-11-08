@@ -13,7 +13,7 @@ is the defense stage's typed output that the deploy/victim/validation stages con
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from agent_hardener.models import AttackRecord, DefenderAnalysis, ValidationFeedback
     from agent_hardener.runtime.round_store import RoundStore
     from agent_hardener.runtime.run_recorder import RunRecorder
+    from agent_hardener.traces import AgentTrace
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,6 +36,8 @@ class IterationContext:
     iteration_dir: Path | None
     run_dir: Path | None
     validation_feedback: dict[str, ValidationFeedback] | None = None
+    #: This round's attack traces keyed by normalized prompt (live, or loaded by a replay with traces).
+    attack_traces: dict[str, AgentTrace] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)

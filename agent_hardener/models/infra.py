@@ -131,3 +131,6 @@ class PreloadedAttackConfig(AgentHardenerModel):
     path: Path
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    #: A recorded ``attack_traces.json`` to load with these hits (``run --replay --with-traces``).
+    #: ``None`` replays without traces.
+    traces_path: Path | None = None

@@ -53,6 +53,7 @@ from agent_hardener.runtime.event_sink import make_http_event_sink
 from agent_hardener.runtime.orchestrator import Orchestrator
 from agent_hardener.swarm_tracker import (
     OPENSHELL_LOGS,
+    TRACES,
     RunLayout,
     agent_fingerprint_path,
     read_victim_image,
@@ -64,12 +65,14 @@ from agent_hardener.tools.openshell import (
     target_health_url,
     wait_for_health,
 )
+from agent_hardener.traces import build_trace_provider
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
     from agent_hardener.models import AgentConfig, RoundReport, SessionConfig
     from agent_hardener.openshell.lifecycle import OpenShellConfig
+    from agent_hardener.traces import TraceProvider
 
 
 async def _no_interview_answers(_questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -485,6 +488,7 @@ class Mission:
             relay_uploader=self._relay_uploader,
             verify_tool_path=self._verify_tool_path,
             sync_atof=self._sync_atof,
+            trace_provider=self._build_trace_provider(),
         )
         reports = asyncio.run(
             orchestrator.run_rounds(rounds=self.ctx.rounds, mission_id=self.ctx.mission_id, run_id=self._run_id)
@@ -516,6 +520,23 @@ class Mission:
         self._write_run_artifact("validation.json", lambda _run_dir: build_validation(reports))
         self._write_hardened_bundle()
         return reports
+
+    def _build_trace_provider(self) -> TraceProvider | None:
+        """The configured trace provider, saving raw data under ``<run_dir>/traces/``; ``None`` when off."""
+        traces = self.ctx.session_config.traces
+        if traces.provider == "none":
+            return None
+        spec = self._base_config.relay_victim
+        provider = build_trace_provider(
+            traces,
+            relay_spec=spec,
+            atof_path=self._host_atof_path(spec) if spec is not None else None,
+            sync=self._sync_atof,
+            raw_dir=RunLayout(self.ctx.session_config.storage.root_dir, self._run_id).dir_for(TRACES),
+        )
+        if provider is not None:
+            self._announce(f"execution traces on ({traces.provider})")
+        return provider
 
     def _write_hardened_bundle(self) -> None:
         """Assemble the run's deployable artifact: the image the run validated plus its guardrails.

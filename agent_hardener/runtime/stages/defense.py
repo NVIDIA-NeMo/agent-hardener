@@ -106,6 +106,7 @@ class DefenseStage:
             benign_requests=self._load_benign_requests(),
             available_defenders=self.config.defenders,
             relay_victim_spec=self._relay_victim_spec(),
+            attack_traces=ctx.attack_traces,
         )
         phase_started_at = perf_counter()
         recorder.emit(

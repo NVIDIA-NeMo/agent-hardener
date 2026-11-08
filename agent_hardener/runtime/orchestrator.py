@@ -9,6 +9,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from agent_hardener.agents.attackers.preloaded import load_preloaded_attack_traces
 from agent_hardener.events import EventType
 from agent_hardener.ids import format_round_id, generate_round_id
 from agent_hardener.models import (
@@ -43,12 +44,15 @@ from agent_hardener.swarm_tracker import (
     write_init_files,
     write_run_config,
 )
+from agent_hardener.traces import trace_clock, traces_since
+from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, by_prompt, collect_attack_traces, dump_recording
 
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
 
     from agent_hardener.agents.defenders.defenders_manager import DefendersManager
+    from agent_hardener.traces import AgentTrace, TraceProvider
 
 
 class Orchestrator:
@@ -65,8 +69,12 @@ class Orchestrator:
         defenders_manager: DefendersManager | None = None,
         verify_tool_path: Callable[[], None] | None = None,
         sync_atof: Callable[[], None] | None = None,
+        trace_provider: TraceProvider | None = None,
     ) -> None:
         self.config = config
+        # Set when the global ``traces`` flag is on. Recording depends only on this; whether an agent
+        # consumes traces is decided per agent (``uses_traces``) when it is invoked.
+        self.trace_provider = trace_provider
         # Called once, after the first round's attacks. Deliberately a hook rather than logic here:
         # proving tool calls reach Relay needs the victim's telemetry, which only the runner can pull
         # out of the sandbox. See agent_hardener.preflight.relay.check_tool_path.
@@ -82,7 +90,7 @@ class Orchestrator:
             built_openshell, built_relay = build_uploaders(config.victim_control)
             openshell = openshell_uploader or built_openshell
             nat = relay_uploader or built_relay
-        invoker = AgentInvoker(config, agent_adapter or RoutingAgentRunner())
+        invoker = AgentInvoker(config, agent_adapter or RoutingAgentRunner(), trace_provider)
 
         self.attack_stage = AttackStage(config, invoker)
         self.defense = DefenseStage(config, invoker, defenders_manager)
@@ -144,6 +152,8 @@ class Orchestrator:
             recorder.emit(EventType.ROUND_STARTED, storage_dir=str(round_dir))
 
             # Attackers run once for the round; each iteration then hardens against them.
+            provider = self.trace_provider if self.config.attackers else None
+            anchor = await _trace_anchor(provider, recorder) if provider is not None else None
             attacks = await self.attack_stage.run(recorder, store)
             # First real tool traffic of the run: the earliest point where "do tool calls reach
             # Relay?" is answerable. Before authoring guardrails, because a victim that fails this
@@ -155,7 +165,12 @@ class Orchestrator:
             if self.verify_tool_path is not None and not self._tool_path_verified and self.config.attackers:
                 self.verify_tool_path()
                 self._tool_path_verified = True
-            iterations, success = await self._run_iterations(recorder, store, attacks, run_dir)
+            # Recorded whenever traces are on and live attackers ran; a replay loads its recording instead.
+            attack_traces = {
+                **_replayed_attack_traces(self.config, recorder),
+                **(await _collect_attack_traces(provider, recorder, store, attacks, anchor) if provider else {}),
+            }
+            iterations, success = await self._run_iterations(recorder, store, attacks, run_dir, attack_traces)
 
             # Pull the victim's telemetry once the round's traffic is done, whatever produced it.
             # The tool-path check above is the only other fetch and it is gated on live attackers, so
@@ -181,7 +196,12 @@ class Orchestrator:
             return report
 
     async def _run_iterations(
-        self, recorder: RunRecorder, store: RoundStore, attacks: list[AttackRecord], run_dir: Path | None
+        self,
+        recorder: RunRecorder,
+        store: RoundStore,
+        attacks: list[AttackRecord],
+        run_dir: Path | None,
+        attack_traces: dict[str, AgentTrace] | None = None,
     ) -> tuple[list[RoundIterationReport], bool]:
         """Run defend → deploy → victim → validate iterations until success or the retry limit."""
         iterations: list[RoundIterationReport] = []
@@ -199,6 +219,7 @@ class Orchestrator:
                 iteration_dir=iteration_dir,
                 run_dir=run_dir,
                 validation_feedback=validation_feedback or None,
+                attack_traces=attack_traces or {},
             )
             report = await self._run_iteration(ctx)
             iterations.append(report)
@@ -223,3 +244,49 @@ class Orchestrator:
             validators=validators,
             success=victim_control.ok and all(validator.ok for validator in validators),
         )
+
+
+def _replayed_attack_traces(config: SessionConfig, recorder: RunRecorder) -> dict[str, AgentTrace]:
+    """Traces recorded by an earlier run, for a replay with traces (``--replay --with-traces``).
+
+    The CLI already validated the file, so a failure here (it changed since) is logged and the
+    replayed hits run without traces rather than failing the round.
+    """
+    try:
+        return load_preloaded_attack_traces(config.preloaded_attacks)
+    except Exception:
+        recorder.logger.warning("could not load the recorded attack traces; replaying without them", exc_info=True)
+        return {}
+
+
+async def _trace_anchor(provider: TraceProvider, recorder: RunRecorder) -> datetime | None:
+    """The trace clock before the attack stage, so the round's traces exclude earlier traffic."""
+    try:
+        return trace_clock(await asyncio.to_thread(provider.get_traces))
+    except Exception:
+        recorder.logger.warning("could not read traces before the attack stage", exc_info=True)
+        return None
+
+
+async def _collect_attack_traces(
+    provider: TraceProvider,
+    recorder: RunRecorder,
+    store: RoundStore,
+    attacks: list[AttackRecord],
+    anchor: datetime | None,
+) -> dict[str, AgentTrace]:
+    """Match this round's live attack hits to their traces and record them for a later replay.
+
+    Runs whenever the global ``traces`` flag is on and live attackers ran, never depending on component
+    flags: the recording is what makes a replay with traces possible. A trace failure never fails the
+    round.
+    """
+    try:
+        window = traces_since(await asyncio.to_thread(provider.get_traces), anchor)
+        recorded = collect_attack_traces(attacks, window)
+    except Exception:
+        recorder.logger.warning("could not collect attack traces; defenders run without them", exc_info=True)
+        return {}
+    path = store.write_round_json(ATTACK_TRACES_FILENAME, dump_recording(recorded))
+    recorder.emit(EventType.ARTIFACT_WRITTEN, artifact=ATTACK_TRACES_FILENAME, path=str(path), count=len(recorded))
+    return by_prompt(recorded)

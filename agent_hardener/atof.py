@@ -88,24 +88,29 @@ def tool_calls(records: Iterable[dict[str, Any]]) -> list[ToolCall]:
                 name=start.get("name") or "",
                 args=start.get("data"),
                 result=record.get("data"),
-                ok=_succeeded(record),
+                ok=succeeded(record),
                 uuid=start["uuid"],
             )
         )
     return calls
 
 
-def _succeeded(end_record: dict[str, Any]) -> bool:
-    """Whether the tool returned normally.
+# Keys an OTEL status can arrive under. Real Relay streams use the dotted `otel.status_code`.
+_STATUS_KEYS = ("status_code", "otel_status_code", "otel.status_code")
 
-    Relay records an OTEL status on the scope end event; a guardrail rejection or a raising tool
-    lands there as an error status.
+
+def succeeded(end_record: dict[str, Any]) -> bool:
+    """Whether the scope ended without an error status.
+
+    Relay records an OTEL status on the scope end event, and a raising tool lands there as an error.
+    A guardrail refusal does not: the plugin returns its refusal as the tool result, so it ends OK and
+    only the result text shows it.
     """
     metadata = end_record.get("metadata")
     if not isinstance(metadata, dict):
         return True
-    status = metadata.get("status_code") or metadata.get("otel_status_code")
-    if isinstance(status, str):
+    status = next((metadata[key] for key in _STATUS_KEYS if isinstance(metadata.get(key), str)), None)
+    if status is not None:
         return status.upper() not in {"ERROR", "STATUS_CODE_ERROR"}
     return "error" not in metadata
 

@@ -17,6 +17,7 @@ from agent_hardener.events import EventType
 from agent_hardener.loggers import using_current_agent
 from agent_hardener.runtime.agent_loader import failure_output
 from agent_hardener.runtime.run_context import RunContext
+from agent_hardener.traces import uses_traces
 
 if TYPE_CHECKING:
     import logging
@@ -24,14 +25,18 @@ if TYPE_CHECKING:
     from agent_hardener.loggers import JsonlEventLogger
     from agent_hardener.models import AgentConfig, AgentRunInput, AgentRunOutput, SessionConfig
     from agent_hardener.runtime.adapters import AgentRunner
+    from agent_hardener.traces import TraceProvider
 
 
 class AgentInvoker:
     """Run a single agent with lifecycle events, timing, and structured logging."""
 
-    def __init__(self, config: SessionConfig, agent_adapter: AgentRunner) -> None:
+    def __init__(
+        self, config: SessionConfig, agent_adapter: AgentRunner, trace_provider: TraceProvider | None = None
+    ) -> None:
         self.config = config
         self.agent_adapter = agent_adapter
+        self.trace_provider = trace_provider
 
     def request_context(self) -> dict[str, Any]:
         """Return per-agent context enriched with run-level concurrency settings.
@@ -76,7 +81,8 @@ class AgentInvoker:
                 message=msg,
                 current=cur,
                 total=tot,
-            )
+            ),
+            trace_provider=self.trace_provider if uses_traces(agent, self.trace_provider) else None,
         )
         agent_identity = {
             "agent_id": agent.agent_id,

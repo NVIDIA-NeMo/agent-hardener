@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import pytest
 
+from agent_hardener.models import TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import Mission, MissionResult
@@ -171,6 +172,7 @@ def build_mission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuildMissi
             storage=SimpleNamespace(
                 root_dir=tmp_path, run_id=run_id, victim_policy_path=None, victim_relay_plugins_path=None
             ),
+            traces=TracesConfig(),
         )
         fake_backends = FakeBackends()
         lifecycles: list[FakeLifecycle] = []

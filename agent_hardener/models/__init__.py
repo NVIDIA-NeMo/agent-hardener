@@ -40,7 +40,13 @@ from agent_hardener.models.infra import (
     VictimControlConfig,
 )
 from agent_hardener.models.reports import RoundIterationReport, RoundReport
-from agent_hardener.models.session import RunConcurrencySettings, RunSettings, SessionConfig, StorageConfig
+from agent_hardener.models.session import (
+    RunConcurrencySettings,
+    RunSettings,
+    SessionConfig,
+    StorageConfig,
+    TracesConfig,
+)
 
 __all__ = [
     "ARTIFACT_DIR_KEY",
@@ -71,6 +77,7 @@ __all__ = [
     "SessionConfig",
     "StorageConfig",
     "TargetInput",
+    "TracesConfig",
     "ValidationFeedback",
     "ValidatorKind",
     "ValidatorReport",

@@ -19,6 +19,7 @@ from pydantic import Field
 from agent_hardener.models.agent import AgentConfig, TargetInput
 from agent_hardener.models.base import AgentHardenerModel, ValidatorKind
 from agent_hardener.models.infra import RelayVictimSpec
+from agent_hardener.traces.models import AgentTrace
 
 
 class Artifact(AgentHardenerModel):
@@ -70,6 +71,8 @@ class DefenderInput(AgentHardenerModel):
     # The run's victim_control.config["relay_victim"] spec (agent_env/egress/backends), so extraction
     # can treat the agent's own required endpoints as ground-truth benign.
     relay_victim_spec: RelayVictimSpec | None = None
+    #: The trace of the attempt behind this attack, set only for a defender with ``use_traces``.
+    attack_trace: AgentTrace | None = None
 
 
 class DefenderOutput(AgentHardenerModel):
@@ -97,6 +100,8 @@ class DefendersManagerInput(AgentHardenerModel):
     available_defenders: list[AgentConfig] = Field(default_factory=list)
     # The run's victim_control.config["relay_victim"] spec, threaded into every DefenderInput built below.
     relay_victim_spec: RelayVictimSpec | None = None
+    #: The round's attack traces keyed by normalized prompt (``traces.attacks.attack_key``).
+    attack_traces: dict[str, AgentTrace] = Field(default_factory=dict)
 
 
 class DefenderAnalysis(AgentHardenerModel):

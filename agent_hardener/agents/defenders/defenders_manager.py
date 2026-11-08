@@ -23,6 +23,8 @@ from agent_hardener.models import (
     DefendersManagerOutput,
     ValidationFeedback,
 )
+from agent_hardener.traces.attacks import attack_key
+from agent_hardener.traces.attacks import record_prompt as record_prompt_text
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +174,7 @@ class DefendersManager:
                 record_prompt = str(record.get("prompt", attack.summary))
                 record_response = _record_response_text(record)
                 attacked_tool = _parse_attacked_tool(record_prompt) or attack.metadata.get("attacked_tool", "")
+                attack_trace = input_data.attack_traces.get(attack_key(record_prompt_text(record)))
                 for defender in defenders:
                     if validation_feedback and defender.agent_id not in validation_feedback:
                         continue
@@ -184,6 +187,7 @@ class DefendersManager:
                         relay_plugins_path=relay_plugins_path,
                         feedback=validation_feedback.get(defender.agent_id) if validation_feedback else None,
                         relay_victim_spec=input_data.relay_victim_spec,
+                        attack_trace=attack_trace if defender.config.get("use_traces") else None,
                     )
                     task_meta.append((defender, inp))
 

@@ -21,7 +21,14 @@ import yaml  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
 from agent_hardener.config import parse_config_data
-from agent_hardener.models import AgentHardenerModel, DefenderSettings, GarakSettings, RelayVictimSpec, SessionConfig
+from agent_hardener.models import (
+    AgentHardenerModel,
+    DefenderSettings,
+    GarakSettings,
+    RelayVictimSpec,
+    SessionConfig,
+    TracesConfig,
+)
 from agent_hardener.openshell.naming import sandbox_name
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 
@@ -118,6 +125,7 @@ class AgentManifest(AgentHardenerModel):
     backends: list[BackendManifest] = Field(default_factory=list)
     garak: GarakSettings | None = None
     defenders: DefenderSettings | None = None
+    traces: TracesConfig | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -371,6 +379,7 @@ def expand(
         "storage": storage,
         "run": {"rounds": 1},
         "garak": garak.model_dump(),
+        "traces": (manifest.traces or TracesConfig()).model_dump(),
         "victim_control": {
             "type": "openshell",
             "config": {
@@ -514,6 +523,12 @@ def render_manifest_yaml(manifest: dict) -> str:
         "#   red_team_model_name: nvidia/nemotron-3-ultra-550b-a55b   # also via GARAK_RED_TEAM_MODEL_NAME\n"
         "#   detector_model_name: nvidia/nemotron-3-ultra-550b-a55b\n"
         "#   max_attempts_per_tool: 5\n"
+        "\n"
+        "# Optional: collect the victim's execution traces (what it actually called) from NeMo Relay.\n"
+        "# Recorded for every round once on; a component consumes them only with `use_traces: true` in\n"
+        "# its own config (set through overrides).\n"
+        "# traces:\n"
+        "#   provider: relay   # none (default) | relay\n"
         "\n"
         "# overrides: {}  # deep-merge into the expanded SessionConfig (advanced)\n"
     )

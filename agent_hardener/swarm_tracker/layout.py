@@ -46,6 +46,7 @@ class ArtifactKind:
 # Catalog: the subprocess-output kinds a component must be handed a directory for.
 OPENSHELL_LOGS = ArtifactKind("openshell-logs", Scope.RUN)
 GARAK = ArtifactKind("garak", Scope.ROUND)  # attackers run once per round, so garak scans are round-scoped
+TRACES = ArtifactKind("traces", Scope.RUN)  # the victim's raw trace data, one copy per run
 
 
 @dataclass(frozen=True)

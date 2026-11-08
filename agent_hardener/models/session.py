@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 
@@ -45,12 +45,24 @@ class RunSettings(AgentHardenerModel):
     concurrency: RunConcurrencySettings = Field(default_factory=RunConcurrencySettings)
 
 
+class TracesConfig(AgentHardenerModel):
+    """Whether the run collects the victim's execution traces, and from which backend.
+
+    Independent of the per-component ``use_traces`` flags (in each agent's ``config``): turning this
+    on collects and records traces even when no component consumes them, and a component flag has no
+    effect while this is off.
+    """
+
+    provider: Literal["none", "relay"] = "none"
+
+
 class SessionConfig(AgentHardenerModel):
     """Full orchestrator configuration loaded from JSON or YAML."""
 
     storage: StorageConfig
     run: RunSettings = Field(default_factory=RunSettings)
     victim_control: VictimControlConfig = Field(default_factory=VictimControlConfig)
+    traces: TracesConfig = Field(default_factory=TracesConfig)
     garak: GarakSettings | None = None
     target: TargetInput
     context: dict[str, Any] = Field(default_factory=dict)
