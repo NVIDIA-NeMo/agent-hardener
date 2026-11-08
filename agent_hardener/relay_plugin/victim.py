@@ -20,10 +20,11 @@ from pathlib import Path
 ARTIFACTS_ENV = "AGENT_HARDENER_RELAY_ARTIFACTS"
 DEFAULT_ARTIFACTS_DIR = "artifacts/relay"
 
-#: Where a *sandboxed* victim writes instead. Under /home/sandbox because every OpenShell policy
-#: template already grants that read-write, so telemetry needs no filesystem exception of its own —
-#: unlike the guardrail file, which must live in /etc for Relay to treat it as system policy.
-SANDBOX_ARTIFACTS_DIR = "/home/sandbox/.agent-hardener/relay"
+#: Where a *sandboxed* victim writes instead. Under /tmp because every OpenShell policy template grants it
+#: read-write and every compute driver lets the sandbox write there; /home/sandbox is not writable on the
+#: Kubernetes driver, whose sandbox home is /sandbox. Unlike the guardrail file, which must live in /etc for
+#: Relay to treat it as system policy, telemetry needs no filesystem exception of its own.
+SANDBOX_ARTIFACTS_DIR = "/tmp/agent-hardener/relay"
 ATOF_FILENAME = "events.atof.jsonl"
 
 

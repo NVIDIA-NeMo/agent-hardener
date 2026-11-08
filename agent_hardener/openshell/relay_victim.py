@@ -18,10 +18,11 @@ import hashlib
 import re
 import shlex
 import shutil
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from agent_hardener.errors import VictimBuildError
+from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
 
 #: The guardrail package as it is named *inside the victim*. Copied in rather than pip-installed:
 #: installing would put Agent Hardener's whole dependency set into the image we are supposed to be
@@ -59,6 +60,10 @@ IMAGE_CONTEXT_DIGEST_PATH = f"{IMAGE_SHIM_PATH}/{CONTEXT_DIGEST_FILE}"
 # defenders produce here; the user/project layers are deliberately not used, because NeMo Fabric
 # hard-rejects plugin config inherited from them (nemo_fabric_adapters/common/utils.py:286,312).
 RELAY_PLUGINS_UPLOAD_DEST = "/etc/nemo-relay/plugins.toml"
+
+#: Directories a run writes into inside the sandbox: where it uploads the guardrail config, and where the
+#: victim writes its ATOF stream.
+RUN_WRITABLE_DIRS = (str(PurePosixPath(RELAY_PLUGINS_UPLOAD_DEST).parent), SANDBOX_ARTIFACTS_DIR)
 
 # aiohttp egress shim, written directly into BYO build contexts (the generic Dockerfile bakes its own
 # printf'd copy). Makes aiohttp honor OpenShell's injected HTTP(S)_PROXY so egress/DNS go through the
@@ -241,6 +246,36 @@ def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
         dockerfile.write(_HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST))
 
 
+def _final_stage_user(staged_dockerfile: Path) -> str | None:
+    """The last ``USER`` the final build stage sets, or ``None`` when it sets none."""
+    user = None
+    for line in _logical_lines(staged_dockerfile.read_text(encoding="utf-8")):
+        keyword, _, argument = line.partition(" ")
+        if keyword.upper() == "FROM":
+            user = None
+        elif keyword.upper() == "USER":
+            user = argument.strip()
+    return user
+
+
+def _inject_writable_run_dirs(staged_dockerfile: Path) -> None:
+    """Make the directories a run writes into writable by whichever uid the sandbox runs as.
+
+    Images chown these to their own ``sandbox`` user, which OpenShell's Docker driver runs the victim as.
+    Its Kubernetes driver runs every sandbox as one configured uid instead (10001 by default), which cannot
+    write them, so the guardrail upload fails. ``a+rwX`` serves both. Appended last and run as root,
+    then the final stage's own ``USER`` is restored, so the image's runtime user does not change.
+    """
+    restore = _final_stage_user(staged_dockerfile)
+    dirs = " ".join(shlex.quote(directory) for directory in RUN_WRITABLE_DIRS)
+    with staged_dockerfile.open("a", encoding="utf-8") as dockerfile:
+        dockerfile.write(
+            "\n# --- Agent Hardener: dirs the run writes, writable by any sandbox uid ---\n"
+            "USER root\n"
+            f"RUN mkdir -p {dirs} && chmod -R a+rwX {dirs}\n" + (f"USER {restore}\n" if restore else "")
+        )
+
+
 def stage_relay_victim_build(
     spec: RelayVictimSpec, cwd: Path, build_root: Path, *, also_exclude: Iterable[Path] = ()
 ) -> Path:
@@ -280,6 +315,7 @@ def stage_relay_victim_build(
     _stage_guardrail_plugin(build_root)
     if spec.harness == "hermes":
         _inject_hermes_wiring(staged_dockerfile)
+    _inject_writable_run_dirs(staged_dockerfile)
 
     _append_dockerignore(build_root, project_dir, excluded)
     (build_root / SHIM_DIR / CONTEXT_DIGEST_FILE).write_text(staged_context_digest(build_root) + "\n", encoding="utf-8")

@@ -210,6 +210,8 @@ line-ending = "auto"
 "agent_hardener/openshell/gateway.py" = ["S603", "S607"]
 # This is an in-sandbox upload destination shared with the generated launcher, not a host temp file.
 "agent_hardener/openshell/relay_victim.py" = ["S108"]
+# The victim's ATOF directory is a path inside the sandbox, not a host temp file.
+"agent_hardener/relay_plugin/victim.py" = ["S108"]
 # The example victim is a container entrypoint: the sandbox reaches it from outside the container,
 # so binding loopback would make it unreachable.
 # CLI commands lazily import heavy subsystems (langgraph/openshell/fastapi) so `--help` stays fast.
