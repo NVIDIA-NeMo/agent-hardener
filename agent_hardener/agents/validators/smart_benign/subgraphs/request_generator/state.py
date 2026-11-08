@@ -28,7 +28,7 @@ class RequestGeneratorState(AgentHardenerModel):
 
     requests_per_tool: int = Field(default=3, ge=1)
     borderline_per_tool: int = Field(default=0, ge=0)
-    negative_control_per_tool: int = Field(default=1, ge=0)
+    negative_control_per_tool: int = Field(default=0, ge=0)
     concurrency: int = Field(default=2, ge=1)
 
     synth_model: str

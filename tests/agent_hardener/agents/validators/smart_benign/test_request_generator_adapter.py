@@ -14,6 +14,7 @@ from agent_hardener.agents.validators.smart_benign.models import ToolSpec, Victi
 from agent_hardener.agents.validators.smart_benign.state import SynthInputs, SynthState
 from agent_hardener.agents.validators.smart_benign.subgraphs.request_generator import adapters
 from agent_hardener.agents.validators.smart_benign.subgraphs.request_generator.adapters import entry_adapter
+from agent_hardener.agents.validators.smart_benign.subgraphs.request_generator.state import RequestGeneratorState
 
 _NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -34,6 +35,12 @@ def _state(*, interactive: bool) -> SynthState:
 def test_borderline_off_by_default() -> None:
     assert defaults().generation.borderline_per_tool == 0
     assert entry_adapter(_state(interactive=True)).borderline_per_tool == 0
+
+
+def test_negative_controls_off_by_default() -> None:
+    assert defaults().generation.negative_control_per_tool == 0
+    assert entry_adapter(_state(interactive=True)).negative_control_per_tool == 0
+    assert RequestGeneratorState.model_fields["negative_control_per_tool"].default == 0
 
 
 @pytest.fixture
