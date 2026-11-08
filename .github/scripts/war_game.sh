@@ -130,6 +130,20 @@ collect_results() {
     cp "$validation" "$OUT_DIR/$AGENT.validation.json"
 }
 
+# The job's own error is only "exited with code 1"; agent-hardener's output is in the job's
+# synth-benign.log under the Helix jobs directory.
+dump_synth_log() {
+    local synth_log
+    synth_log=$(find "$HOME" "$HELIX_DIR" "${TMPDIR:-/tmp}" -name synth-benign.log -type f -exec ls -t {} + 2>/dev/null | head -1)
+    if [[ -z $synth_log ]]; then
+        echo "No synth-benign.log found" >&2
+        return
+    fi
+    cp "$synth_log" "$OUT_DIR/"
+    log "Tail of $synth_log"
+    tail -n 200 "$synth_log"
+}
+
 main() {
     mkdir -p "$WORK_DIR"
     cd "$WORK_DIR"
@@ -145,7 +159,10 @@ main() {
     esac
 
     log "Synthesising the benign suite"
-    nemo agent-hardener synth-benign --manifest-id "$MANIFEST" --no-interactive
+    nemo agent-hardener synth-benign --manifest-id "$MANIFEST" --no-interactive || {
+        dump_synth_log
+        return 1
+    }
 
     log "Running the war-game"
     # A failed run still leaves partial logs worth collecting, so the status is checked after.

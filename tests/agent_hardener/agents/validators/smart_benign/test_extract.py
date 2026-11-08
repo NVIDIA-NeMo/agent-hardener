@@ -101,13 +101,13 @@ def test_confidence_is_capped_because_the_victim_may_hallucinate(
     assert _tools(delta)[0].confidence == expected
 
 
-def test_probe_errors_ride_along_on_success(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
-    _patch(monkeypatch, fake_model(ProberOutput()))
+def test_partial_probe_failures_are_not_errors(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
+    _patch(monkeypatch, fake_model(ProberOutput(tools=[_hypothesis()])))
 
-    delta = asyncio.run(ex.extract(_state(probe_errors=["probe 2: timeout"])))
+    delta = asyncio.run(ex.extract(_state(probe_errors=["probe 2: HTTP 500"])))
 
-    assert delta["errors"] == ["probe 2: timeout"]
-    assert delta["tools"] == []
+    assert "errors" not in delta
+    assert [t.name for t in _tools(delta)] == ["web_search"]
 
 
 def test_the_transcript_is_rendered_as_qa_pairs(
