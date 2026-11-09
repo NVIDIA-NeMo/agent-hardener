@@ -49,6 +49,7 @@ Return tuples over these axes: binary (executable/tool name), host, port (null i
 protocol (https→https, http→http), method (HTTP verb, uppercase), path, query (null if absent),
 gql_field, mcp_tool (null unless GraphQL/MCP). Leave any axis you cannot determine as null.
 Only return endpoints that appear directly in the attack prompt text — do not invent anything.
+Return a JSON object with a "tuples" array. If no endpoints appear, return {{"tuples": []}}.
 """
 
 HARM_CERTIFICATE_PROMPT = """\
@@ -68,6 +69,7 @@ Identify: the class of harm this attack causes (harm_class, e.g. "secret_exfiltr
 "http_response_body", "dns", "file_write"), and cut_index — the index into the tuple list above
 of the single EARLIEST request whose denial would break this specific attack chain. Prefer the
 narrowest, earliest cut over blocking the whole chain. Explain your reasoning briefly.
+Return a JSON object with harm_class, channel, cut_index, and reasoning fields.
 """
 
 BENIGN_TUPLE_EXTRACTION_PROMPT = """\
@@ -80,7 +82,8 @@ Read the request text above and extract every network endpoint or operation it e
 references, over these axes: binary, host, port, protocol, method, path, query, gql_field,
 mcp_tool. Leave any axis you cannot determine as null.
 
-If the request text contains no URL, hostname, or network operation, return an empty list.
+Return a JSON object with a "tuples" array.
+If the request text contains no URL, hostname, or network operation, return {{"tuples": []}}.
 Do not invent or infer endpoints that are not present in the text.
 """
 
@@ -91,7 +94,8 @@ call its own LLM (its inference/completions API — the model this agent itself 
 Candidate egress hosts:
 {candidates}
 
-Return the single host string from the list above that is the agent's own LLM inference endpoint
+Return a JSON object with "host" and "reasoning" fields.
+Set "host" to the single host string above that is the agent's own LLM inference endpoint
 (e.g. an "inference-api", "openai", "anthropic", "bedrock"-style hostname), or null if none of
 them look like an LLM endpoint. Do not guess — only return a host if you're confident.
 """
