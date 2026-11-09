@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent_hardener.agents.validators.smart_benign.config import defaults
 from agent_hardener.agents.validators.smart_benign.models import ToolSpec
 from agent_hardener.agents.validators.smart_benign.prompt_loader import load_prompt, render_prompt
 from agent_hardener.llm import build_chat_model
@@ -38,6 +39,7 @@ async def extract(state: ApiProberState) -> dict[str, object]:
         model=state.synth_model,
         base_url=state.synth_base_url,
         api_key=state.synth_api_key,
+        max_tokens=defaults().synth_llm.max_tokens,
     ).with_structured_output(ProberOutput)
     messages = [
         SystemMessage(content=load_prompt(PROMPTS_DIR / "system.md")),

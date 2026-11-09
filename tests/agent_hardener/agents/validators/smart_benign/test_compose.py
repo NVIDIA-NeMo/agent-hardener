@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from agent_hardener.agents.validators.smart_benign.config import defaults
 from agent_hardener.agents.validators.smart_benign.subgraphs.interviewer.nodes import compose as cp
 from agent_hardener.agents.validators.smart_benign.subgraphs.interviewer.schemas import (
     InterviewBatch,
@@ -162,3 +163,15 @@ def test_a_provider_rate_limit_message_is_promoted(
 )
 def test_unasked_gaps(gaps: list[str], prior: list[tuple[str, str, str]], expected: list[str]) -> None:
     assert cp._unasked_gaps(gaps, prior) == expected
+
+
+def test_the_configured_max_tokens_reach_the_model(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    # Left unset, Anthropic models cap the batch at 4096 tokens and a long one fails to parse.
+    seen: dict[str, Any] = {}
+    model = fake_model(_batch("personas"))
+    monkeypatch.setattr(cp, "build_chat_model", lambda **kw: seen.update(kw) or model)
+    asyncio.run(cp.compose(_state("personas")))
+
+    assert seen["max_tokens"] == defaults().synth_llm.max_tokens

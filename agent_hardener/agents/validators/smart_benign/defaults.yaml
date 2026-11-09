@@ -9,6 +9,9 @@
 
 synth_llm:
   retries: 2
+  # Set explicitly: unset, the provider's default applies (4096 for Anthropic models), and a long
+  # structured output such as an interview batch is truncated and fails to parse.
+  max_tokens: 16384
   # Per-tool synth LLM fan-out (gap_detector boundary pass + request generator).
   # Separate from replay.concurrency, which throttles calls into the victim.
   concurrency: 8

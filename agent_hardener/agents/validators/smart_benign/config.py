@@ -37,6 +37,7 @@ class SynthLLMDefaults(AgentHardenerModel):
     base_url: str = Field(default_factory=lambda: llm.DEFAULT_BASE_URL)
     retries: int = Field(ge=0)
     concurrency: int = Field(ge=1)
+    max_tokens: int = Field(gt=0)
 
 
 class JudgeLLMDefaults(AgentHardenerModel):
