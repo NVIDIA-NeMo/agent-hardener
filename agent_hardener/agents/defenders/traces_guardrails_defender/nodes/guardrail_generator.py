@@ -169,7 +169,7 @@ def _grade(grader: BaseChatModel, context: dict[str, Any], draft: RailDraft) -> 
         if not isinstance(response, GradeResponse):
             response = GradeResponse.model_validate(response)
     except Exception as exc:
-        logger.warning("defender v3 grader failed on iteration %d: %s", draft.iteration, exc)
+        logger.warning("traces guardrails defender grader failed on iteration %d: %s", draft.iteration, exc)
         return None
     criteria = {name: getattr(response, name) for name in CRITERIA}
     score = round(2 * sum(criteria.values()) / len(criteria), 1)

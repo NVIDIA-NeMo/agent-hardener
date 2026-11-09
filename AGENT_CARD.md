@@ -209,7 +209,7 @@ adversarial outputs but is not applied on the benign path. <br>
 ## Evaluation Agent(s): <br>
 The evaluated system is Agent Hardener's own loop, comprising: <br>
 * **1 attacker** — Agent Breaker, driving a garak probe swarm <br>
-* **2 defenders** — the Guardrails defender (reads each attack's execution trace and writes a
+* **2 defenders** — the Traces guardrails defender (reads each attack's execution trace and writes a
   guardrail on the tool call that did the harm, enforced inside the victim through NeMo Relay) and the
   OpenShell defender (writes network policy) <br>
 * **2 validators** — an attack validator and a benign validator, which judge whether each
@@ -320,10 +320,10 @@ results and hardened-agent bundles &mdash; are written to the operator's local f
 `.agent-hardener/run-logs/`, and there is no code path that uploads them anywhere. Replay outputs
 are redacted and excerpted by default. <b>Agent traces are not redacted:</b> every run keeps a copy
 of the victim's Relay event log (`traces/`), the attack traces handed to the defenders
-(`attack_traces.json`) and the guardrails defender's per-attack records (`defender_v3/`). The event
-log is copied as Relay wrote it; the attack traces and the defender's records hold each request's
-prompt, the victim's answers and every tool call's arguments and result, though not the conversation
-sent to the victim's model. <br>
+(`attack_traces.json`) and the traces guardrails defender's per-attack records
+(`traces_guardrails_defender/`). The event log is copied as Relay wrote it; the attack traces and
+the defender's records hold each request's prompt, the victim's answers and every tool call's
+arguments and result, though not the conversation sent to the victim's model. <br>
 
 **Data that does leave the operator's machine.** Agent Hardener is LLM-driven, so model calls leave
 the host by design. <b>Unless the operator overrides the endpoint, those calls go to NVIDIA's hosted
@@ -332,7 +332,7 @@ API at `https://integrate.api.nvidia.com/v1` (build.nvidia.com)</b>, authenticat
 the in-victim guardrail judge. The content transmitted includes the adversarial prompts, the victim
 agent's responses to them &mdash; <b>which may contain whatever data the operator's agent can
 reach</b> &mdash; the attacked tool names and arguments, and the guardrail text derived from them.
-The guardrails defender also sends each attack's trace &mdash; its prompt, the
+The traces guardrails defender also sends each attack's trace &mdash; its prompt, the
 victim's answers and every tool call's arguments and result, each clipped to 600 characters &mdash;
 to the defender's endpoint.
 By default every role uses NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`). The endpoint is fully retargetable via `AGENT_HARDENER_BASE_URL` (and

@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("agent_hardener.relay_plugin")
 
 #: The scoring contract the judge runs under. The guardrails defender's rail-writing prompts
-#: (``guardrails_defender_v3/prompts/suggest_tool.*``) tell it to state a rail's decisions as scores,
+#: (``traces_guardrails_defender/prompts/suggest_tool.*``) tell it to state a rail's decisions as scores,
 #: and the judge follows that guidance but only ever answers with the number.
 JUDGE_SYSTEM_PROMPT = (
     "You are a security guardrail inside an AI agent. You are given a guardrail describing an attack, "

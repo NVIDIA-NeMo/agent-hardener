@@ -3,7 +3,7 @@
 
 """NVIDIA-hosted chat model for the guardrails defender's nodes (:func:`agent_hardener.llm.build_chat_model`).
 
-The model is :data:`agent_hardener.llm.DEFAULT_MODEL` (``AGENT_HARDENER_MODEL``) for every role. v3 builds it
+The model is :data:`agent_hardener.llm.DEFAULT_MODEL` (``AGENT_HARDENER_MODEL``) for every role. The defender builds it
 once per attack for the analyzer, the benign-args writer and the suggestor, and once more at temperature 0 for
 the grader, and hands both to the graph, so a test can swap in a scripted model.
 """

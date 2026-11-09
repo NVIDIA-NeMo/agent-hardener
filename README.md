@@ -6,7 +6,7 @@ The current main demo protects a NAT research agent running inside an OpenShell 
 
 - Garak-style attack evidence or live Garak attackers.
 - An OpenShell policy defender that creates candidate network policy updates.
-- A guardrails defender that reads each attack's execution trace and writes a NeMo Relay guardrail on the tool call that did the harm.
+- A traces guardrails defender that reads each attack's execution trace and writes a NeMo Relay guardrail on the tool call that did the harm.
 - OpenShell victim-control that applies policy updates, uploads workflow updates, and restarts the victim.
 - Attack and benign validators that prove the defended agent blocks the attacks without breaking normal requests.
 

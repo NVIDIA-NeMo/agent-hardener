@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The whole defender: what a run leaves behind, and how it is chosen over v2."""
+"""The whole defender: what a run leaves behind, and its stable entry point."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 from agent_hardener.agents.defenders import guardrails_defender
-from agent_hardener.agents.defenders.guardrails_defender_v3 import guardrails_defender_agent as agent_module
-from agent_hardener.agents.defenders.guardrails_defender_v3 import summary
-from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import run
-from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import AnalysisResponse, RailResponse
+from agent_hardener.agents.defenders.traces_guardrails_defender import guardrails_defender_agent as agent_module
+from agent_hardener.agents.defenders.traces_guardrails_defender import summary
+from agent_hardener.agents.defenders.traces_guardrails_defender.guardrails_defender_agent import run
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import AnalysisResponse, RailResponse
 from agent_hardener.relay_plugin.config import judge_api_key_env
 
 from .conftest import (
@@ -101,7 +101,7 @@ def test_the_stable_entry_point_runs_the_trace_grounded_defender(tmp_path: Path)
     assert [rail.name for rail in written_rails(tmp_path)] == ["custom_guardrail_1"]
 
 
-def test_the_judge_is_the_defenders_safety_llm_with_the_v2_key_and_threshold(tmp_path: Path) -> None:
+def test_the_judge_is_the_defenders_safety_llm_with_the_shared_key_and_threshold(tmp_path: Path) -> None:
     inp = defender_input(bash_trace(), tmp=tmp_path)
     inp.context["safety_llm"] = "nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
     llm = FakeLLM({AnalysisResponse: [FOUND], RailResponse: [RAIL]})

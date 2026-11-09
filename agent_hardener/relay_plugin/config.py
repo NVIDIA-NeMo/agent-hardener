@@ -123,7 +123,7 @@ def configured_guardrails(document: dict[str, Any]) -> list[dict[str, Any]]:
     Tolerant by design: it reads files the defenders wrote *and* files an operator hand-edited, and
     both the run report and the console renderer call it while a run is in flight. A malformed entry
     is skipped rather than raised on, because the schema check that matters happens where the
-    guardrail is written (:mod:`agent_hardener.agents.defenders.guardrails_defender_v3.nodes.component_writer`)
+    guardrail is written (:mod:`agent_hardener.agents.defenders.traces_guardrails_defender.nodes.component_writer`)
     and again where it is loaded, inside the victim.
     """
     components = document.get("components")

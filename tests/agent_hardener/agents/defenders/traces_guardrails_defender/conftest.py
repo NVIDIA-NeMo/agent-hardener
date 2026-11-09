@@ -12,10 +12,10 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import attack_name
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes import benign_args
-from agent_hardener.agents.defenders.guardrails_defender_v3.observability import ARTIFACTS_DIR_KEY
-from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import (
+from agent_hardener.agents.defenders.traces_guardrails_defender.guardrails_defender_agent import attack_name
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes import benign_args
+from agent_hardener.agents.defenders.traces_guardrails_defender.observability import ARTIFACTS_DIR_KEY
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import (
     AnalysisResponse,
     BenignArgsResponse,
     BenignCallResponse,

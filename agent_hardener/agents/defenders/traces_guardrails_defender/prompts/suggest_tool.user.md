@@ -1,5 +1,5 @@
 ---
-name: guardrails_defender_v3.suggest_tool.user
+name: traces_guardrails_defender.suggest_tool.user
 version: 2
 last_updated: 2026-11-08
 inputs:

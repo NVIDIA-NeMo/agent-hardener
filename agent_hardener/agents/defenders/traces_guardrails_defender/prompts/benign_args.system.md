@@ -1,5 +1,5 @@
 ---
-name: guardrails_defender_v3.benign_args.system
+name: traces_guardrails_defender.benign_args.system
 version: 1
 last_updated: 2026-10-11
 inputs: []

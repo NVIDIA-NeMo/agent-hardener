@@ -1,11 +1,11 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""One table of what the v3 defender did across a run.
+"""One table of what the traces guardrails defender did across a run.
 
-    uv run python -m agent_hardener.agents.defenders.guardrails_defender_v3.summary <run_dir> [--csv out.csv]
+    uv run python -m agent_hardener.agents.defenders.traces_guardrails_defender.summary <run_dir> [--csv out.csv]
 
-Reads every ``outcome.json`` under the directory (a run dir, its ``defender_v3/`` folder, or a parent
+Reads every ``outcome.json`` under the directory (a run dir, its ``traces_guardrails_defender/`` folder, or a parent
 of several runs) and prints one row per attack, plus totals by status and route.
 """
 

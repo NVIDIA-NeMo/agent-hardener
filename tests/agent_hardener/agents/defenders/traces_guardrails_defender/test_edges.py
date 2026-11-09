@@ -12,28 +12,28 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.agents.defenders.guardrails_defender_v3 import llm as llm_module
-from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import run
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.benign_args import benign_args_node
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.component_writer import component_writer_node
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.guardrail_generator import (
+from agent_hardener.agents.defenders.traces_guardrails_defender import llm as llm_module
+from agent_hardener.agents.defenders.traces_guardrails_defender.guardrails_defender_agent import run
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.benign_args import benign_args_node
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.component_writer import component_writer_node
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.guardrail_generator import (
     copied_literal_candidates,
     guardrail_generator_node,
 )
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.prepare import prepare_node
-from agent_hardener.agents.defenders.guardrails_defender_v3.observability import (
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.prepare import prepare_node
+from agent_hardener.agents.defenders.traces_guardrails_defender.observability import (
     Recorder,
     artifacts_dir,
 )
-from agent_hardener.agents.defenders.guardrails_defender_v3.prompting import as_text
-from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import (
+from agent_hardener.agents.defenders.traces_guardrails_defender.prompting import as_text
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import (
     AnalysisResponse,
     BenignArgsResponse,
     BenignCallResponse,
     GradeResponse,
     RailResponse,
 )
-from agent_hardener.agents.defenders.guardrails_defender_v3.state import DefenderState
+from agent_hardener.agents.defenders.traces_guardrails_defender.state import DefenderState
 
 from .conftest import (
     BENIGN,
@@ -139,10 +139,10 @@ def test_the_default_model_serves_every_role_and_grades_at_temperature_zero(
 
 def test_artifacts_go_next_to_the_runs_plugin_config(tmp_path: Path) -> None:
     inp = defender_input(bash_trace(), tmp=tmp_path)
-    del inp.context["defender_v3_artifacts_dir"]
+    del inp.context["traces_guardrails_defender_artifacts_dir"]
     inp.relay_plugins_path = tmp_path / "run" / "victim-active-state" / "plugins.toml"
 
-    assert artifacts_dir(inp, "a") == tmp_path / "run" / "defender_v3" / "round_1" / "a"
+    assert artifacts_dir(inp, "a") == tmp_path / "run" / "traces_guardrails_defender" / "round_1" / "a"
     inp.relay_plugins_path = None
     assert artifacts_dir(inp, "a") is None
 
@@ -154,7 +154,7 @@ def test_recording_never_fails_the_defender(tmp_path: Path) -> None:
     Recorder(blocker / "sub").write("input", {"a": 1})  # mkdir under a file: logged, not raised
     Recorder(None).write("input", {"a": 1})
 
-    with pytest.raises(ValueError, match="unknown defender v3 phase"):
+    with pytest.raises(ValueError, match="unknown traces guardrails defender phase"):
         Recorder(None).write("nope", {})
 
 
@@ -191,6 +191,6 @@ def test_only_string_argument_values_are_literals() -> None:
 def test_the_summary_runs_as_a_module(tmp_path: Path) -> None:
     with pytest.raises(SystemExit) as exit_:
         runpy.run_module(
-            "agent_hardener.agents.defenders.guardrails_defender_v3.summary", run_name="__main__", alter_sys=True
+            "agent_hardener.agents.defenders.traces_guardrails_defender.summary", run_name="__main__", alter_sys=True
         )
     assert exit_.value.code == 2  # argparse: the root argument is required

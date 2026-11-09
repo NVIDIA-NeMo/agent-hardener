@@ -5,7 +5,7 @@
 
 Layout::
 
-    <run_dir>/defender_v3/<round_id>/<attack>/
+    <run_dir>/traces_guardrails_defender/<round_id>/<attack>/
         00_input.json  01_prepare.json  02_vulnerability_analysis.attempt1.json
         03_benign_args.json  04_rail.json  outcome.json  summary.md
 
@@ -33,11 +33,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_hardener.session")
 
-ARTIFACTS_DIRNAME = "defender_v3"
+ARTIFACTS_DIRNAME = "traces_guardrails_defender"
 OUTCOME_FILENAME = "outcome.json"
 SUMMARY_FILENAME = "summary.md"
 #: ``DefenderInput.context`` key that overrides where artifacts go (tests, local smoke runs).
-ARTIFACTS_DIR_KEY = "defender_v3_artifacts_dir"
+ARTIFACTS_DIR_KEY = "traces_guardrails_defender_artifacts_dir"
 
 #: The file each phase writes. ``analyze`` can run twice (a retry when the answer did not match the
 #: trace), so its files always carry an attempt number.
@@ -62,7 +62,7 @@ class Recorder:
     def write(self, phase: str, payload: Any) -> None:
         """Write ``payload`` as the phase's file (``NN_<phase>[.attemptK].json``)."""
         if phase not in PHASE_FILES:
-            msg = f"unknown defender v3 phase {phase!r}"
+            msg = f"unknown traces guardrails defender phase {phase!r}"
             raise ValueError(msg)
         with self._lock:
             attempt = self._attempts.get(phase, 0) + 1
@@ -78,7 +78,7 @@ class Recorder:
             self.directory.mkdir(parents=True, exist_ok=True)
             (self.directory / filename).write_text(text, encoding="utf-8")
         except OSError as exc:
-            logger.warning("defender v3 could not write artifact %s: %s", filename, exc)
+            logger.warning("traces guardrails defender could not write artifact %s: %s", filename, exc)
 
     def node(self, phase: str, fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
         """Wrap a LangGraph node so its state update is recorded as ``phase``."""
@@ -116,7 +116,7 @@ def render_summary(
     grades: list[RailGrade],
 ) -> str:
     """A human-readable walkthrough of one attack: the analysis, every draft and grade, the outcome."""
-    lines = [f"# Defender v3: {outcome.attack}", "", f"**Outcome:** {outcome.status}"]
+    lines = [f"# Traces guardrails defender: {outcome.attack}", "", f"**Outcome:** {outcome.status}"]
     if outcome.guardrail_name:
         lines.append(f"**Guardrail:** `{outcome.guardrail_name}`")
     if outcome.reason:

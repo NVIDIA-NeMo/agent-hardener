@@ -9,7 +9,7 @@ import threading
 import tomllib
 from typing import TYPE_CHECKING
 
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.component_writer import append_guardrail
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.component_writer import append_guardrail
 from agent_hardener.relay_plugin.config import PLUGIN_KIND, GuardrailsComponentConfig
 
 if TYPE_CHECKING:

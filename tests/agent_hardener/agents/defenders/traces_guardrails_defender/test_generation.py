@@ -8,8 +8,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import run
-from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import (
+from agent_hardener.agents.defenders.traces_guardrails_defender.guardrails_defender_agent import run
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import (
     AnalysisResponse,
     BenignArgsResponse,
     GradeResponse,

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""What each phase of the v3 defender produces.
+"""What each phase of the traces guardrails defender produces.
 
 ``*Response`` models are what an LLM is asked to return. They stay flat and string-typed because
 small models fill flat schemas far more reliably than ones with free-form ``dict`` fields. The other

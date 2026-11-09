@@ -1,5 +1,5 @@
 ---
-name: guardrails_defender_v3.grade.system
+name: traces_guardrails_defender.grade.system
 version: 3
 last_updated: 2026-11-08
 inputs: []

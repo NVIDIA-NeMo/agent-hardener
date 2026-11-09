@@ -133,5 +133,5 @@ The price is that the text can match something that is not our policy:
 
 On the attack side such a call counts as blocked; on the benign side, as a false positive. Telling the two apart
 needs OpenShell's deny log, which Agent Hardener does not collect yet (and which is not on the same machine when
-the victim's backend runs elsewhere). In the guardrails defender v3 evaluation runs, no call was classified
+the victim's backend runs elsewhere). In the traces guardrails defender evaluation runs, no call was classified
 `network_denied`.

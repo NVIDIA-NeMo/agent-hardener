@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The v3 defender graph: vulnerability analysis, then rail generation on the route it chose.
+"""The traces guardrails defender graph: vulnerability analysis, then rail generation on the route it chose.
 
 Each step is a node in ``nodes/``:
 

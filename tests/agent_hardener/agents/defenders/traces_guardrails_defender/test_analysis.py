@@ -8,10 +8,10 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import run
-from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.prepare import prepare_node
-from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import AnalysisResponse, RailResponse
-from agent_hardener.agents.defenders.guardrails_defender_v3.state import DefenderState
+from agent_hardener.agents.defenders.traces_guardrails_defender.guardrails_defender_agent import run
+from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.prepare import prepare_node
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import AnalysisResponse, RailResponse
+from agent_hardener.agents.defenders.traces_guardrails_defender.state import DefenderState
 
 from .conftest import (
     INJECTION_ATTACK,

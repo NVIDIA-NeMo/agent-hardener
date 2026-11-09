@@ -85,7 +85,7 @@ def _synthesize(llm: BaseChatModel, tool_name: str, attack_args: Any, requests: 
     try:
         response = llm.with_structured_output(BenignArgsResponse).invoke(prompt)
     except Exception:
-        logger.exception("defender v3 could not write benign calls for %s", tool_name)
+        logger.exception("traces guardrails defender could not write benign calls for %s", tool_name)
         return []
     if not isinstance(response, BenignArgsResponse):
         response = BenignArgsResponse.model_validate(response)
@@ -93,7 +93,11 @@ def _synthesize(llm: BaseChatModel, tool_name: str, attack_args: Any, requests: 
     for call in response.calls:
         args = _parse(call.args_json)
         if args is None or (arg_names and not set(args) <= set(arg_names)):
-            logger.info("defender v3 dropped a benign call for %s with unusable args: %r", tool_name, call.args_json)
+            logger.info(
+                "traces guardrails defender dropped a benign call for %s with unusable args: %r",
+                tool_name,
+                call.args_json,
+            )
             continue
         calls.append(BenignToolCall(tool=tool_name, args=args, request=call.request))
     return calls

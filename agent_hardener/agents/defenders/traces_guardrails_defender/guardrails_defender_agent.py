@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Entry point of the v3 guardrails defender: one attack in, one targeted rail out.
+"""Entry point of the traces guardrails defender: one attack in, one targeted rail out.
 
 Every rail is grounded in the attack's execution trace, so an attack that arrives without one is an
 error, never a silent skip: the victim must run with NeMo Relay, and a replay must load the traces
@@ -47,8 +47,8 @@ def run(
         outcome = Outcome(attack=attack, status="error", reason=NO_TRACE_REASON)
         recorder.write_file(OUTCOME_FILENAME, outcome.model_dump_json(indent=2))
         recorder.write_file(SUMMARY_FILENAME, render_summary(outcome, None, [], []))
-        logger.error("defender v3 %s: %s", attack, NO_TRACE_REASON)
-        return DefenderOutput(ok=False, error_message=f"defender v3 failed: {NO_TRACE_REASON}")
+        logger.error("traces guardrails defender %s: %s", attack, NO_TRACE_REASON)
+        return DefenderOutput(ok=False, error_message=f"traces guardrails defender failed: {NO_TRACE_REASON}")
     if llm is None:
         llm = get_llm()
     if grader is None:
@@ -61,9 +61,9 @@ def run(
         outcome: Outcome = final["outcome"]
         output: DefenderOutput = final["output"]
     except Exception as exc:
-        logger.exception("defender v3 failed on %s", attack)
+        logger.exception("traces guardrails defender failed on %s", attack)
         outcome = Outcome(attack=attack, status="error", reason=f"{type(exc).__name__}: {exc}")
-        output = DefenderOutput(ok=False, error_message=f"defender v3 failed: {outcome.reason}")
+        output = DefenderOutput(ok=False, error_message=f"traces guardrails defender failed: {outcome.reason}")
     recorder.write_file(OUTCOME_FILENAME, outcome.model_dump_json(indent=2))
     recorder.write_file(
         SUMMARY_FILENAME,
@@ -71,7 +71,9 @@ def run(
             outcome, final.get("vulnerability_analysis"), final.get("drafts") or [], final.get("grades") or []
         ),
     )
-    logger.info("defender v3 %s: %s %s", attack, outcome.status, outcome.reason or outcome.guardrail_name or "")
+    logger.info(
+        "traces guardrails defender %s: %s %s", attack, outcome.status, outcome.reason or outcome.guardrail_name or ""
+    )
     return output
 
 

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The LangGraph state of one v3 defender run (one attack)."""
+"""The LangGraph state of one traces guardrails defender run (one attack)."""
 
 from __future__ import annotations
 
