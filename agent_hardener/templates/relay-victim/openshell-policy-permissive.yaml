@@ -16,6 +16,8 @@ filesystem_policy:
   - /proc
   - /dev/urandom
   - /app
+  # Hermes keeps its isolated adapter, managed Python and source checkout here.
+  - /opt
   # Every NeMo Fabric image lives here — the venv, the agent config, the MCP servers — so a
   # platform-packaged victim cannot even start its interpreter without it: Python reads
   # /workspace/.venv/pyvenv.cfg during site initialization and dies with PermissionError.
