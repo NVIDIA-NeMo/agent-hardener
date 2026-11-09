@@ -221,22 +221,20 @@ def _stage_guardrail_plugin(build_root: Path) -> None:
     shutil.copytree(_PLUGIN_SOURCE, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
-#: Hermes reads Relay plugin config from this env var and nowhere else — not from the ``/etc`` path
-#: Relay itself discovers — so the upload destination has to be named to it explicitly. And its Relay
-#: integration is an opt-in plugin: without ``plugins enable`` the env var is read by nobody.
+#: Current Hermes owns the Relay lifecycle in core. Point its explicit user-file override at the
+#: uploaded config; enabling the removed observability/nemo_relay plugin fails the image build.
 _HERMES_WIRING = """
-# --- Agent Hardener: Hermes reads plugin config only from this variable, and Relay is opt-in ---
+# --- Agent Hardener: point Hermes core's Relay lifecycle at the uploaded plugin config ---
 ENV HERMES_NEMO_RELAY_PLUGINS_TOML={destination}
-RUN hermes plugins enable observability/nemo_relay
 """
 
 
 def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
-    """Point Hermes at the uploaded plugin config and turn its Relay plugin on.
+    """Point Hermes core's Relay lifecycle at the uploaded plugin config.
 
     Only for ``harness: hermes``. Every other harness lets Relay discover ``/etc/nemo-relay`` on its
-    own; Hermes does not look there, so without these two lines the guardrails are uploaded, parsed
-    by nobody, and the victim answers every attack while the run reports a clean install.
+    own. This explicit override ensures Hermes loads the exact uploaded guardrails without invoking
+    the removed legacy plugin command or requiring the Hermes CLI during the image build.
 
     The agent config must also omit its ``telemetry:`` block — the Fabric adapter pops and overwrites
     this variable whenever Relay telemetry is declared. That half cannot be enforced from here; the

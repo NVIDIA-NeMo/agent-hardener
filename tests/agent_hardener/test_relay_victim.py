@@ -688,7 +688,7 @@ def test_stage_strips_buildkit_only_cache_mounts(tmp_path: Path) -> None:
 
 
 def test_hermes_gets_its_extra_wiring_and_others_do_not(tmp_path: Path) -> None:
-    """Hermes reads plugin config only from its own env var, and its Relay plugin is opt-in.
+    """Hermes core reads the uploaded Relay config without enabling a removed plugin.
 
     Every other harness lets Relay discover /etc/nemo-relay on its own, so staging these lines for
     them would enable a plugin nobody asked for.
@@ -705,7 +705,7 @@ def test_hermes_gets_its_extra_wiring_and_others_do_not(tmp_path: Path) -> None:
 
     hermes = staged("hermes")
     assert "HERMES_NEMO_RELAY_PLUGINS_TOML=/etc/nemo-relay/plugins.toml" in hermes
-    assert "hermes plugins enable observability/nemo_relay" in hermes
+    assert "hermes plugins enable" not in hermes
 
     assert "HERMES_NEMO_RELAY" not in staged("deepagents")
     assert "HERMES_NEMO_RELAY" not in staged(None)
