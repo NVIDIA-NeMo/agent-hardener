@@ -11,6 +11,8 @@ cases are synthetic: no captured stream contains them yet.
 from __future__ import annotations
 
 import json
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import Mock
@@ -188,6 +190,29 @@ def test_a_shorter_stream_rotates_the_old_generation(tmp_path: Path) -> None:
     host.write_text(host.read_text(encoding="utf-8")[:10], encoding="utf-8")  # second reset
     provider.get_traces()
     assert (raw_dir / "events.2.atof.jsonl").is_file()
+
+
+def test_concurrent_calls_take_turns_and_rotate_nothing(tmp_path: Path) -> None:
+    """The attack and benign validators call one provider from two threads at once."""
+    host = tmp_path / RAW_FILENAME
+    stream = REAL_STREAM.read_text(encoding="utf-8")
+    inside, overlaps = [0], []
+    guard = threading.Lock()
+
+    def sync() -> None:
+        with guard:
+            inside[0] += 1
+            overlaps.append(inside[0])
+        host.write_text(stream, encoding="utf-8")
+        with guard:
+            inside[0] -= 1
+
+    provider = RelayTraceProvider(host, sync, tmp_path / "traces")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        counts = list(pool.map(lambda _: len(provider.get_traces()), range(16)))
+    assert counts == [6] * 16
+    assert max(overlaps) == 1
+    assert not list((tmp_path / "traces").glob("events.*.atof.jsonl"))
 
 
 def test_a_failing_sync_or_quarantined_stream_still_returns_traces(tmp_path: Path, caplog) -> None:

@@ -13,12 +13,17 @@ append-only, so each copy is a superset of the last and overwriting it loses not
 recreate starts a fresh, shorter file: the previous copy is then kept as ``events.<n>.atof.jsonl``
 before the new one is written, and traces are read from every kept generation, so history and every
 recorded ``trace_id`` survive the recreate.
+
+The attack and benign validators run concurrently and each reads traces from its own worker thread, so
+one provider serves overlapping calls: a lock makes each fetch, save and read whole, so one call never
+reads (and rotates) a copy another is still writing.
 """
 
 from __future__ import annotations
 
 import logging
 import re
+import threading
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -55,18 +60,20 @@ class RelayTraceProvider(TraceProvider):
         self._sync = sync
         self._raw_dir = raw_dir
         self._warned_quarantine = False
+        self._lock = threading.Lock()
 
     def get_traces(self) -> list[AgentTrace]:
-        try:
-            self._sync()
-        except Exception:
-            logger.warning("could not fetch the victim's ATOF stream", exc_info=True)
-        saved = self._save_raw()
-        sources = self._generations() if saved else [*self._generations()[:-1], self._atof_path]
-        by_id: dict[str, AgentTrace] = {}
-        for path in sources:  # oldest first, so a later generation's copy of a trace wins
-            for trace in self._read(path):
-                by_id[trace.trace_id] = trace
+        with self._lock:
+            try:
+                self._sync()
+            except Exception:
+                logger.warning("could not fetch the victim's ATOF stream", exc_info=True)
+            saved = self._save_raw()
+            sources = self._generations() if saved else [*self._generations()[:-1], self._atof_path]
+            by_id: dict[str, AgentTrace] = {}
+            for path in sources:  # oldest first, so a later generation's copy of a trace wins
+                for trace in self._read(path):
+                    by_id[trace.trace_id] = trace
         return sorted(by_id.values(), key=lambda trace: trace.started_at)
 
     def _save_raw(self) -> bool:
