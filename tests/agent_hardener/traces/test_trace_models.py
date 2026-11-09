@@ -21,7 +21,7 @@ def _trace() -> AgentTrace:
         started_at=T0,
         ended_at=T0,
         steps=[
-            LlmCall(messages=[{"role": "user", "content": "Use the transfer_funds tool"}], output=""),
+            LlmCall(output=""),
             ToolCall(
                 name="transfer_funds",
                 args={"amount": 900},
@@ -67,3 +67,8 @@ def test_fake_provider_counts_calls_and_releases_batches() -> None:
     assert provider.get_traces() == [first, second]
     assert provider.calls == 3
     assert FakeTraceProvider().get_traces() == []
+
+
+def test_a_trace_recorded_with_messages_still_loads_without_them() -> None:
+    old = {"kind": "llm_call", "messages": [{"role": "user", "content": "secret"}], "output": "done"}
+    assert LlmCall.model_validate(old).model_dump() == {"kind": "llm_call", "output": "done"}

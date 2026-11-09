@@ -49,7 +49,7 @@ def test_one_trace_per_request_with_its_own_prompt_calls_and_answer() -> None:
     assert "transfer of **$900**" in transfer.output
     assert transfer.started_at < transfer.ended_at
     assert [step.kind for step in transfer.steps] == ["llm_call", "tool_call", "llm_call"]
-    assert transfer.llm_calls[0].messages[1] == {"content": transfer.input, "role": "user"}
+    assert "messages" not in transfer.llm_calls[0].model_dump()  # the conversation is not kept
 
 
 def test_a_request_with_no_tool_call_still_has_a_trace() -> None:

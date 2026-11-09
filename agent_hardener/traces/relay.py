@@ -181,13 +181,12 @@ def _trace(
         step_start, step_end = starts[uuid], ends[uuid]
         category = step_start.get("category")
         if category == "llm":
-            messages = _profile(step_start, "annotated_request").get("messages")
-            messages = messages if isinstance(messages, list) else []
-            if first_messages is None:
-                first_messages = messages
+            if first_messages is None:  # only to recover the prompt of a request scope that recorded none
+                messages = _profile(step_start, "annotated_request").get("messages")
+                first_messages = messages if isinstance(messages, list) else []
             output = _profile(step_end, "annotated_response").get("message")
             latched = latched or is_blocked_response(_profile(step_end, "annotated_response") or step_end.get("data"))
-            steps.append(LlmCall(messages=messages, output=output if isinstance(output, str) else ""))
+            steps.append(LlmCall(output=output if isinstance(output, str) else ""))
         elif category == "tool":
             result, failed = _tool_result(step_end.get("data"))
             outcome, rail = classify_tool_call(result, atof.succeeded(step_end) and not failed)

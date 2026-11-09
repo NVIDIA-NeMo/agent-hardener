@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Annotated, Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from agent_hardener.models.base import AgentHardenerModel
 
@@ -22,11 +22,22 @@ ToolOutcome = Literal["ok", "error", "guardrail_refused", "network_denied"]
 
 
 class LlmCall(AgentHardenerModel):
-    """One model call inside the request."""
+    """One model call inside the request: only its answer.
+
+    The prompt it was sent (the whole conversation so far) is deliberately not kept. Nothing reads it,
+    and it would put the victim's full conversation, unredacted, into every saved trace.
+    """
 
     kind: Literal["llm_call"] = "llm_call"
-    messages: list[dict[str, Any]] = Field(default_factory=list)
     output: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_recorded_messages(cls, data: Any) -> Any:
+        """Traces recorded before ``messages`` was dropped still load (without it)."""
+        if isinstance(data, dict) and "messages" in data:
+            return {key: value for key, value in data.items() if key != "messages"}
+        return data
 
 
 class ToolCall(AgentHardenerModel):
