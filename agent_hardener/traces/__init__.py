@@ -11,7 +11,7 @@ themselves live in :mod:`agent_hardener.models.traces`, because the core contrac
 from __future__ import annotations
 
 from agent_hardener.models.traces import AgentTrace, LlmCall, ToolCall, ToolOutcome, TraceStep
-from agent_hardener.traces.factory import build_trace_provider, uses_traces
+from agent_hardener.traces.factory import build_trace_provider
 from agent_hardener.traces.matching import find_attack_trace, find_benign_traces, trace_clock, traces_since
 from agent_hardener.traces.provider import TraceProvider
 from agent_hardener.traces.render import render_trace
@@ -31,5 +31,4 @@ __all__ = [
     "render_trace",
     "trace_clock",
     "traces_since",
-    "uses_traces",
 ]

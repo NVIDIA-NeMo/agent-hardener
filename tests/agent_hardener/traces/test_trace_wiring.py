@@ -53,12 +53,10 @@ def _config(tmp_path: Path) -> SessionConfig:
         storage=StorageConfig(root_dir=tmp_path),
         run=RunSettings(rounds=1),
         target=TargetInput(name="target", base_url="http://target.local"),
-        attackers=[AgentConfig(name="attacker", role="attacker", config={"use_traces": True})],
+        attackers=[AgentConfig(name="attacker", role="attacker")],
         victim=AgentConfig(name="victim", role="victim"),
-        attack_validators=[
-            AgentConfig(name="attack-on", role="validator", config={"kind": "attack", "use_traces": True})
-        ],
-        benign_validators=[AgentConfig(name="benign-off", role="validator", config={"kind": "benign"})],
+        attack_validators=[AgentConfig(name="attack", role="validator", config={"kind": "attack"})],
+        benign_validators=[AgentConfig(name="benign", role="validator", config={"kind": "benign"})],
     )
 
 
@@ -75,19 +73,17 @@ def test_without_a_provider_no_agent_gets_one(tmp_path: Path) -> None:
     assert set(adapter.providers.values()) == {None}
 
 
-def test_only_agents_with_use_traces_get_the_provider(tmp_path: Path) -> None:
+def test_every_agent_gets_the_provider(tmp_path: Path) -> None:
     provider = FakeTraceProvider()
     adapter, success = _run(tmp_path, provider)
     assert success
-    assert adapter.providers == {"attacker": provider, "victim": None, "attack-on": provider, "benign-off": None}
+    assert adapter.providers == {"attacker": provider, "victim": provider, "attack": provider, "benign": provider}
 
 
-def _mission(tmp_path: Path, provider: str, relay_victim: object) -> Mission:
+def _mission(tmp_path: Path, relay_victim: object) -> Mission:
     mission = Mission.__new__(Mission)
     mission.ctx = SimpleNamespace(
-        session_config=SimpleNamespace(
-            traces=TracesConfig(provider=provider), storage=SimpleNamespace(root_dir=tmp_path)
-        )
+        session_config=SimpleNamespace(traces=TracesConfig(), storage=SimpleNamespace(root_dir=tmp_path))
     )
     mission._run_id = "run-1"
     mission._base_config = SimpleNamespace(relay_victim=relay_victim, cwd=tmp_path)
@@ -95,14 +91,12 @@ def _mission(tmp_path: Path, provider: str, relay_victim: object) -> Mission:
     return mission
 
 
-def test_runner_builds_no_provider_and_no_traces_dir_when_off(tmp_path: Path) -> None:
-    assert _mission(tmp_path, "none", object())._build_trace_provider() is None
-    assert not list(tmp_path.rglob("traces"))
-
-
 def test_runner_builds_the_relay_provider_for_a_relay_victim(tmp_path: Path) -> None:
     spec = SimpleNamespace(atof_path=tmp_path / "artifacts" / "events.atof.jsonl")
-    provider = _mission(tmp_path, "relay", spec)._build_trace_provider()
+    provider = _mission(tmp_path, spec)._build_trace_provider()
     assert isinstance(provider, RelayTraceProvider)
     assert (tmp_path / "run-logs" / "run-1" / "traces").is_dir()
-    assert _mission(tmp_path, "relay", None)._build_trace_provider() is None
+
+
+def test_runner_builds_no_provider_for_a_plain_http_target(tmp_path: Path) -> None:
+    assert _mission(tmp_path, None)._build_trace_provider() is None

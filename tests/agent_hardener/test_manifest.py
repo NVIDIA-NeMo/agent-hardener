@@ -248,16 +248,13 @@ def test_expand_guardrails_opt_in() -> None:
     assert config.defenders[1].config["target_tool"] == "transfer_funds"
 
 
-def test_the_guardrails_defender_runs_v2_unless_the_flag_selects_v3() -> None:
-    default = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT).defenders[1]
-    v3 = expand(
-        AgentManifest.model_validate({**AGENT, "defenders": {"guardrails_version": "v3"}}), base_dir=REPO_ROOT
-    ).defenders[1]
+def test_the_guardrails_defender_has_one_entry_point_and_no_version_flag() -> None:
+    defender = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT).defenders[1]
 
-    assert default.implementation == v3.implementation == "agent_hardener.agents.defenders.guardrails_defender:run"
-    assert default.config == {"guardrails_version": "v2"}
-    # v3 reads the attack's trace, so it asks the defenders manager for it.
-    assert v3.config == {"guardrails_version": "v3", "use_traces": True}
+    assert defender.implementation == "agent_hardener.agents.defenders.guardrails_defender:run"
+    assert defender.config == {}
+    with pytest.raises(ValueError, match="guardrails_version"):
+        AgentManifest.model_validate({**AGENT, "defenders": {"guardrails_version": "v3"}})
 
 
 def test_overrides_deep_merge() -> None:

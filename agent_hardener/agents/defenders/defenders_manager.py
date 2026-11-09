@@ -83,7 +83,7 @@ def _build_policy_patches(
 ) -> list[dict[str, Any]]:
     """Build the correct patch structure based on the defender result type.
 
-    For relay_guardrail_component results (guardrails_defender_v2), the component writer has already
+    For relay_guardrail_component results (the guardrails defender), the component writer has already
     written the extended guardrail set to relay_plugins_path (the active-state copy). We need a
     victim_workflow_candidate patch so the adapter copies it to the deploy target and restarts.
 
@@ -188,7 +188,7 @@ class DefendersManager:
                         relay_plugins_path=relay_plugins_path,
                         feedback=validation_feedback.get(defender.agent_id) if validation_feedback else None,
                         relay_victim_spec=input_data.relay_victim_spec,
-                        attack_trace=attack_trace if defender.config.get("use_traces") else None,
+                        attack_trace=attack_trace,
                     )
                     task_meta.append((defender, inp))
 

@@ -3,15 +3,15 @@
 
 # Validators: trace statuses and reports
 
-The attack validator (`garak_attack_replay.py`) and the smart benign validator (`smart_benign/`) can inspect
+The attack validator (`garak_attack_replay.py`) and the smart benign validator (`smart_benign/`) inspect
 the victim's trace of each replay. This page says how a trace changes their statuses and how each report is
-computed. Without traces both validators behave exactly as before, and none of the trace fields below exist.
+computed. When there are no traces to read (a plain HTTP target with no relay-victim block, or the trace step
+failed), both validators report what the replay alone said, and none of the trace fields below exist.
 
 ## Garak attack replay validator
 
-With traces on (`traces.provider: relay`) and `use_traces: true` in this validator's config, every replayed
-hit is matched to the victim's trace of that replay, and the result gets `tool_facts`: whether the target
-tool was called, whether it ran, and what stopped it.
+Every replayed hit is matched to the victim's trace of that replay, and the result gets `tool_facts`: whether
+the target tool was called, whether it ran, and what stopped it.
 
 The trace changes the outcome only for a direct hit the garak detector judged a success (`not_blocked`) whose
 target tool is known. The detector's `verdict` is never overwritten; the trace's status goes in
@@ -69,9 +69,8 @@ Without traces every one of these fields is absent, and the report is exactly th
 
 ## Smart benign validator
 
-With traces on (`traces.provider: relay`) and `use_traces: true` in this validator's config, every replayed
-benign request is matched to the victim's trace of that replay, and the row gets `tool_facts`: whether the
-request's tool was called, whether it ran, and what stopped any call that did not.
+Every replayed benign request is matched to the victim's trace of that replay, and the row gets `tool_facts`:
+whether the request's tool was called, whether it ran, and what stopped any call that did not.
 
 The trace explains only the rows the judge saw refused. The judge's `verdict` (`complied`, `refused` or
 `error`) is never overwritten; the explanation goes in `trace_verdict.status`. First matching row wins:

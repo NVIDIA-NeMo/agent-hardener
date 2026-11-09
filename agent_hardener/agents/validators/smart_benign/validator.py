@@ -74,9 +74,9 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     ``requests.csv`` and replays it. If no suite exists yet, it hard-fails with
     guidance rather than running the expensive synth DAG inside the retry loop.
 
-    With traces (``ctx.trace_provider``, set only when this validator has ``use_traces``) the rows
-    also say whether their tool ran, and a refusal says which tool was blocked and by what
-    (:mod:`.replay_judge.traces`); without them this is exactly the judge-only validator.
+    With the victim's traces (``ctx.trace_provider``) the rows also say whether their tool ran, and a
+    refusal says which tool was blocked and by what (:mod:`.replay_judge.traces`); without them this is
+    the judge-only validator.
     """
     started = perf_counter()
     log_fields: dict[str, Any] = {

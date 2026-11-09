@@ -37,7 +37,7 @@ defenders:
     network policy YAML.
   config: {}
 - name: defender-guardrails
-  implementation: agent_hardener.agents.defenders.guardrails_defender_v2.guardrails_defender_agent:run
+  implementation: agent_hardener.agents.defenders.guardrails_defender:run
   timeout_seconds: 30
   capabilities: Mitigates prompt injection and unsafe tool use via LLM-generated guardrail
     rules.

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""``run --replay [--with-traces [PATH]]``: replaying hits without traces, or with recorded ones."""
+"""``run --replay [--with-traces PATH]``: a replay always loads the attack traces recorded with its hits."""
 
 from __future__ import annotations
 
@@ -79,17 +79,13 @@ def captured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[SessionCon
     return configs
 
 
-def test_replay_without_traces_is_unchanged(tmp_path: Path, captured: list[SessionConfig]) -> None:
-    hitlog = _hitlog(tmp_path / "round_1")
-    _write_recording(tmp_path / "round_1" / ATTACK_TRACES_FILENAME)
-    assert runner.invoke(app, ["run", "--replay", str(hitlog)]).exit_code == 0
-    assert captured[0].preloaded_attacks[0].traces_path is None
-
-
-def test_bare_with_traces_loads_the_recording_next_to_the_hitlog(tmp_path: Path, captured: list[SessionConfig]) -> None:
+@pytest.mark.parametrize("flag", [[], ["--with-traces"]])  # the bare flag is the default, kept so old commands parse
+def test_a_replay_loads_the_recording_next_to_the_hitlog(
+    tmp_path: Path, captured: list[SessionConfig], flag: list[str]
+) -> None:
     hitlog = _hitlog(tmp_path / "round_1")
     recording = _write_recording(tmp_path / "round_1" / ATTACK_TRACES_FILENAME)
-    result = runner.invoke(app, ["run", "--replay", str(hitlog), "--with-traces"])
+    result = runner.invoke(app, ["run", "--replay", str(hitlog), *flag])
     assert result.exit_code == 0, result.output
     assert captured[0].preloaded_attacks[0].traces_path == recording.resolve()
 
@@ -107,12 +103,15 @@ def test_with_traces_path_wins_over_the_saved_recording(tmp_path: Path, captured
     ("args", "message"),
     [
         (["--with-traces"], "--with-traces needs --replay"),
+        (["--replay", "{hitlog}"], "Attack traces not found"),
         (["--replay", "{hitlog}", "--with-traces"], "Attack traces not found"),
         (["--replay", "{hitlog}", "--with-traces", "{missing}"], "Attack traces not found"),
         (["--replay", "{hitlog}", "--with-traces", "{invalid}"], "Not a valid attack traces file"),
     ],
 )
-def test_with_traces_fails_fast(tmp_path: Path, captured: list[SessionConfig], args: list[str], message: str) -> None:
+def test_a_replay_without_valid_traces_fails_fast(
+    tmp_path: Path, captured: list[SessionConfig], args: list[str], message: str
+) -> None:
     hitlog = _hitlog(tmp_path / "round_1")
     invalid = tmp_path / "invalid.json"
     invalid.write_text('[{"prompt": "p"}]', encoding="utf-8")
@@ -153,7 +152,6 @@ def _replay_round(tmp_path: Path, traces_path: Path | None) -> list[DefenderInpu
                 role="defender",
                 capabilities="guards tool calls",
                 implementation="replay_capture_defender:run",
-                config={"use_traces": True},
             )
         ],
         victim=AgentConfig(name="victim", role="victim"),

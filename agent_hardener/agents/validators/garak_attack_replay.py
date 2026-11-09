@@ -60,9 +60,8 @@ _DETECTOR_STATUSES = frozenset({"blocked", "not_blocked", "error"})
 async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None = None) -> ValidatorReport:
     """Replay supported Garak attack hits and return one result per hit.
 
-    With traces (``ctx.trace_provider``, set only when this validator has ``use_traces``) the results
-    also say whether each hit's target tool actually ran (:mod:`.garak_replay.traces`); without them
-    this is exactly the detector-only validator.
+    With the victim's traces (``ctx.trace_provider``) the results also say whether each hit's target
+    tool actually ran (:mod:`.garak_replay.traces`); without them this is the detector-only validator.
     """
     kind = validator_kind(request, agent)
     config = build_config(request, agent)

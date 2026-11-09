@@ -72,8 +72,8 @@ class Orchestrator:
         trace_provider: TraceProvider | None = None,
     ) -> None:
         self.config = config
-        # Set when the global ``traces`` flag is on. Recording depends only on this; whether an agent
-        # consumes traces is decided per agent (``uses_traces``) when it is invoked.
+        # The victim's traces: recorded for every round's attacks, and handed to every agent invoked
+        # (an agent that does not read them ignores them). ``None`` only for a plain HTTP target.
         self.trace_provider = trace_provider
         # Called once, after the first round's attacks. Deliberately a hook rather than logic here:
         # proving tool calls reach Relay needs the victim's telemetry, which only the runner can pull

@@ -89,6 +89,8 @@ def test_run_replay_resolves_latest_hitlog_from_run_logs(tmp_path: Path, monkeyp
     hitlog = tmp_path / "run-logs" / "run-abc" / "round_1" / "garak" / "agent-breaker.uuid.hitlog.jsonl"
     hitlog.parent.mkdir(parents=True)
     hitlog.write_text("{}\n", encoding="utf-8")
+    recorded = hitlog.parent.parent / "attack_traces.json"  # written by the run, next to its round's hitlog
+    recorded.write_text("[]\n", encoding="utf-8")
     captured = _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
 
     result = runner.invoke(app, ["run", "--replay"])
@@ -96,7 +98,22 @@ def test_run_replay_resolves_latest_hitlog_from_run_logs(tmp_path: Path, monkeyp
     assert result.exit_code == 0
     (config,) = captured
     assert config.attackers == []
-    assert [attack.path for attack in config.preloaded_attacks] == [hitlog.resolve()]
+    assert [(attack.path, attack.traces_path) for attack in config.preloaded_attacks] == [
+        (hitlog.resolve(), recorded.resolve())
+    ]
+
+
+def test_run_replay_without_recorded_traces_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The guardrails defender cannot write a rail without each attack's trace."""
+    hitlog = tmp_path / "round_1" / "garak" / "old.hitlog.jsonl"
+    hitlog.parent.mkdir(parents=True)
+    hitlog.write_text("{}\n", encoding="utf-8")
+    _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
+
+    result = runner.invoke(app, ["run", "--replay", str(hitlog)])
+
+    assert result.exit_code == 1
+    assert "Attack traces not found" in result.output
 
 
 def test_run_victim_image_reaches_the_sandbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -138,9 +155,11 @@ def test_run_replay_fails_without_hitlog(tmp_path: Path, monkeypatch: pytest.Mon
 def test_run_replay_with_explicit_hitlog_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     hitlog = tmp_path / "uploaded.hitlog.jsonl"
     hitlog.write_text("{}\n", encoding="utf-8")
+    traces = tmp_path / "uploaded.traces.json"
+    traces.write_text("[]\n", encoding="utf-8")
     captured = _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
 
-    result = runner.invoke(app, ["run", "--replay", str(hitlog)])
+    result = runner.invoke(app, ["run", "--replay", str(hitlog), "--with-traces", str(traces)])
 
     assert result.exit_code == 0
     (config,) = captured

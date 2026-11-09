@@ -1,7 +1,12 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Entry point of the v3 guardrails defender: one attack in, one targeted rail out."""
+"""Entry point of the v3 guardrails defender: one attack in, one targeted rail out.
+
+Every rail is grounded in the attack's execution trace, so an attack that arrives without one is an
+error, never a silent skip: the victim must run with NeMo Relay, and a replay must load the traces
+recorded with its hitlog.
+"""
 
 from __future__ import annotations
 
@@ -24,6 +29,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("agent_hardener.session")
 
+#: Why an attack without an execution trace gets no rail.
+NO_TRACE_REASON = (
+    "no execution trace for this attack: the victim must be instrumented with NeMo Relay, and a replay "
+    "must load the attack traces recorded with its hitlog"
+)
+
 
 def run(
     defender_input: DefenderInput, llm: BaseChatModel | None = None, grader: BaseChatModel | None = None
@@ -32,6 +43,12 @@ def run(
     attack = attack_name(defender_input)
     recorder = Recorder(artifacts_dir(defender_input, attack))
     recorder.write("input", _input_record(defender_input))
+    if defender_input.attack_trace is None:
+        outcome = Outcome(attack=attack, status="error", reason=NO_TRACE_REASON)
+        recorder.write_file(OUTCOME_FILENAME, outcome.model_dump_json(indent=2))
+        recorder.write_file(SUMMARY_FILENAME, render_summary(outcome, None, [], []))
+        logger.error("defender v3 %s: %s", attack, NO_TRACE_REASON)
+        return DefenderOutput(ok=False, error_message=f"defender v3 failed: {NO_TRACE_REASON}")
     if llm is None:
         llm = get_llm()
     if grader is None:

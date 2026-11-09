@@ -3,9 +3,9 @@
 
 """Append the rail to the run's NeMo Relay plugin config.
 
-The same file format, naming, judge model and threshold as the v2 component writer
-(:mod:`agent_hardener.agents.defenders.guardrails_defender_v2.nodes.component_writer`), with the target
-tool taken from the grounded analysis instead of the attack prompt.
+One component entry of kind :data:`~agent_hardener.relay_plugin.config.PLUGIN_KIND` holds every rail
+(``custom_guardrail_N``), each guarding the tool the grounded analysis chose, judged by the defender's
+safety model at the shared threshold.
 """
 
 from __future__ import annotations
@@ -86,7 +86,7 @@ def append_guardrail(
     """Add one ``custom_guardrail_N`` entry guarding ``tool`` and return its name and the rendered file.
 
     ``judge_model`` (the defender's ``safety_llm``) is the in-victim judge, written only when the file has
-    no judge model yet; ``None`` means :data:`agent_hardener.llm.DEFAULT_MODEL`, as for v2.
+    no judge model yet; ``None`` means :data:`agent_hardener.llm.DEFAULT_MODEL`.
     """
     with _PLUGINS_LOCK:
         document = _load(target)

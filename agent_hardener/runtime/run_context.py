@@ -27,6 +27,6 @@ class RunContext:
     """
 
     emit_progress: Callable[[str, int | None, int | None], None] = field(default=_noop_progress)
-    #: The victim's traces, set only for an agent that consumes them (global ``traces`` on and the
-    #: agent's own ``use_traces``). ``None`` means "run without traces".
+    #: The victim's traces. ``None`` only for a plain HTTP target with no relay-victim block, where
+    #: there is nothing to read; consumers then run without them.
     trace_provider: TraceProvider | None = None

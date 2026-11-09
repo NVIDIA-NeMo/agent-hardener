@@ -29,8 +29,9 @@ def prepare_node(state: DefenderState) -> dict[str, Any]:
     and a rail in front of that tool stops the attempt the next time it is made.
     """
     trace = state.input.attack_trace
-    if trace is None:
-        return {"rendered_trace": "", "candidates": []}
+    if trace is None:  # unreachable: the entry point fails an attack that has no trace
+        msg = "prepare_node needs the attack's trace"
+        raise ValueError(msg)
     candidates = [
         CandidateCall(step=index, tool_name=step.name, args=step.args, outcome=step.outcome)
         for index, step in enumerate(trace.steps, start=1)

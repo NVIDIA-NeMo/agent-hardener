@@ -20,6 +20,7 @@ from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.guardrail_gene
     copied_literal_candidates,
     guardrail_generator_node,
 )
+from agent_hardener.agents.defenders.guardrails_defender_v3.nodes.prepare import prepare_node
 from agent_hardener.agents.defenders.guardrails_defender_v3.observability import (
     Recorder,
     artifacts_dir,
@@ -178,6 +179,9 @@ def test_a_node_reached_without_a_tool_analysis_fails_loudly(tmp_path: Path) -> 
         guardrail_generator_node(state, llm=llm, grader=llm)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="needs a rail"):
         component_writer_node(state)
+    untraced = DefenderState(input=defender_input(None, tmp=tmp_path), attack="a")
+    with pytest.raises(ValueError, match="needs the attack's trace"):
+        prepare_node(untraced)
 
 
 def test_only_string_argument_values_are_literals() -> None:

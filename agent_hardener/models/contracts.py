@@ -77,7 +77,7 @@ class DefenderInput(AgentHardenerModel):
     # The run's victim_control.config["relay_victim"] spec (agent_env/egress/backends), so extraction
     # can treat the agent's own required endpoints as ground-truth benign.
     relay_victim_spec: RelayVictimSpec | None = None
-    #: The trace of the attempt behind this attack, set only for a defender with ``use_traces``.
+    #: The trace of the attempt behind this attack; ``None`` when none was recorded for it.
     attack_trace: AgentTrace | None = None
 
 

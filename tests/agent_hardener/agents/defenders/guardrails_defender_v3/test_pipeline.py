@@ -7,10 +7,10 @@ from __future__ import annotations
 
 import tomllib
 from typing import TYPE_CHECKING
-
-import pytest
+from unittest.mock import patch
 
 from agent_hardener.agents.defenders import guardrails_defender
+from agent_hardener.agents.defenders.guardrails_defender_v3 import guardrails_defender_agent as agent_module
 from agent_hardener.agents.defenders.guardrails_defender_v3 import summary
 from agent_hardener.agents.defenders.guardrails_defender_v3.guardrails_defender_agent import run
 from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import AnalysisResponse, RailResponse
@@ -30,6 +30,8 @@ from .conftest import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    import pytest
 
 FOUND = found(2, "bash_executor", ["command"])
 
@@ -88,12 +90,15 @@ def test_the_summary_has_one_row_per_attack(tmp_path: Path, capsys: pytest.Captu
     assert summary.main([str(tmp_path / "nothing")]) == 1
 
 
-def test_an_unknown_version_is_an_error(tmp_path: Path) -> None:
+def test_the_stable_entry_point_runs_the_trace_grounded_defender(tmp_path: Path) -> None:
     inp = defender_input(bash_trace(), tmp=tmp_path)
-    inp.context[guardrails_defender.GUARDRAILS_VERSION_KEY] = "v9"
+    llm = FakeLLM({AnalysisResponse: [FOUND], RailResponse: [RAIL]})
 
-    with pytest.raises(ValueError, match="unknown guardrails_version 'v9'"):
-        guardrails_defender.run(inp)
+    with patch.object(agent_module, "get_llm", return_value=llm):
+        output = guardrails_defender.run(inp)
+
+    assert output.ok
+    assert [rail.name for rail in written_rails(tmp_path)] == ["custom_guardrail_1"]
 
 
 def test_the_judge_is_the_defenders_safety_llm_with_the_v2_key_and_threshold(tmp_path: Path) -> None:

@@ -1,13 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The piece both validators share for their optional trace step.
+"""The piece both validators share for their trace step.
 
-Each validator stays one module with one ``run``: it replays exactly as without traces, and only when
-``ctx.trace_provider`` is set (global ``traces`` on and the validator's own ``use_traces``) does it
-continue into its trace section. That section only adds ``tool_facts`` / ``trace_verdict`` to the
-results; it never overwrites ``verdict``. Reports count :func:`final_status`, which falls back to the
-replay's own status, so a run without traces reports exactly what it did before.
+Each validator stays one module with one ``run``: it replays first, then continues into its trace
+section whenever ``ctx.trace_provider`` is set (always, except for a plain HTTP target with no
+relay-victim block). That section only adds ``tool_facts`` / ``trace_verdict`` to the results; it never
+overwrites ``verdict``. Reports count :func:`final_status`, which falls back to the replay's own status,
+so a result with no trace, or a trace step that failed, reports what the replay alone said.
 """
 
 from __future__ import annotations

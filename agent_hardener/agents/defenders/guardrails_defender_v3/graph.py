@@ -3,7 +3,7 @@
 
 """The v3 defender graph: vulnerability analysis, then rail generation on the route it chose.
 
-Each step is a node in ``nodes/``, as in v2:
+Each step is a node in ``nodes/``:
 
 - ``prepare`` renders the trace and lists the completed tool calls.
 - ``vulnerability_analyzer`` grounds the harmful call in the trace (an answer that does not match it is asked again

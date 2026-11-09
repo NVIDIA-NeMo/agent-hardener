@@ -46,14 +46,15 @@ class RunSettings(AgentHardenerModel):
 
 
 class TracesConfig(AgentHardenerModel):
-    """Whether the run collects the victim's execution traces, and from which backend.
+    """Which backend the victim's execution traces come from.
 
-    Independent of the per-component ``use_traces`` flags (in each agent's ``config``): turning this
-    on collects and records traces even when no component consumes them, and a component flag has no
-    effect while this is off.
+    Traces are always on: the guardrails defender grounds every rail in an attack's trace, and the
+    validators read the replay traces. ``relay`` (NeMo Relay's ATOF log, which every victim already
+    writes) is the only backend so far; another is one more name here and one ``case`` in
+    :func:`agent_hardener.traces.factory.build_trace_provider`.
     """
 
-    provider: Literal["none", "relay"] = "none"
+    provider: Literal["relay"] = "relay"
 
 
 class SessionConfig(AgentHardenerModel):

@@ -33,9 +33,9 @@ TRACES_SAVED = "__saved__"
 class ReplayCommand(TyperCommand):
     """Make ``--replay`` and ``--with-traces`` accept an optional value.
 
-    Bare ``--replay`` replays the latest hitlog; ``--replay PATH`` replays that specific file. Bare
-    ``--with-traces`` loads the traces recorded next to that hitlog; ``--with-traces PATH`` loads that
-    file. Typer
+    Bare ``--replay`` replays the latest hitlog; ``--replay PATH`` replays that specific file. A replay
+    always loads the attack traces recorded next to that hitlog; ``--with-traces PATH`` loads that file
+    instead (bare ``--with-traces`` is the default, kept so existing commands still parse). Typer
     builds every option as either a flag or a value-taking option and drops Click's ``flag_value``, so
     we finish wiring the optional-value behaviour on the built Click option here (mirrors what
     ``click.Option(is_flag=False, flag_value=...)`` sets).
@@ -66,8 +66,8 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
     """Fold the three-way ``--replay`` value into the config: drop attackers, add a preloaded suite.
 
     ``None`` = flag absent (no change); ``REPLAY_LATEST`` = bare flag → newest hitlog on disk;
-    anything else = an explicit hitlog path. ``with_traces`` (see :func:`_resolve_replay_traces`)
-    attaches the attack traces recorded by the run that produced the hitlog.
+    anything else = an explicit hitlog path. The attack traces recorded by the run that produced the
+    hitlog are always attached (see :func:`_resolve_replay_traces`).
     """
     from agent_hardener.models import PreloadedAttackConfig
     from agent_hardener.storage import find_latest_hitlog
@@ -114,24 +114,25 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
     )
 
 
-def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path | None:
-    """The validated attack-traces file for a replay with traces, or ``None`` to replay without them.
+def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path:
+    """The validated attack-traces file a replay loads.
 
-    ``TRACES_SAVED`` (bare flag) = the ``attack_traces.json`` recorded in the hitlog's round
-    directory; anything else = an explicit file. A missing or invalid file fails fast: silently
-    replaying without traces would report results that do not reflect them.
+    ``None`` (flag absent) or ``TRACES_SAVED`` (bare flag) = the ``attack_traces.json`` recorded in the
+    hitlog's round directory; anything else = an explicit file. A missing or invalid file fails fast:
+    without the traces the guardrails defender cannot write a single rail.
     """
     from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, load_recording
 
-    if with_traces is None:
-        return None
-    if with_traces == TRACES_SAVED:
+    if with_traces is None or with_traces == TRACES_SAVED:
         # Hitlogs are written under round_<N>/garak/, the recording under round_<N>/.
         path = hitlog_path.resolve().parent.parent / ATTACK_TRACES_FILENAME
     else:
         path = Path(with_traces).resolve()
     if not path.is_file():
-        fail(f"Attack traces not found: {path}. Record them with traces.provider on, or pass --with-traces PATH.")
+        fail(
+            f"Attack traces not found: {path}. A replay needs the traces recorded with its hitlog: replay a "
+            "hitlog from a run of this version, or pass --with-traces PATH."
+        )
         raise typer.Exit(1)
     try:
         count = len(load_recording(path))
@@ -174,8 +175,9 @@ def run(
         None,
         "--with-traces",
         metavar="[PATH]",
-        help="With --replay: also load the victim's attack traces. Bare loads the attack_traces.json recorded "
-        "next to the hitlog; pass a path to load that file instead.",
+        help="With --replay: the attack traces to replay with. A replay always loads them (the guardrails "
+        "defender needs each attack's trace); by default the attack_traces.json recorded next to the hitlog, "
+        "or pass a path to load that file instead.",
     ),
     verbose: bool = typer.Option(
         False,

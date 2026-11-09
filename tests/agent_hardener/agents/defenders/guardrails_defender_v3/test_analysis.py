@@ -98,13 +98,16 @@ def test_a_trace_without_tool_calls_is_skipped_without_asking_the_analyzer(tmp_p
     assert not (tmp_path / "plugins.toml").exists()
 
 
-def test_no_trace_at_all_says_traces_are_off(tmp_path: Path) -> None:
+def test_an_attack_without_a_trace_is_an_error_not_a_skip(tmp_path: Path) -> None:
     inp = defender_input(None, tmp=tmp_path)
     llm = FakeLLM({})
 
-    run(inp, llm=llm, grader=llm)
+    output = run(inp, llm=llm, grader=llm)
 
-    assert "traces.provider" in outcome(tmp_path, inp)["fallback_reason"]
+    assert not output.ok
+    assert "no execution trace" in (output.error_message or "")
+    assert (outcome(tmp_path, inp)["status"], llm.prompts) == ("error", {})  # no model was asked
+    assert not (tmp_path / "plugins.toml").exists()
 
 
 def test_a_bare_not_found_without_evidence_is_asked_again(tmp_path: Path) -> None:

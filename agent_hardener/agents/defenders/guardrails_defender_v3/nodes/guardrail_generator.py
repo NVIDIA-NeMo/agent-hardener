@@ -3,11 +3,10 @@
 
 """Phase 2: write the rail for the point the analysis chose, with a suggestor and a grader.
 
-The pattern is v2's (:mod:`agent_hardener.agents.defenders.guardrails_defender_v2.nodes.custom_guardrails_generator`):
-a suggestor drafts, a grader scores the draft against a rubric and lists what to fix, and the suggestor
-revises, until the score clears :data:`PASS_SCORE` or :data:`MAX_ITERATIONS` drafts were written. v3
-grounds both roles in the vulnerability analysis and the trace instead of a free-text report, and
-keeps the *best-graded* draft rather than the last one, so a revision that got worse is not applied.
+A suggestor drafts, a grader scores the draft against a rubric and lists what to fix, and the suggestor
+revises, until the score clears :data:`PASS_SCORE` or :data:`MAX_ITERATIONS` drafts were written. Both
+roles are grounded in the vulnerability analysis and the trace, and the *best-graded* draft is kept
+rather than the last one, so a revision that got worse is not applied.
 
 The rail is the ``system_instructions`` the in-victim guard model reads as an "attack description"
 before each call to the tool (:func:`agent_hardener.relay_plugin.judge.judge_input`). It is written in
@@ -29,9 +28,9 @@ from .benign_args import benign_requests
 
 logger = logging.getLogger("agent_hardener.session")
 
-#: Suggestor-grader rounds per attack, as in v2.
+#: Suggestor-grader rounds per attack.
 MAX_ITERATIONS = 3
-#: A draft scoring this (out of 10) or more is accepted without another revision, as in v2.
+#: A draft scoring this (out of 10) or more is accepted without another revision.
 PASS_SCORE = 9.0
 #: Benign examples shown to the suggestor and the grader as a picture of normal use.
 BENIGN_EXAMPLES = 5

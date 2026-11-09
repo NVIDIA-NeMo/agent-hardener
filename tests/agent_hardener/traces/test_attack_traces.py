@@ -120,7 +120,7 @@ class Adapter:
         return ValidatorReport(agent_id=agent.agent_id, agent_name=agent.name, kind="attack", ok=True)
 
 
-def _config(tmp_path: Path, *, defender_uses_traces: bool, live: bool = True) -> SessionConfig:
+def _config(tmp_path: Path, *, live: bool = True) -> SessionConfig:
     return SessionConfig(
         storage=StorageConfig(root_dir=tmp_path),
         run=RunSettings(rounds=1),
@@ -132,7 +132,6 @@ def _config(tmp_path: Path, *, defender_uses_traces: bool, live: bool = True) ->
                 role="defender",
                 implementation="trace_capture_defender:run",
                 capabilities="guards tool calls",
-                config={"use_traces": defender_uses_traces},
             )
         ],
         victim=AgentConfig(name="victim", role="victim"),
@@ -156,28 +155,23 @@ def _round(config: SessionConfig, provider: FakeTraceProvider | None) -> bool:
     return asyncio.run(orchestrator.run_round()).success
 
 
-def test_recording_only_collects_and_records_but_hands_no_defender_a_trace(tmp_path: Path) -> None:
+def test_the_round_records_the_attack_traces_and_hands_each_defender_its_trace(tmp_path: Path) -> None:
     provider = _provider()
-    assert _round(_config(tmp_path, defender_uses_traces=False), provider)
+    assert _round(_config(tmp_path), provider)
     assert provider.calls == 2
     (entry,) = load_recording(tmp_path / ATTACK_TRACES_FILENAME)
     assert entry.trace.trace_id == "live"  # the stale attempt before the anchor is not picked
-    assert [inp.attack_trace for inp in CAPTURED] == [None]
-
-
-def test_a_defender_with_use_traces_gets_the_attack_trace(tmp_path: Path) -> None:
-    assert _round(_config(tmp_path, defender_uses_traces=True), _provider())
     assert [inp.attack_trace.trace_id for inp in CAPTURED] == ["live"]
 
 
 def test_no_provider_or_no_live_attackers_records_nothing(tmp_path: Path) -> None:
-    assert _round(_config(tmp_path, defender_uses_traces=True), None)
+    assert _round(_config(tmp_path), None)
     assert not (tmp_path / ATTACK_TRACES_FILENAME).exists()
     assert [inp.attack_trace for inp in CAPTURED] == [None]
 
     provider = _provider()
     (tmp_path / "replay").mkdir()
-    _round(_config(tmp_path / "replay", defender_uses_traces=True, live=False), provider)
+    _round(_config(tmp_path / "replay", live=False), provider)
     assert provider.calls == 0
 
 
@@ -187,6 +181,6 @@ class BrokenProvider(FakeTraceProvider):
 
 
 def test_a_failing_provider_never_fails_the_round(tmp_path: Path) -> None:
-    assert _round(_config(tmp_path, defender_uses_traces=True), BrokenProvider())
+    assert _round(_config(tmp_path), BrokenProvider())
     assert not (tmp_path / ATTACK_TRACES_FILENAME).exists()
     assert [inp.attack_trace for inp in CAPTURED] == [None]

@@ -61,7 +61,7 @@ def _agent() -> AgentConfig:
     return AgentConfig(
         name="smart-benign-validator",
         role="validator",
-        config={"kind": "benign", "replay_url": "http://victim.test/v1/chat/completions", "use_traces": True},
+        config={"kind": "benign", "replay_url": "http://victim.test/v1/chat/completions"},
     )
 
 

@@ -17,7 +17,6 @@ from agent_hardener.events import EventType
 from agent_hardener.loggers import using_current_agent
 from agent_hardener.runtime.agent_loader import failure_output
 from agent_hardener.runtime.run_context import RunContext
-from agent_hardener.traces import uses_traces
 
 if TYPE_CHECKING:
     import logging
@@ -82,7 +81,7 @@ class AgentInvoker:
                 current=cur,
                 total=tot,
             ),
-            trace_provider=self.trace_provider if uses_traces(agent, self.trace_provider) else None,
+            trace_provider=self.trace_provider,
         )
         agent_identity = {
             "agent_id": agent.agent_id,

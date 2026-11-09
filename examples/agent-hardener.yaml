@@ -68,15 +68,9 @@ backends:
 # NIM_API_KEY for garak (Agent Hardener mirrors INFERENCE_API_KEY into it).
 
 # ─── Execution traces ────────────────────────────────────────────────────────────────────────────
-# Collect what the victim actually did (its LLM and tool calls) from NeMo Relay. Once on, traces are
-# recorded every round (round_<N>/attack_traces.json), even if no component uses them. A component
-# consumes them only when its own config also says `use_traces: true` — for example:
-#   overrides:
-#     attack_validators:
-#       - name: garak-attack-replay-validator
-#         config: {use_traces: true, ...}   # lists replace, so repeat the whole entry
-# traces:
-#   provider: relay   # none (default) | relay
+# Always on: what the victim actually did (its LLM and tool calls) is read from NeMo Relay and recorded
+# every round (round_<N>/attack_traces.json). The guardrails defender grounds each rail in an attack's
+# trace, and the validators check each replay's trace. Relay is the only backend, so there is nothing to set.
 
 # Optional advanced: deep-merge overrides onto the expanded SessionConfig.
 # overrides:

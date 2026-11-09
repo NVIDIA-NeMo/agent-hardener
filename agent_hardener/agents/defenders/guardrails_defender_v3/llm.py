@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""NVIDIA-hosted chat model for the v3 guardrails defender's nodes, as in v2 (:mod:`..guardrails_defender_v2.llm`).
+"""NVIDIA-hosted chat model for the guardrails defender's nodes (:func:`agent_hardener.llm.build_chat_model`).
 
 The model is :data:`agent_hardener.llm.DEFAULT_MODEL` (``AGENT_HARDENER_MODEL``) for every role. v3 builds it
 once per attack for the analyzer, the benign-args writer and the suggestor, and once more at temperature 0 for

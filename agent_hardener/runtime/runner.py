@@ -522,10 +522,12 @@ class Mission:
         return reports
 
     def _build_trace_provider(self) -> TraceProvider | None:
-        """The configured trace provider, saving raw data under ``<run_dir>/traces/``; ``None`` when off."""
+        """The configured trace provider, saving raw data under ``<run_dir>/traces/``.
+
+        ``None`` only for a plain HTTP target with no relay-victim block: there is no sandbox to read the
+        victim's telemetry out of, so the guardrails defender writes no rails (each attack fails, saying why).
+        """
         traces = self.ctx.session_config.traces
-        if traces.provider == "none":
-            return None
         spec = self._base_config.relay_victim
         provider = build_trace_provider(
             traces,

@@ -74,7 +74,7 @@ def _agent() -> AgentConfig:
     return AgentConfig(
         name="garak replay validator",
         role="validator",
-        config={"kind": "attack", "replay_url": "http://victim.test/v1/chat/completions", "use_traces": True},
+        config={"kind": "attack", "replay_url": "http://victim.test/v1/chat/completions"},
     )
 
 

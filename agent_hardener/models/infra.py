@@ -117,14 +117,10 @@ class GarakSettings(AgentHardenerModel):
 class DefenderSettings(AgentHardenerModel):
     """Per-run overrides for the defenders, mirroring :class:`GarakSettings` for the attacker."""
 
-    # Hard cap (seconds) on each defender's execution. The guardrails defender validates its draft
-    # by invoking the victim once per augmented attack and per benign request, so a slow victim — a
-    # Fabric agent spawns an MCP subprocess and makes an LLM call per tool — can exceed the default
+    # Hard cap (seconds) on each defender's execution. The guardrails defender makes several model
+    # calls per attack (analysis, drafts, grades), so a slow endpoint can exceed the default
     # mid-refinement, which discards a guardrail that was nearly ready. Unset -> the built-in default.
     timeout_s: int | None = None
-    #: Feature flag: which guardrails defender runs. ``v2`` works from the attack prompt and response;
-    #: ``v3`` grounds each rail in the attack's execution trace, so it needs ``traces.provider: relay``.
-    guardrails_version: Literal["v2", "v3"] = "v2"
 
 
 class PreloadedAttackConfig(AgentHardenerModel):
