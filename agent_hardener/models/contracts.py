@@ -19,7 +19,7 @@ from pydantic import Field
 from agent_hardener.models.agent import AgentConfig, TargetInput
 from agent_hardener.models.base import AgentHardenerModel, ValidatorKind
 from agent_hardener.models.infra import RelayVictimSpec
-from agent_hardener.traces.models import AgentTrace
+from agent_hardener.models.traces import AgentTrace
 
 
 class Artifact(AgentHardenerModel):

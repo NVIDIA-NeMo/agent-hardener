@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from agent_hardener import atof
-from agent_hardener.traces.models import AgentTrace, LlmCall, ToolCall
+from agent_hardener.models.traces import AgentTrace, LlmCall, ToolCall
 from agent_hardener.traces.provider import TraceProvider
 from agent_hardener.traces.signals import LATCH_EVENT, classify_tool_call, is_blocked_response, text_of
 

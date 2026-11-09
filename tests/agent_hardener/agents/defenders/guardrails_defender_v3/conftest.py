@@ -23,8 +23,8 @@ from agent_hardener.agents.defenders.guardrails_defender_v3.schemas import (
     RailResponse,
 )
 from agent_hardener.models import BenignRequest, DefenderInput
+from agent_hardener.models.traces import AgentTrace, LlmCall, ToolCall
 from agent_hardener.relay_plugin.config import Guardrail, GuardrailsComponentConfig
-from agent_hardener.traces.models import AgentTrace, LlmCall, ToolCall
 
 if TYPE_CHECKING:
     from pathlib import Path

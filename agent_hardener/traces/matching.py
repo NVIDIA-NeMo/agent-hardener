@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable
     from datetime import datetime
 
-    from agent_hardener.traces.models import AgentTrace
+    from agent_hardener.models.traces import AgentTrace
 
 _WHITESPACE = re.compile(r"\s+")
 

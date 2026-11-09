@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import TypeAdapter
 
 from agent_hardener.models.base import AgentHardenerModel
+from agent_hardener.models.traces import AgentTrace
 from agent_hardener.traces.matching import find_attack_trace, normalize
-from agent_hardener.traces.models import AgentTrace
 
 if TYPE_CHECKING:
     from collections.abc import Iterable

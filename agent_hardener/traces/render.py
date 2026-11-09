@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agent_hardener.traces.models import ToolCall
+from agent_hardener.models.traces import ToolCall
 from agent_hardener.traces.signals import text_of
 
 if TYPE_CHECKING:
-    from agent_hardener.traces.models import AgentTrace
+    from agent_hardener.models.traces import AgentTrace
 
 _DEFAULT_LIMIT = 400
 

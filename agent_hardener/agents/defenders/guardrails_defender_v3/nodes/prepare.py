@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_hardener.traces.models import ToolCall
+from agent_hardener.models.traces import ToolCall
 from agent_hardener.traces.render import render_trace
 
 from ..schemas import CandidateCall

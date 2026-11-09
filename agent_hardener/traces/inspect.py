@@ -22,7 +22,7 @@ from agent_hardener.models.base import AgentHardenerModel
 from agent_hardener.traces.signals import text_of
 
 if TYPE_CHECKING:
-    from agent_hardener.traces.models import AgentTrace, ToolCall
+    from agent_hardener.models.traces import AgentTrace, ToolCall
 
 TargetToolOutcome = Literal["ok", "error", "guardrail_refused", "network_denied", "not_called"]
 AttackTraceStatus = Literal[

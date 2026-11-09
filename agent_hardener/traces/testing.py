@@ -12,7 +12,7 @@ from agent_hardener.traces.provider import TraceProvider
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
-    from agent_hardener.traces.models import AgentTrace
+    from agent_hardener.models.traces import AgentTrace
 
 
 class FakeTraceProvider(TraceProvider):

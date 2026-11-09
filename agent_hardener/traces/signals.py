@@ -17,7 +17,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from agent_hardener.traces.models import ToolOutcome
+    from agent_hardener.models.traces import ToolOutcome
 
 #: ``agent-hardener[<rail>]: refused <tool> (...)`` (relay_plugin/policy.py) names the rail that fired;
 #: ``agent-hardener: refused <tool> (an earlier guardrail ...)`` (relay_plugin/plugin.py) is the latch,

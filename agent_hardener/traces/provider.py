@@ -9,7 +9,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from agent_hardener.traces.models import AgentTrace
+    from agent_hardener.models.traces import AgentTrace
 
 
 class TraceProvider(ABC):
