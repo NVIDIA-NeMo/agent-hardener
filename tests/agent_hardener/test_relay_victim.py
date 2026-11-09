@@ -706,9 +706,34 @@ def test_hermes_gets_its_extra_wiring_and_others_do_not(tmp_path: Path) -> None:
     hermes = staged("hermes")
     assert "HERMES_NEMO_RELAY_PLUGINS_TOML=/etc/nemo-relay/plugins.toml" in hermes
     assert "hermes plugins enable" not in hermes
+    assert "langchain-openai==1.1.9" in hermes
 
     assert "HERMES_NEMO_RELAY" not in staged("deepagents")
     assert "HERMES_NEMO_RELAY" not in staged(None)
+    assert "langchain-openai" not in staged("deepagents")
+    assert "langchain-openai" not in staged(None)
+
+
+@pytest.mark.parametrize("user", ["sandbox", "10001:10001"])
+def test_hermes_judge_dependency_staging_preserves_the_runtime_user(tmp_path: Path, user: str) -> None:
+    """Dependency provisioning must not change an author's final non-root runtime identity."""
+    project = tmp_path / "agent"
+    project.mkdir()
+    (project / "Dockerfile").write_text(
+        f"FROM python:3.12-slim\nENV ADAPTER_PYTHON=/opt/hermes-venv/bin/python\nUSER {user}\n",
+        encoding="utf-8",
+    )
+    spec = RelayVictimSpec(
+        project_dir=project,
+        dockerfile=Path("Dockerfile"),
+        victim_binaries=["/opt/hermes-venv/bin/python"],
+        harness="hermes",
+    )
+    staged = stage_relay_victim_build(spec, tmp_path, tmp_path / "build")
+    text = staged.read_text(encoding="utf-8")
+    assert text.rstrip().endswith(f"USER {user}")
+    assert 'judge_python="${ADAPTER_PYTHON:-python}"' in text
+    assert "import langchain_core, langchain_openai" in text
 
 
 def test_the_launcher_exports_what_the_image_declares(tmp_path: Path) -> None:

@@ -228,6 +228,17 @@ _HERMES_WIRING = """
 ENV HERMES_NEMO_RELAY_PLUGINS_TOML={destination}
 """
 
+# The staged guardrail judge imports LangChain on its first tool call. Hermes itself does not
+# require it, and its adapter can use a different interpreter from the image's default Python.
+# Keep the fallback install pinned to the project's locked langchain-openai version.
+_HERMES_JUDGE_INSTALL = (
+    'RUN set -eu; judge_python="${ADAPTER_PYTHON:-python}"; '
+    'if ! "$judge_python" -c "import langchain_core, langchain_openai" >/dev/null 2>&1; then '
+    "if command -v uv >/dev/null 2>&1; then "
+    'uv pip install --python "$judge_python" "langchain-openai==1.1.9"; '
+    'else "$judge_python" -m pip install --no-cache-dir "langchain-openai==1.1.9"; fi; fi\n'
+)
+
 
 def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
     """Point Hermes core's Relay lifecycle at the uploaded plugin config.
@@ -239,9 +250,18 @@ def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
     The agent config must also omit its ``telemetry:`` block — the Fabric adapter pops and overwrites
     this variable whenever Relay telemetry is declared. That half cannot be enforced from here; the
     manifest's ``harness`` is what lets the preflight say so.
+
+    Install the staged judge's dependencies in the actual adapter interpreter when absent. Otherwise
+    registration succeeds, but every guarded tool call fails open with a missing LangChain import.
     """
+    restore = _final_stage_user(staged_dockerfile)
     with staged_dockerfile.open("a", encoding="utf-8") as dockerfile:
-        dockerfile.write(_HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST))
+        dockerfile.write(
+            _HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST)
+            + "USER root\n"
+            + _HERMES_JUDGE_INSTALL
+            + (f"USER {restore}\n" if restore else "")
+        )
 
 
 def _final_stage_user(staged_dockerfile: Path) -> str | None:
