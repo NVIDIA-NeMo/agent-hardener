@@ -77,3 +77,41 @@ def test_preflight_skips_key_check_for_custom_base_url(monkeypatch: pytest.Monke
     monkeypatch.setattr(mc, "validate_choice", lambda *_a, **_k: called.__setitem__("n", called["n"] + 1))
     mc.preflight_configured_models()  # no raise
     assert called["n"] == 0
+
+
+def test_probe_generation_sends_one_token_with_the_extra_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: dict[str, object] = {}
+
+    def fake_post(url: str, **kwargs: object) -> httpx.Response:
+        sent.update(url=url, **kwargs)
+        return httpx.Response(200, json={})
+
+    monkeypatch.setattr(httpx, "post", fake_post)
+    verdict = mc.probe_generation("m", "https://x/v1/", "k", timeout=5, extra_body={"chat_template_kwargs": {}})
+    assert verdict.ok
+    assert sent["url"] == "https://x/v1/chat/completions"
+    assert sent["json"] == {
+        "model": "m",
+        "messages": [{"role": "user", "content": "ping"}],
+        "max_tokens": 1,
+        "chat_template_kwargs": {},
+    }
+    assert sent["timeout"] == 5
+
+
+def test_probe_generation_reports_a_hung_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    def hang(*_a: object, **_k: object) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(httpx, "post", hang)
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=600)
+    assert verdict.reason == "timeout"
+    with pytest.raises(ModelUnavailableError, match="600s"):
+        mc.raise_if_unavailable("red-team", "m", "https://x/v1", verdict)
+
+
+def test_probe_generation_reports_a_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(404, text="model not found"))
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
+    assert verdict.reason == "error"
+    assert "model not found" in verdict.detail
