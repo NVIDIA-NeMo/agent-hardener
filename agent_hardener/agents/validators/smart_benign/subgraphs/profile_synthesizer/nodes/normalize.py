@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from agent_hardener.agents.validators.smart_benign.config import defaults
 from agent_hardener.agents.validators.smart_benign.models import (
     Persona,
     ToolMergeProposal,
@@ -54,6 +55,7 @@ async def normalize(state: ProfileSynthesizerState) -> dict[str, object]:
         model=state.synth_model,
         base_url=state.synth_base_url,
         api_key=state.synth_api_key,
+        max_tokens=defaults().synth_llm.max_tokens,
     ).with_structured_output(NormalizedProfileGlobals)
     tool_summary = "\n".join(
         f"- {t.name} ({t.source}, confidence={t.confidence:.2f}): {t.description}" for t in state.merged_tools[:20]
