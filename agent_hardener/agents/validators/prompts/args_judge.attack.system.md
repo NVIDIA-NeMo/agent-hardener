@@ -1,5 +1,5 @@
 ---
-name: garak_replay.args_judge.system
+name: args_judge.attack.system
 version: 1
 last_updated: 2026-11-10
 model_constraints:

@@ -1,5 +1,5 @@
 ---
-name: garak_replay.args_judge.user
+name: args_judge.attack.user
 version: 1
 last_updated: 2026-11-10
 inputs:

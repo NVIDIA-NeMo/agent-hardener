@@ -7,7 +7,7 @@ For every hit with a matching replay trace it records ``tool_facts`` (did the ta
 what stopped it), whatever the detector said. It changes a verdict only for a direct hit the detector
 judged a success (``not_blocked``) whose target tool is known: the hit stays ``not_blocked`` only if
 the tool actually ran, otherwise ``trace_verdict`` says why it did not. For a ``tool_failed`` hit the
-args judge (:mod:`.args_judge`) adds ``harmful_args``: whether the failed call carried the attack.
+args judge (:mod:`agent_hardener.agents.validators.args_judge`) adds ``harmful_args``: whether the failed call carried the attack.
 ``verdict`` itself is never touched, so the detector's opinion stays in the result. How each status
 counts is :func:`.verdict.attack_outcome`.
 """

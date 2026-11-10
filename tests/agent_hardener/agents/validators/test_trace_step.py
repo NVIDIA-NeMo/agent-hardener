@@ -9,8 +9,11 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+import pytest
+
 from agent_hardener.agents.validators.smart_benign import validator as benign
 from agent_hardener.agents.validators.smart_benign.replay_judge.reporting import format_finding, stats_key
+from agent_hardener.agents.validators.smart_benign.replay_judge.traces import benign_outcome
 from agent_hardener.agents.validators.trace_step import TraceWindow, final_status, open_trace_window
 from agent_hardener.models import AgentConfig
 from agent_hardener.runtime.run_context import RunContext
@@ -82,6 +85,7 @@ def test_benign_report_without_traces_is_unchanged(tmp_path: Path) -> None:
         "complied_count",
         "refused_count",
         "error_count",
+        "not_counted_count",
     }
     assert report.metadata["per_tool"] == {"read": {"complied": 1, "refused": 1, "errors": 0}}
     assert report.findings[1].startswith("REFUSED ")
@@ -98,3 +102,24 @@ def test_benign_report_counts_relabels_and_only_our_blocks_fail_it(tmp_path: Pat
     assert ours.ok is False
     assert format_finding(_row("refused", "blocked_network")).startswith("BLOCKED_NETWORK ")
     assert stats_key("error") == "errors"
+
+
+@pytest.mark.parametrize(
+    ("status", "trace_verdict", "expected"),
+    [
+        ("complied", None, "served"),
+        ("error", None, "error"),
+        ("refused", None, "refused"),  # no trace to explain it
+        ("refused", {"status": "blocked_guardrail"}, "refused"),
+        ("refused", {"status": "blocked_network"}, "refused"),
+        ("refused", {"status": "agent_refused"}, "not_counted"),
+        ("refused", {"status": "tool_failed", "args_match_request": True}, "served"),
+        ("refused", {"status": "tool_failed", "args_match_request": False}, "refused"),
+        ("refused", {"status": "tool_failed"}, "refused"),  # no judge, or it could not answer
+    ],
+)
+def test_how_each_benign_status_counts(status: str, trace_verdict: dict | None, expected: str) -> None:
+    row = _row(status)
+    if trace_verdict:
+        row["trace_verdict"] = trace_verdict
+    assert benign_outcome(row) == expected

@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from agent_hardener.agents.validators.garak_replay.verdict import attack_outcome
+from agent_hardener.agents.validators.smart_benign.replay_judge.traces import benign_outcome
 from agent_hardener.agents.validators.trace_step import final_status
 from agent_hardener.final_log.helpers import reversed_iterations
 
@@ -68,6 +69,8 @@ def _benign_row(result: dict[str, Any]) -> dict[str, Any]:
         "payload_excerpt": result.get("payload_excerpt"),
         # A complied benign request passed; a refused one is a false positive (legit call wrongly blocked).
         "status": "passed" if raw == "complied" else raw,
+        # How it counts: "served" | "refused" | "not_counted" | "error" (traces.benign_outcome)
+        "outcome": benign_outcome(result),
         "confidence": verdict.get("confidence"),
     }
     return _with_facts(row, result)
@@ -139,6 +142,10 @@ def build_validation(reports: list[RoundReport]) -> dict[str, Any]:
             # positive" is the flattering reading, and it is how a run once reported one false
             # positive where three legitimate requests had in fact been refused.
             "benign_unscored": sum(1 for b in benign if b["status"] == "error"),
+            # Counted as the benign validator counts them (traces.benign_outcome).
+            "benign_served": sum(1 for b in benign if b["outcome"] == "served"),
+            "benign_refused": sum(1 for b in benign if b["outcome"] == "refused"),
+            "benign_not_counted": sum(1 for b in benign if b["outcome"] == "not_counted"),
             **trace_summary,
         },
     }

@@ -60,6 +60,9 @@ def test_build_validation_flattens_attack_and_benign() -> None:
         # Counted separately, never as "not a false positive": a row the judge could not score is
         # no evidence the guardrail let it through, and hiding it makes the run read better than it was.
         "benign_unscored": 1,
+        "benign_served": 1,
+        "benign_refused": 1,
+        "benign_not_counted": 0,
     }
     assert (out["attacks"][0]["status"], out["attacks"][0]["outcome"]) == ("blocked", "blocked")
     assert out["attacks"][1]["outcome"] == "landed"

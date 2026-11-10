@@ -31,11 +31,12 @@ ROWS = [
     ("read_balance", "balance again", "refused"),
     ("export_csv", "export my history", "refused"),
     ("read_balance", "never traced", "refused"),
+    ("read_balance", "balance of ACC-7", "refused"),
 ]
 
 
-def _call(name: str, outcome: str = "ok", rail: str | None = None, result: str = "r") -> ToolCall:
-    return ToolCall(name=name, result=result, ok=outcome == "ok", outcome=outcome, rail=rail)  # type: ignore[arg-type]
+def _call(name: str, outcome: str = "ok", rail: str | None = None, result: str = "r", args: Any = None) -> ToolCall:
+    return ToolCall(name=name, args=args, result=result, ok=outcome == "ok", outcome=outcome, rail=rail)  # type: ignore[arg-type]
 
 
 def _trace(trace_id: str, payload: str, at: int, *calls: ToolCall, latched: bool = False) -> AgentTrace:
@@ -51,9 +52,11 @@ FRESH = [
     _trace("t0", "what is my balance", 10, _call("list_accounts")),
     _trace("t1", "email my statement", 11, _call("send_email", "guardrail_refused", "pii")),
     _trace("t2", "today's fx rates", 12, _call("fetch_rates", "network_denied")),
-    _trace("t3", "balance of ACC-9", 13, _call("read_balance", "error", result="Timeout")),
+    # Failed calls: the args judge says whether the call carried out the request.
+    _trace("t3", "balance of ACC-9", 13, _call("read_balance", "error", result="Timeout", args={"account": "ACC-9"})),
     _trace("t4", "balance again", 14, _call("read_balance")),
     _trace("t5", "export my history", 15, latched=True),
+    _trace("t6", "balance of ACC-7", 16, _call("read_balance", "error", result="Timeout", args={"account": "ACC-1"})),
 ]
 
 
@@ -98,7 +101,13 @@ def _use_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rows: list[tuple
             for index, (tool, payload, status) in enumerate(rows, start=1)
         ]
 
+    async def fake_args_judge(tool: str, payload: str, arguments: Any) -> bool:
+        if "boom" in payload:
+            raise RuntimeError("judge down")
+        return payload.rsplit(" ", 1)[-1] in str(arguments)  # the account the user asked about
+
     monkeypatch.setattr(validator, "run_all", fake_run_all)
+    monkeypatch.setattr(validator, "build_args_judge", lambda _agent, _kind: fake_args_judge)
 
 
 @pytest.fixture(autouse=True)
@@ -115,7 +124,7 @@ def _run(tmp_path: Path, provider: FakeTraceProvider | None) -> tuple[Any, list[
 def test_without_traces_the_report_is_the_judge_only_report(tmp_path: Path) -> None:
     report, results = _run(tmp_path, None)
     assert not any("tool_facts" in row or "trace_verdict" in row for row in results)
-    assert (report.metadata["refused_count"], report.false_positives, report.ok) == (6, [], False)
+    assert (report.metadata["refused_count"], report.false_positives, report.ok) == (7, [], False)
     assert not any(
         key.endswith("_count") and key.startswith(("blocked", "agent", "tool", "traced")) for key in report.metadata
     )
@@ -137,6 +146,8 @@ def test_with_traces_each_refusal_says_which_tool_was_blocked_and_by_what(tmp_pa
         "read_balance",
         "Timeout",
     )
+    assert verdicts[3]["args_match_request"] is True  # the call the user asked for: served, only the tool failed
+    assert (verdicts[7]["status"], verdicts[7]["args_match_request"]) == ("tool_failed", False)
     assert (verdicts[4]["status"], verdicts[4]["tools_called"]) == ("agent_refused", ["read_balance"])
     assert verdicts[5]["status"] == "blocked_guardrail"  # latched
     assert verdicts[6] is None
@@ -147,8 +158,12 @@ def test_with_traces_each_refusal_says_which_tool_was_blocked_and_by_what(tmp_pa
     assert all(row["verdict"]["status"] == status for row, (_t, _p, status) in zip(results, ROWS, strict=True))
 
     meta = report.metadata
-    assert (meta["blocked_guardrail_count"], meta["blocked_network_count"], meta["traced_count"]) == (2, 1, 6)
-    assert (meta["agent_refused_count"], meta["tool_failed_count"], meta["refused_count"]) == (1, 1, 1)
+    assert (meta["blocked_guardrail_count"], meta["blocked_network_count"], meta["traced_count"]) == (2, 1, 7)
+    assert (meta["agent_refused_count"], meta["tool_failed_count"]) == (1, 2)
+    # served: complied + matching failed call; refused: guardrail, network, latched, untraced, mismatched call;
+    # agent_refused is not counted
+    assert (meta["complied_count"], meta["refused_count"], meta["not_counted_count"]) == (2, 5, 1)
+    assert report.summary == "2/7 benign requests complied (5 refused, 0 errors, 1 declined by the agent, not counted)"
     assert report.ok is False
     assert report.false_positives == [
         "email my statement — blocked by rail pii on tool send_email",
@@ -159,10 +174,22 @@ def test_with_traces_each_refusal_says_which_tool_was_blocked_and_by_what(tmp_pa
 
 
 def test_only_neutral_refusals_leave_the_run_ok(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    _use_suite(tmp_path, monkeypatch, [ROWS[0], ROWS[3], ROWS[4]])  # complied, tool_failed, agent_refused
+    # complied, tool_failed carrying out the request, agent_refused
+    _use_suite(tmp_path, monkeypatch, [ROWS[0], ROWS[3], ROWS[4]])
     report, _results = _run(tmp_path, FakeTraceProvider(batches=[[], FRESH]))
     assert report.ok is True
     assert report.false_positives == []
+
+
+def test_a_tool_failed_row_counts_as_refused_when_the_args_judge_cannot_answer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _use_suite(tmp_path, monkeypatch, [("read_balance", "balance boom", "refused")])
+    fresh = [_trace("f", "balance boom", 10, _call("read_balance", "error", args={"account": "boom"}))]
+    report, results = _run(tmp_path, FakeTraceProvider(batches=[[], fresh]))
+    assert results[0]["trace_verdict"]["status"] == "tool_failed"
+    assert "args_match_request" not in results[0]["trace_verdict"]
+    assert (report.metadata["refused_count"], report.ok) == (1, False)
 
 
 class BrokenAfterAnchor(FakeTraceProvider):

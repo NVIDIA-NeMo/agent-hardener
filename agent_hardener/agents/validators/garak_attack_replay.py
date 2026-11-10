@@ -19,9 +19,9 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
-from agent_hardener.agents.validators.garak_replay.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
 from agent_hardener.agents.validators.replay_http import ReplayResult
@@ -107,7 +107,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
                 supported_hits,
                 window,
                 trace_section.build_refusal_judge(agent),
-                build_args_judge(agent),
+                build_args_judge(agent, "attack"),
             )
             for aggregate_index, result in enumerate(attack_results, start=1):
                 findings.append(verdict.format_finding(result, aggregate_index))

@@ -21,6 +21,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
+from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import agent_concurrency
 from agent_hardener.env import INFERENCE_API_KEY, inference_api_key
@@ -107,7 +108,9 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     window = await open_trace_window(ctx)
     with quiet_warnings():
         row_results = await run_all(requests, cfg)
-    traced = window is not None and await trace_section.apply_traces(row_results, requests, window)
+    traced = window is not None and await trace_section.apply_traces(
+        row_results, requests, window, build_args_judge(agent, "benign")
+    )
     return _build_report(agent, artifact_dir, row_results, started, traced=traced)
 
 
@@ -463,19 +466,23 @@ def _build_report(
         tool_stats[stats_key(status)] = tool_stats.get(stats_key(status), 0) + 1
     # Trace relabels (only present when the trace step ran) get their own count after the usual three.
     trace_counts = {f"{status}_count": count for status, count in counts.items() if status not in _JUDGE_STATUSES}
-    blocked_by_us = sum(counts.get(status, 0) for status in trace_section.BLOCKED_BY_US)
     if traced:
         trace_counts["traced_count"] = sum(
             1 for result in row_results if result["tool_facts"].get("trace_status") == "inspected"
         )
+    # How each row counts: served, refused, not counted (agent_refused) or error; see traces.benign_outcome.
+    outcomes = [trace_section.benign_outcome(result) for result in row_results]
+    served, refused, errors = outcomes.count("served"), outcomes.count("refused"), outcomes.count("error")
+    not_counted = outcomes.count("not_counted")
+    declined = f", {not_counted} declined by the agent, not counted" if not_counted else ""
 
     return _benign_report(
         agent,
         started,
-        ok=counts["refused"] == 0 and counts["error"] == 0 and blocked_by_us == 0,
+        ok=refused == 0 and errors == 0,
         summary=(
-            f"{counts['complied']}/{len(row_results)} benign requests complied "
-            f"({counts['refused']} refused, {counts['error']} errors)"
+            f"{served}/{len(row_results) - not_counted} benign requests complied "
+            f"({refused} refused, {errors} errors{declined})"
         ),
         findings=[format_finding(r) for r in row_results],
         # Only with traces: each refusal they blame on our guardrail or network policy (or could not
@@ -483,9 +490,10 @@ def _build_report(
         false_positives=[fp for fp in map(trace_section.false_positive, row_results) if fp] if traced else [],
         metadata={
             "total": len(row_results),
-            "complied_count": counts["complied"],
-            "refused_count": counts["refused"],
-            "error_count": counts["error"],
+            "complied_count": served,
+            "refused_count": refused,
+            "error_count": errors,
+            "not_counted_count": not_counted,
             **trace_counts,
             "per_tool": per_tool,
             "results": row_results,

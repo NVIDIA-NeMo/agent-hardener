@@ -115,7 +115,7 @@ def judged(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         return "OPS-ESCROW" in str(arguments)
 
     monkeypatch.setattr(trace_section, "build_refusal_judge", lambda _agent: fake_judge)
-    monkeypatch.setattr(validator, "build_args_judge", lambda _agent: fake_args_judge)
+    monkeypatch.setattr(validator, "build_args_judge", lambda _agent, _kind: fake_args_judge)
     return judged
 
 
