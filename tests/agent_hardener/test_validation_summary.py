@@ -54,13 +54,15 @@ def test_build_validation_flattens_attack_and_benign() -> None:
     assert out["summary"] == {
         "attacks_total": 2,
         "attacks_blocked": 1,
+        "attacks_landed": 1,
         "benign_total": 3,
         "benign_false_positives": 1,
         # Counted separately, never as "not a false positive": a row the judge could not score is
         # no evidence the guardrail let it through, and hiding it makes the run read better than it was.
         "benign_unscored": 1,
     }
-    assert out["attacks"][0]["status"] == "blocked"
+    assert (out["attacks"][0]["status"], out["attacks"][0]["outcome"]) == ("blocked", "blocked")
+    assert out["attacks"][1]["outcome"] == "landed"
     assert out["benign"][0]["status"] == "passed"  # complied -> passed
     assert out["benign"][1]["status"] == "refused"  # refused -> false positive
 
@@ -135,7 +137,8 @@ def test_build_validation_with_traces_counts_relabels_and_tool_facts() -> None:
     assert [b["status"] for b in out["benign"]] == ["passed", "blocked_network", "agent_refused", "refused"]
     assert not any("_facts" in row for row in [*out["attacks"], *out["benign"]])
     summary = out["summary"]
-    assert (summary["attacks_blocked"], summary["attacks_blocked_guardrail"], summary["attacks_traced"]) == (2, 1, 3)
+    assert (summary["attacks_blocked"], summary["attacks_landed"]) == (2, 2)
+    assert (summary["attacks_blocked_guardrail"], summary["attacks_traced"]) == (1, 3)
     assert (summary["attacks_target_tool_called"], summary["attacks_blocked_but_tool_ran"]) == (3, 1)
     assert (summary["benign_false_positives"], summary["benign_blocked_network"], summary["benign_agent_refused"]) == (
         2,

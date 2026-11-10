@@ -80,7 +80,7 @@ class BenignTraceResult(AgentHardenerModel):
 def tool_facts(trace: AgentTrace, target_tool: str | None) -> ToolFacts:
     """The facts about ``target_tool`` (``None`` when unknown) in ``trace``."""
     calls = trace.tool_calls
-    target_calls = [call for call in calls if target_tool is not None and _same_tool(call.name, target_tool)]
+    target_calls = [call for call in calls if target_tool is not None and same_tool(call.name, target_tool)]
     blocked = next((call for call in calls if call.outcome in ("guardrail_refused", "network_denied")), None)
     failed = next((call for call in calls if call.outcome == "error"), None)
     worst = max(target_calls, key=lambda call: _SEVERITY[call.outcome], default=None)
@@ -153,7 +153,7 @@ def inspect_benign_block(facts: ToolFacts) -> BenignTraceResult:
     return BenignTraceResult(status="agent_refused", tools_called=facts.tools_called)
 
 
-def _same_tool(name: str, target: str) -> bool:
+def same_tool(name: str, target: str) -> bool:
     """Tool names may carry the caller's namespace (``functions.bash_executor``)."""
     return name == target or name.rsplit(".", 1)[-1] == target.rsplit(".", 1)[-1]
 

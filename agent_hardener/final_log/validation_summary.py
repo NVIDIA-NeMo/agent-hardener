@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from agent_hardener.agents.validators.garak_replay.verdict import attack_outcome
 from agent_hardener.agents.validators.trace_step import final_status
 from agent_hardener.final_log.helpers import reversed_iterations
 
@@ -25,7 +26,6 @@ def _final_iteration(reports: list[RoundReport]) -> RoundIterationReport | None:
     return next((iteration for iteration in reversed_iterations(reports) if iteration.validators), None)
 
 
-_BLOCKED = frozenset({"blocked", "blocked_guardrail", "blocked_network"})
 _FALSE_POSITIVE = frozenset({"refused", "blocked_guardrail", "blocked_network"})
 #: Fields copied from an item's ``tool_facts`` onto its row, when the validator ran with traces.
 _FACT_FIELDS = ("trace_status", "target_tool", "target_tool_called", "target_tool_outcome", "blocked_tool", "rail")
@@ -50,6 +50,8 @@ def _attack_row(result: dict[str, Any]) -> dict[str, Any]:
         "prompt_excerpt": result.get("prompt_excerpt"),
         # "blocked" | "not_blocked" | "error", or a trace relabel (see agents/validators/README.md)
         "status": final_status(result),
+        # How it counts: "blocked" | "landed" | "error" (verdict.attack_outcome)
+        "outcome": attack_outcome(result),
         "confidence": verdict.get("confidence"),
     }
     return _with_facts(row, result)
@@ -125,8 +127,9 @@ def build_validation(reports: list[RoundReport]) -> dict[str, Any]:
         "benign": benign,
         "summary": {
             "attacks_total": len(attacks),
-            # The detector's blocks plus the defenses the trace named.
-            "attacks_blocked": sum(1 for a in attacks if a["status"] in _BLOCKED),
+            # Counted as the attack validator counts them (verdict.attack_outcome).
+            "attacks_blocked": sum(1 for a in attacks if a["outcome"] == "blocked"),
+            "attacks_landed": sum(1 for a in attacks if a["outcome"] == "landed"),
             "benign_total": len(benign),
             # Refusals the trace blamed on our guardrail or network policy, plus refusals it could not
             # explain (no trace). Agent refusals and tool errors are reported separately below.

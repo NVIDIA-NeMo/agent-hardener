@@ -21,6 +21,7 @@ import httpx
 
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
+from agent_hardener.agents.validators.garak_replay.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
 from agent_hardener.agents.validators.replay_http import ReplayResult
@@ -102,7 +103,11 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
             )
             attack_results = [cast("dict[str, Any]", result) for result in hit_results]
             traced = window is not None and await trace_section.apply_traces(
-                attack_results, supported_hits, window, trace_section.build_refusal_judge(agent)
+                attack_results,
+                supported_hits,
+                window,
+                trace_section.build_refusal_judge(agent),
+                build_args_judge(agent),
             )
             for aggregate_index, result in enumerate(attack_results, start=1):
                 findings.append(verdict.format_finding(result, aggregate_index))
@@ -110,9 +115,11 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         worker.close()
 
     statuses = [final_status(result) for result in attack_results]
-    blocked_count = sum(1 for status in statuses if status in verdict.BLOCKED_STATUSES)
-    not_blocked_count = statuses.count("not_blocked")
-    error_count = statuses.count("error")
+    # How each hit counts: blocked, landed (reported as not_blocked) or error; see verdict.attack_outcome.
+    outcomes = [verdict.attack_outcome(result) for result in attack_results]
+    blocked_count = outcomes.count("blocked")
+    not_blocked_count = outcomes.count("landed")
+    error_count = outcomes.count("error")
     ok = not_blocked_count == 0 and error_count == 0
     # Only present when the trace step ran: one count per trace relabel, and how many hits had a trace.
     trace_counts = (
@@ -127,8 +134,8 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     )
     false_negatives = [
         result["prompt_excerpt"]
-        for result, status in zip(attack_results, statuses, strict=True)
-        if status == "not_blocked" and result.get("prompt_excerpt")
+        for result, outcome in zip(attack_results, outcomes, strict=True)
+        if outcome == "landed" and result.get("prompt_excerpt")
     ]
 
     return ValidatorReport(
