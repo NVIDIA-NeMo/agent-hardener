@@ -238,6 +238,7 @@ def _run_pipeline_e2e(
         config_path = run_dir / "pipeline.yaml"
         config_data = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         config_data["run"]["retry_limit"] = retry_limit
+        config_data["run"]["retries_enabled"] = True
         config_path.write_text(yaml.safe_dump(config_data, sort_keys=False), encoding="utf-8")
 
     _install_pipeline_mocks(

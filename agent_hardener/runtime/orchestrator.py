@@ -203,13 +203,20 @@ class Orchestrator:
         run_dir: Path | None,
         attack_traces: dict[str, AgentTrace] | None = None,
     ) -> tuple[list[RoundIterationReport], bool]:
-        """Run defend → deploy → victim → validate iterations until success or the retry limit."""
+        """Run defend → deploy → victim → validate iterations until success or the retry limit.
+
+        One iteration unless ``run.retries_enabled`` (the feature flag) is on; see :class:`RunSettings`.
+        """
         iterations: list[RoundIterationReport] = []
         validation_feedback: dict[str, ValidationFeedback] = {}
-        for iteration_number in range(1, self.config.run.retry_limit + 2):
-            recorder.emit(
-                EventType.ITERATION_STARTED, iteration=iteration_number, retry_limit=self.config.run.retry_limit
+        retry_limit = self.config.run.effective_retry_limit
+        if self.config.run.retry_limit and not self.config.run.retries_enabled:
+            recorder.logger.warning(
+                "run.retry_limit=%d is ignored: retries are disabled (set run.retries_enabled to turn them on)",
+                self.config.run.retry_limit,
             )
+        for iteration_number in range(1, retry_limit + 2):
+            recorder.emit(EventType.ITERATION_STARTED, iteration=iteration_number, retry_limit=retry_limit)
             iteration_dir = store.iteration_dir(iteration_number)
             ctx = IterationContext(
                 recorder=recorder,
