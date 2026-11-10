@@ -18,7 +18,9 @@ from agent_hardener.models import AgentHardenerModel
 class ParserToolHypothesis(AgentHardenerModel):
     """One tool the LLM thinks the described system exposes."""
 
-    name: str = Field(min_length=1, pattern=r"^[a-z][a-z0-9_]*$")
+    # No min_length: the pattern already needs a character, and grammar-constrained decoders
+    # (xgrammar) reject a schema that sets pattern and minLength on the same string.
+    name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     description: str = Field(min_length=1)
     example_inputs: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
