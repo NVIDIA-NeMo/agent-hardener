@@ -34,8 +34,9 @@ class ReplayCommand(TyperCommand):
     """Make ``--replay`` and ``--with-traces`` accept an optional value.
 
     Bare ``--replay`` replays the latest hitlog; ``--replay PATH`` replays that specific file. A replay
-    always loads the attack traces recorded next to that hitlog; ``--with-traces PATH`` loads that file
-    instead (bare ``--with-traces`` is the default, kept so existing commands still parse). Typer
+    loads the attack traces recorded next to that hitlog, or, when there are none, sends the attacks to the
+    agent to record them; ``--with-traces PATH`` loads that file instead (bare ``--with-traces`` is the
+    default, kept so existing commands still parse). Typer
     builds every option as either a flag or a value-taking option and drops Click's ``flag_value``, so
     we finish wiring the optional-value behaviour on the built Click option here (mirrors what
     ``click.Option(is_flag=False, flag_value=...)`` sets).
@@ -67,7 +68,7 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
 
     ``None`` = flag absent (no change); ``REPLAY_LATEST`` = bare flag → newest hitlog on disk;
     anything else = an explicit hitlog path. The attack traces recorded by the run that produced the
-    hitlog are always attached (see :func:`_resolve_replay_traces`).
+    hitlog are attached when they exist (see :func:`_resolve_replay_traces`).
     """
     from agent_hardener.models import PreloadedAttackConfig
     from agent_hardener.storage import find_latest_hitlog
@@ -114,25 +115,29 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
     )
 
 
-def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path:
-    """The validated attack-traces file a replay loads.
+def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path | None:
+    """The validated attack-traces file a replay loads, or ``None`` when the hitlog has none.
 
     ``None`` (flag absent) or ``TRACES_SAVED`` (bare flag) = the ``attack_traces.json`` recorded in the
-    hitlog's round directory; anything else = an explicit file. A missing or invalid file fails fast:
-    without the traces the guardrails defender cannot write a single rail.
+    hitlog's round directory; when it is missing the run starts anyway and the attacks are sent to the agent
+    to record their traces (:func:`agent_hardener.traces.replay_attacks.replay_attacks_for_traces`). Anything
+    else = an explicit file, which must exist. An invalid file fails fast either way.
     """
     from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, load_recording
 
-    if with_traces is None or with_traces == TRACES_SAVED:
-        # Hitlogs are written under round_<N>/garak/, the recording under round_<N>/.
-        path = hitlog_path.resolve().parent.parent / ATTACK_TRACES_FILENAME
-    else:
-        path = Path(with_traces).resolve()
+    explicit = with_traces is not None and with_traces != TRACES_SAVED
+    # Hitlogs are written under round_<N>/garak/, the recording under round_<N>/.
+    path = (
+        Path(str(with_traces)).resolve() if explicit else hitlog_path.resolve().parent.parent / ATTACK_TRACES_FILENAME
+    )
     if not path.is_file():
-        fail(
-            f"Attack traces not found: {path}. A replay needs the traces recorded with its hitlog: replay a "
-            "hitlog from a run of this version, or pass --with-traces PATH."
-        )
+        if not explicit:
+            info(
+                f"No recorded attack traces next to the hitlog ({path}): the attacks will be sent to the agent "
+                "to record them."
+            )
+            return None
+        fail(f"Attack traces not found: {path}.")
         raise typer.Exit(1)
     try:
         count = len(load_recording(path))
@@ -175,9 +180,9 @@ def run(
         None,
         "--with-traces",
         metavar="[PATH]",
-        help="With --replay: the attack traces to replay with. A replay always loads them (the guardrails "
-        "defender needs each attack's trace); by default the attack_traces.json recorded next to the hitlog, "
-        "or pass a path to load that file instead.",
+        help="With --replay: the attack traces to replay with (the guardrails defender needs each attack's "
+        "trace). By default the attack_traces.json recorded next to the hitlog; when there is none, the attacks "
+        "are sent to the agent to record their traces. Pass a path to load that file instead.",
     ),
     verbose: bool = typer.Option(
         False,

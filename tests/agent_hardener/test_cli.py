@@ -103,17 +103,21 @@ def test_run_replay_resolves_latest_hitlog_from_run_logs(tmp_path: Path, monkeyp
     ]
 
 
-def test_run_replay_without_recorded_traces_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The guardrails defender cannot write a rail without each attack's trace."""
+def test_run_replay_without_recorded_traces_starts_and_replays_the_attacks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no recording the attacks are sent to the agent to record their traces, instead of failing."""
     hitlog = tmp_path / "round_1" / "garak" / "old.hitlog.jsonl"
     hitlog.parent.mkdir(parents=True)
     hitlog.write_text("{}\n", encoding="utf-8")
-    _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
+    captured = _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
 
     result = runner.invoke(app, ["run", "--replay", str(hitlog)])
 
-    assert result.exit_code == 1
-    assert "Attack traces not found" in result.output
+    assert result.exit_code == 0
+    assert "the attacks will be sent to the agent" in result.output
+    (config,) = captured
+    assert [attack.traces_path for attack in config.preloaded_attacks] == [None]
 
 
 def test_run_victim_image_reaches_the_sandbox_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

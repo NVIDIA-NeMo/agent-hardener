@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from agent_hardener.agents.attackers.preloaded import load_preloaded_attack_traces
+from agent_hardener.agents.victims.openshell_victim import contract_for
 from agent_hardener.events import EventType
 from agent_hardener.ids import format_round_id, generate_round_id
 from agent_hardener.models import (
@@ -46,13 +47,15 @@ from agent_hardener.swarm_tracker import (
 )
 from agent_hardener.traces import trace_clock, traces_since
 from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, by_prompt, collect_attack_traces, dump_recording
+from agent_hardener.traces.replay_attacks import replay_attacks_for_traces
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable
     from pathlib import Path
 
     from agent_hardener.agents.defenders.defenders_manager import DefendersManager
     from agent_hardener.traces import AgentTrace, TraceProvider
+    from agent_hardener.traces.attacks import RecordedAttackTrace
 
 
 class Orchestrator:
@@ -70,6 +73,7 @@ class Orchestrator:
         verify_tool_path: Callable[[], None] | None = None,
         sync_atof: Callable[[], None] | None = None,
         trace_provider: TraceProvider | None = None,
+        replay_attacks: Callable[..., Awaitable[list[RecordedAttackTrace]]] = replay_attacks_for_traces,
     ) -> None:
         self.config = config
         # The victim's traces: recorded for every round's attacks, and handed to every agent invoked
@@ -81,6 +85,10 @@ class Orchestrator:
         self.verify_tool_path = verify_tool_path
         self.sync_atof = sync_atof
         self._tool_path_verified = False
+        # A replay sends the attacks with no recorded trace to the agent once, in its first round, and
+        # reuses what that produced: later rounds' agent already carries rails written from those traces.
+        self.replay_attacks = replay_attacks
+        self._replay_traces: dict[str, AgentTrace] | None = None
         self.round_id_factory = round_id_factory
         self.mission_id_factory = mission_id_factory
 
@@ -161,13 +169,21 @@ class Orchestrator:
             #
             # Only when an attacker actually ran. A replay feeds the defenders recorded hits without
             # invoking the victim at all, so there is no traffic to judge and a passing victim would
-            # be failed for someone else's silence.
+            # be failed for someone else's silence (a replay that re-sends attacks checks below).
             if self.verify_tool_path is not None and not self._tool_path_verified and self.config.attackers:
                 self.verify_tool_path()
                 self._tool_path_verified = True
-            # Recorded whenever traces are on and live attackers ran; a replay loads its recording instead.
+            # Recorded whenever traces are on and live attackers ran. A replay loads its recording, and
+            # replays the attacks the recording has no trace for to obtain theirs.
+            recorded = _replayed_attack_traces(self.config, recorder)
+            replay_provider = self._replay_provider()
             attack_traces = {
-                **_replayed_attack_traces(self.config, recorder),
+                **(
+                    await self._replay_for_traces(replay_provider, recorder, store, attacks, recorded)
+                    if replay_provider is not None
+                    else {}
+                ),
+                **recorded,
                 **(await _collect_attack_traces(provider, recorder, store, attacks, anchor) if provider else {}),
             }
             iterations, success = await self._run_iterations(recorder, store, attacks, run_dir, attack_traces)
@@ -194,6 +210,49 @@ class Orchestrator:
             recorder.emit(EventType.REPORT_WRITTEN, path=str(report_path), success=success)
             recorder.emit(EventType.ROUND_COMPLETED, success=success, iterations=len(iterations))
             return report
+
+    def _replay_provider(self) -> TraceProvider | None:
+        """The trace provider in a replay run (recorded hits, no live attacker), else ``None``."""
+        replay = not self.config.attackers and bool(self.config.preloaded_attacks)
+        return self.trace_provider if replay else None
+
+    async def _replay_for_traces(
+        self,
+        provider: TraceProvider,
+        recorder: RunRecorder,
+        store: RoundStore,
+        attacks: list[AttackRecord],
+        recorded: dict[str, AgentTrace],
+    ) -> dict[str, AgentTrace]:
+        """Traces for the replayed attacks that have no recorded one, obtained by sending them to the agent.
+
+        Done once per run, in its first round, and written to that round's ``attack_traces.json``; later
+        rounds reuse the result. A failure never fails the round: those attacks reach the defenders without
+        a trace, and the defender reports it.
+        """
+        if self._replay_traces is not None:
+            return self._replay_traces
+        try:
+            replayed = await self.replay_attacks(
+                attacks,
+                recorded=recorded,
+                provider=provider,
+                contract=contract_for(self.config.target.base_url, self.config.victim),
+            )
+        except Exception:
+            recorder.logger.warning("could not replay the attacks for their traces", exc_info=True)
+            replayed = []
+        self._replay_traces = by_prompt(replayed)
+        if replayed:
+            # The replay was the run's first tool traffic: prove it reaches Relay before writing guardrails.
+            if self.verify_tool_path is not None and not self._tool_path_verified:
+                self.verify_tool_path()
+                self._tool_path_verified = True
+            path = store.write_round_json(ATTACK_TRACES_FILENAME, dump_recording(replayed))
+            recorder.emit(
+                EventType.ARTIFACT_WRITTEN, artifact=ATTACK_TRACES_FILENAME, path=str(path), count=len(replayed)
+            )
+        return self._replay_traces
 
     async def _run_iterations(
         self,
@@ -254,10 +313,10 @@ class Orchestrator:
 
 
 def _replayed_attack_traces(config: SessionConfig, recorder: RunRecorder) -> dict[str, AgentTrace]:
-    """Traces recorded by an earlier run, for a replay with traces (``--replay --with-traces``).
+    """Traces recorded by an earlier run, for a replay (``--replay``; ``--with-traces PATH`` to pick the file).
 
-    The CLI already validated the file, so a failure here (it changed since) is logged and the
-    replayed hits run without traces rather than failing the round.
+    The CLI already validated the file, so a failure here (it changed since) is logged and the replayed hits
+    are treated as unrecorded: :meth:`Orchestrator._replay_for_traces` then sends them to the agent.
     """
     try:
         return load_preloaded_attack_traces(config.preloaded_attacks)
