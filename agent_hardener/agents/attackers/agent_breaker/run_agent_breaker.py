@@ -162,6 +162,28 @@ class ScanResult:
     config_path: str
     report_path: str | None = None
     hitlog_path: str | None = None
+    attempt_count: int | None = None
+
+
+def _attempt_count(report: Path) -> int:
+    """Count actual attempts without counting their repeated status updates."""
+    return len(
+        {
+            str(entry.get("uuid", index))
+            for index, entry in enumerate(_read_jsonl(report))
+            if entry.get("entry_type") == "attempt"
+        }
+    )
+
+
+def _empty_scan_error(result: ScanResult, *, has_hits: bool) -> str | None:
+    """Distinguish a proven empty scan from actual attempts that found no hits."""
+    if result.attempt_count != 0 or has_hits:
+        return None
+    return (
+        "Garak generated no attack attempts. Check its scan log and red-team model responses; "
+        "a model refusal or invalid tool-analysis response is not a successful zero-hit scan."
+    )
 
 
 async def run_agent_breaker_scan(
@@ -227,6 +249,7 @@ async def run_agent_breaker_scan(
         config_path=str(resolved_path),
         report_path=str(report) if report else None,
         hitlog_path=str(hitlog) if hitlog else None,
+        attempt_count=_attempt_count(report) if report else None,
     )
 
 
@@ -255,7 +278,8 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
     hit_count = len(hits)
     # Treat a non-zero exit as ok if garak still produced hits — a mid-run crash
     # (e.g. victim returning 422 on a later attempt) should not discard earlier findings.
-    ok = bool(hits) or result.return_code == 0
+    error = _empty_scan_error(result, has_hits=bool(hits))
+    ok = bool(hits) or (result.return_code == 0 and error is None)
     artifacts = []
     if result.report_path:
         artifacts.append(Artifact(type="garak_report", path=result.report_path))
@@ -265,12 +289,14 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         agent_id=agent.agent_id,
         agent_name=agent.name,
         ok=ok,
-        summary=_summary(hit_count, partial=result.return_code != 0),
+        summary=error or _summary(hit_count, partial=result.return_code != 0),
+        error=error,
         records=hits,
         artifacts=artifacts,
         metadata={
             "garak_return_code": result.return_code,
             "hit_count": hit_count,
+            "garak_attempt_count": result.attempt_count,
             "garak_report_path": result.report_path,
             "garak_config_path": result.config_path,
             "target": request.target.name,
