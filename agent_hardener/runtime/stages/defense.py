@@ -106,6 +106,7 @@ class DefenseStage:
             benign_requests=self._load_benign_requests(),
             available_defenders=self.config.defenders,
             relay_victim_spec=self._relay_victim_spec(),
+            attack_traces=ctx.attack_traces,
         )
         phase_started_at = perf_counter()
         recorder.emit(
@@ -199,7 +200,10 @@ class DefenseStage:
         csv_path = benign_profiles_dir(self.config.storage.root_dir, self.config.target.name) / "requests.csv"
         if not csv_path.exists():
             return []
-        return [BenignRequest(payload=request.payload) for request in load_requests(csv_path)]
+        return [
+            BenignRequest(payload=request.payload, tool=request.tool or None, label=request.label)
+            for request in load_requests(csv_path)
+        ]
 
     async def _run_defender(
         self,

@@ -67,6 +67,11 @@ backends:
 # Credentials come from the environment (never this file): INFERENCE_API_KEY for the analysis models,
 # NIM_API_KEY for garak (Agent Hardener mirrors INFERENCE_API_KEY into it).
 
+# ─── Execution traces ────────────────────────────────────────────────────────────────────────────
+# Always on: what the victim actually did (its LLM and tool calls) is read from NeMo Relay and recorded
+# every round (round_<N>/attack_traces.json). The guardrails defender grounds each rail in an attack's
+# trace, and the validators check each replay's trace. Relay is the only backend, so there is nothing to set.
+
 # Optional advanced: deep-merge overrides onto the expanded SessionConfig.
 # overrides:
 #   run:

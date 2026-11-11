@@ -117,9 +117,8 @@ class GarakSettings(AgentHardenerModel):
 class DefenderSettings(AgentHardenerModel):
     """Per-run overrides for the defenders, mirroring :class:`GarakSettings` for the attacker."""
 
-    # Hard cap (seconds) on each defender's execution. The guardrails defender validates its draft
-    # by invoking the victim once per augmented attack and per benign request, so a slow victim — a
-    # Fabric agent spawns an MCP subprocess and makes an LLM call per tool — can exceed the default
+    # Hard cap (seconds) on each defender's execution. The guardrails defender makes several model
+    # calls per attack (analysis, drafts, grades), so a slow endpoint can exceed the default
     # mid-refinement, which discards a guardrail that was nearly ready. Unset -> the built-in default.
     timeout_s: int | None = None
 
@@ -131,3 +130,6 @@ class PreloadedAttackConfig(AgentHardenerModel):
     path: Path
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    #: A recorded ``attack_traces.json`` to load with these hits (``run --replay``). ``None``, or a hit the
+    #: file has no trace for: the hit is sent to the agent once to record its trace (traces/replay_attacks.py).
+    traces_path: Path | None = None

@@ -15,21 +15,27 @@ import threading
 from dataclasses import dataclass
 from pathlib import Path
 from time import perf_counter
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
+from agent_hardener.agents.validators.garak_replay import traces as trace_section
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
 from agent_hardener.agents.validators.replay_http import ReplayResult
 from agent_hardener.agents.validators.replay_http import replay_prompt as replay_http_prompt
+from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import gather_limited_ordered
 from agent_hardener.env import GARAK_REPO_PATH
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
 from agent_hardener.llm_telemetry import emit_agent_exchange
 from agent_hardener.models import AgentConfig, AgentRunInput, ValidatorReport
 from agent_hardener.rate_limits import RateLimitError, raise_for_rate_limit_response
+
+if TYPE_CHECKING:
+    from agent_hardener.runtime.run_context import RunContext
 
 __all__ = [
     "AttackType",
@@ -48,9 +54,16 @@ _DETECT_WORKER = Path(__file__).resolve().parent / "_garak_detect_worker.py"
 
 logger = logging.getLogger(__name__)
 
+#: The detector's own statuses; anything else in a report is a trace relabel.
+_DETECTOR_STATUSES = frozenset({"blocked", "not_blocked", "error"})
 
-async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
-    """Replay supported Garak attack hits and return one result per hit."""
+
+async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None = None) -> ValidatorReport:
+    """Replay supported Garak attack hits and return one result per hit.
+
+    With the victim's traces (``ctx.trace_provider``) the results also say whether each hit's target
+    tool actually ran (:mod:`.garak_replay.traces`); without them this is the detector-only validator.
+    """
     kind = validator_kind(request, agent)
     config = build_config(request, agent)
     attack_results: list[dict[str, Any]] = []
@@ -73,6 +86,8 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
             },
         )
 
+    # Opened before any replay so the window excludes everything the victim did earlier.
+    window = await open_trace_window(ctx)
     detector_cache: dict[AttackType, Any] = {}
     worker = PersistentGarakWorker(
         repo_path=str(config.garak_repo_path) if config.garak_repo_path else os.getenv(GARAK_REPO_PATH),
@@ -87,19 +102,40 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
                 lambda item: _validate_hit_timed(item[0], item[1], request, config, client, worker, detector_cache),
             )
             attack_results = [cast("dict[str, Any]", result) for result in hit_results]
+            traced = window is not None and await trace_section.apply_traces(
+                attack_results,
+                supported_hits,
+                window,
+                trace_section.build_refusal_judge(agent),
+                build_args_judge(agent, "attack"),
+            )
             for aggregate_index, result in enumerate(attack_results, start=1):
                 findings.append(verdict.format_finding(result, aggregate_index))
     finally:
         worker.close()
 
-    blocked_count = sum(1 for result in attack_results if result["verdict"]["status"] == "blocked")
-    not_blocked_count = sum(1 for result in attack_results if result["verdict"]["status"] == "not_blocked")
-    error_count = sum(1 for result in attack_results if result["verdict"]["status"] == "error")
+    statuses = [final_status(result) for result in attack_results]
+    # How each hit counts: blocked, landed (reported as not_blocked) or error; see verdict.attack_outcome.
+    outcomes = [verdict.attack_outcome(result) for result in attack_results]
+    blocked_count = outcomes.count("blocked")
+    not_blocked_count = outcomes.count("landed")
+    error_count = outcomes.count("error")
     ok = not_blocked_count == 0 and error_count == 0
+    # Only present when the trace step ran: one count per trace relabel, and how many hits had a trace.
+    trace_counts = (
+        {
+            **{f"{status}_count": statuses.count(status) for status in sorted(set(statuses) - _DETECTOR_STATUSES)},
+            "traced_count": sum(
+                1 for result in attack_results if result["tool_facts"].get("trace_status") == "inspected"
+            ),
+        }
+        if traced
+        else {}
+    )
     false_negatives = [
         result["prompt_excerpt"]
-        for result in attack_results
-        if result["verdict"]["status"] == "not_blocked" and result.get("prompt_excerpt")
+        for result, outcome in zip(attack_results, outcomes, strict=True)
+        if outcome == "landed" and result.get("prompt_excerpt")
     ]
 
     return ValidatorReport(
@@ -115,6 +151,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
             "blocked_count": blocked_count,
             "not_blocked_count": not_blocked_count,
             "error_count": error_count,
+            **trace_counts,
             "attack_results": attack_results,
             "concurrency": config.concurrency,
         },

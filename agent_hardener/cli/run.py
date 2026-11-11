@@ -26,12 +26,17 @@ if TYPE_CHECKING:
 
 # Sentinel value `--replay` takes when passed bare (no path): replay the latest run's hitlog.
 REPLAY_LATEST = "__latest__"
+# Sentinel value `--with-traces` takes when passed bare: load the traces recorded next to the hitlog.
+TRACES_SAVED = "__saved__"
 
 
 class ReplayCommand(TyperCommand):
-    """Make ``--replay`` accept an optional value.
+    """Make ``--replay`` and ``--with-traces`` accept an optional value.
 
-    Bare ``--replay`` replays the latest hitlog; ``--replay PATH`` replays that specific file. Typer
+    Bare ``--replay`` replays the latest hitlog; ``--replay PATH`` replays that specific file. A replay
+    loads the attack traces recorded next to that hitlog, or, when there are none, sends the attacks to the
+    agent to record them; ``--with-traces PATH`` loads that file instead (bare ``--with-traces`` is the
+    default, kept so existing commands still parse). Typer
     builds every option as either a flag or a value-taking option and drops Click's ``flag_value``, so
     we finish wiring the optional-value behaviour on the built Click option here (mirrors what
     ``click.Option(is_flag=False, flag_value=...)`` sets).
@@ -39,10 +44,11 @@ class ReplayCommand(TyperCommand):
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
+        sentinels = {"replay": REPLAY_LATEST, "with_traces": TRACES_SAVED}
         for param in self.params:
-            if isinstance(param, click.Option) and param.name == "replay":
+            if isinstance(param, click.Option) and param.name in sentinels:
                 param.is_flag = False
-                param.flag_value = REPLAY_LATEST
+                param.flag_value = sentinels[param.name]
                 param._flag_needs_value = True
 
 
@@ -57,17 +63,21 @@ def _apply_initial_overrides(relay_plugins: Path | None, policy: Path | None) ->
         info(f"Initial {label}: {path}")
 
 
-def _resolve_replay(replay: str | None, session_config: SessionConfig) -> SessionConfig:
+def _resolve_replay(replay: str | None, session_config: SessionConfig, with_traces: str | None = None) -> SessionConfig:
     """Fold the three-way ``--replay`` value into the config: drop attackers, add a preloaded suite.
 
     ``None`` = flag absent (no change); ``REPLAY_LATEST`` = bare flag → newest hitlog on disk;
-    anything else = an explicit hitlog path.
+    anything else = an explicit hitlog path. The attack traces recorded by the run that produced the
+    hitlog are attached when they exist (see :func:`_resolve_replay_traces`).
     """
     from agent_hardener.models import PreloadedAttackConfig
     from agent_hardener.storage import find_latest_hitlog
     from agent_hardener.swarm_tracker import run_logs_root
 
     if replay is None:
+        if with_traces is not None:
+            fail("--with-traces needs --replay: a live run collects its traces from the trace provider.")
+            raise typer.Exit(1)
         return session_config
 
     if replay == REPLAY_LATEST:
@@ -89,14 +99,53 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig) -> Sessio
         preload_name = "uploaded"
 
     info(f"Replaying attacks from: {hitlog_path}")
+    traces_path = _resolve_replay_traces(with_traces, hitlog_path)
     return session_config.model_copy(
         update={
             "attackers": [],
             "preloaded_attacks": [
-                PreloadedAttackConfig(name=preload_name, path=hitlog_path.resolve(), source="garak-agent-breaker")
+                PreloadedAttackConfig(
+                    name=preload_name,
+                    path=hitlog_path.resolve(),
+                    source="garak-agent-breaker",
+                    traces_path=traces_path,
+                )
             ],
         }
     )
+
+
+def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path | None:
+    """The validated attack-traces file a replay loads, or ``None`` when the hitlog has none.
+
+    ``None`` (flag absent) or ``TRACES_SAVED`` (bare flag) = the ``attack_traces.json`` recorded in the
+    hitlog's round directory; when it is missing the run starts anyway and the attacks are sent to the agent
+    to record their traces (:func:`agent_hardener.traces.replay_attacks.replay_attacks_for_traces`). Anything
+    else = an explicit file, which must exist. An invalid file fails fast either way.
+    """
+    from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, load_recording
+
+    explicit = with_traces is not None and with_traces != TRACES_SAVED
+    # Hitlogs are written under round_<N>/garak/, the recording under round_<N>/.
+    path = (
+        Path(str(with_traces)).resolve() if explicit else hitlog_path.resolve().parent.parent / ATTACK_TRACES_FILENAME
+    )
+    if not path.is_file():
+        if not explicit:
+            info(
+                f"No recorded attack traces next to the hitlog ({path}): the attacks will be sent to the agent "
+                "to record them."
+            )
+            return None
+        fail(f"Attack traces not found: {path}.")
+        raise typer.Exit(1)
+    try:
+        count = len(load_recording(path))
+    except ValueError as exc:
+        fail(f"Not a valid attack traces file: {path} ({exc.__class__.__name__})")
+        raise typer.Exit(1) from exc
+    info(f"Replaying with {count} recorded attack trace(s) from: {path}")
+    return path
 
 
 def _apply_benign_suite(benign_suite: Path | None, session_config: SessionConfig) -> SessionConfig:
@@ -126,6 +175,14 @@ def run(
         metavar="[PATH]",
         help="Skip the attacker and replay recorded garak hits. Bare replays the latest run's hitlog; "
         "pass a path to a garak hitlog (.jsonl) to replay that specific file.",
+    ),
+    with_traces: str | None = typer.Option(
+        None,
+        "--with-traces",
+        metavar="[PATH]",
+        help="With --replay: the attack traces to replay with (the guardrails defender needs each attack's "
+        "trace). By default the attack_traces.json recorded next to the hitlog; when there is none, the attacks "
+        "are sent to the agent to record their traces. Pass a path to load that file instead.",
     ),
     verbose: bool = typer.Option(
         False,
@@ -183,7 +240,7 @@ def run(
         preflight_configured_models()
         _apply_initial_overrides(relay_plugins, policy)
         session_config = load_config(str(config), relay_plugins=relay_plugins, policy=policy)
-        session_config = _resolve_replay(replay, session_config)
+        session_config = _resolve_replay(replay, session_config, with_traces)
         session_config = _apply_benign_suite(benign_suite, session_config)
         if victim_image is not None:
             session_config = session_config.model_copy(

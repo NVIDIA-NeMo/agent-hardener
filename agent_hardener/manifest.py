@@ -21,7 +21,14 @@ import yaml  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
 from agent_hardener.config import parse_config_data
-from agent_hardener.models import AgentHardenerModel, DefenderSettings, GarakSettings, RelayVictimSpec, SessionConfig
+from agent_hardener.models import (
+    AgentHardenerModel,
+    DefenderSettings,
+    GarakSettings,
+    RelayVictimSpec,
+    SessionConfig,
+    TracesConfig,
+)
 from agent_hardener.openshell.naming import sandbox_name
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 
@@ -118,6 +125,7 @@ class AgentManifest(AgentHardenerModel):
     backends: list[BackendManifest] = Field(default_factory=list)
     garak: GarakSettings | None = None
     defenders: DefenderSettings | None = None
+    traces: TracesConfig | None = None
     overrides: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -276,17 +284,20 @@ def _default_defenders(agent: AgentSpec, defenders_settings: DefenderSettings) -
     # project has to contain, so there is nothing left to gate on. It derives the targeted tool per
     # attack record; ``guardrails_tool`` is only an optional hint, so it must NOT gate inclusion
     # (under NAT, gating on the workflow left the guardrails defender silently disabled).
+    guardrails_config: dict[str, Any] = {}
+    if agent.guardrails_tool:
+        guardrails_config["target_tool"] = agent.guardrails_tool
     defenders.append(
         {
             "name": "defender-guardrails",
-            "implementation": "agent_hardener.agents.defenders.guardrails_defender_v2.guardrails_defender_agent:run",
+            "implementation": "agent_hardener.agents.defenders.guardrails_defender:run",
             "timeout_seconds": timeout,
             "capabilities": (
                 "Mitigates prompt injection, unsafe tool invocations, sensitive content disclosure, "
                 "reconnaissance commands, and untrusted content handling through LLM-generated "
                 "guardrail rules."
             ),
-            "config": {"target_tool": agent.guardrails_tool} if agent.guardrails_tool else {},
+            "config": guardrails_config,
         }
     )
     return defenders
@@ -371,6 +382,7 @@ def expand(
         "storage": storage,
         "run": {"rounds": 1},
         "garak": garak.model_dump(),
+        "traces": (manifest.traces or TracesConfig()).model_dump(),
         "victim_control": {
             "type": "openshell",
             "config": {
@@ -514,6 +526,10 @@ def render_manifest_yaml(manifest: dict) -> str:
         "#   red_team_model_name: nvidia/nemotron-3-ultra-550b-a55b   # also via GARAK_RED_TEAM_MODEL_NAME\n"
         "#   detector_model_name: nvidia/nemotron-3-ultra-550b-a55b\n"
         "#   max_attempts_per_tool: 5\n"
+        "\n"
+        "# Optional: defender settings. Omit for the defaults.\n"
+        "# defenders:\n"
+        "#   timeout_s: 900\n"
         "\n"
         "# overrides: {}  # deep-merge into the expanded SessionConfig (advanced)\n"
     )

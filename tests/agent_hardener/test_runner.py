@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agent_hardener.errors import BenignSuiteError
-from agent_hardener.models import TargetInput
+from agent_hardener.models import TargetInput, TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime.runner import Mission, MissionError, run_mission
 
@@ -53,6 +53,7 @@ def _session(
         target=SimpleNamespace(base_url=base_url, agent_relay_plugins=None),
         benign_validators=[],
         storage=SimpleNamespace(root_dir=root_dir or Path(tempfile.mkdtemp()), run_id="test-run"),
+        traces=TracesConfig(),
     )
 
 

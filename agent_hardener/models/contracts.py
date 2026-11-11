@@ -19,6 +19,7 @@ from pydantic import Field
 from agent_hardener.models.agent import AgentConfig, TargetInput
 from agent_hardener.models.base import AgentHardenerModel, ValidatorKind
 from agent_hardener.models.infra import RelayVictimSpec
+from agent_hardener.models.traces import AgentTrace
 
 
 class Artifact(AgentHardenerModel):
@@ -33,6 +34,10 @@ class BenignRequest(AgentHardenerModel):
     """Represents a baseline, normal user request for the defenders to protect."""
 
     payload: str
+    #: The tool the suite expects this request to exercise (the suite's ``tool`` column), when known.
+    tool: str | None = None
+    #: The suite's ``label`` column (``benign``, ``borderline_benign`` or ``negative_control``), when known.
+    label: str | None = None
 
 
 class AttackRecord(AgentHardenerModel):
@@ -63,6 +68,8 @@ class DefenderInput(AgentHardenerModel):
     agent_response: str
     attacked_tool: str
     benign_requests: list[str] = Field(default_factory=list)
+    #: The same requests with the tool each exercises and its label, for defenders that work per tool.
+    benign_suite: list[BenignRequest] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
     #: The run's active-state NeMo Relay plugin config; the guardrails defender extends it.
     relay_plugins_path: Path | None = None
@@ -70,6 +77,8 @@ class DefenderInput(AgentHardenerModel):
     # The run's victim_control.config["relay_victim"] spec (agent_env/egress/backends), so extraction
     # can treat the agent's own required endpoints as ground-truth benign.
     relay_victim_spec: RelayVictimSpec | None = None
+    #: The trace of the attempt behind this attack; ``None`` when none was recorded for it.
+    attack_trace: AgentTrace | None = None
 
 
 class DefenderOutput(AgentHardenerModel):
@@ -97,6 +106,8 @@ class DefendersManagerInput(AgentHardenerModel):
     available_defenders: list[AgentConfig] = Field(default_factory=list)
     # The run's victim_control.config["relay_victim"] spec, threaded into every DefenderInput built below.
     relay_victim_spec: RelayVictimSpec | None = None
+    #: The round's attack traces keyed by normalized prompt (``traces.attacks.attack_key``).
+    attack_traces: dict[str, AgentTrace] = Field(default_factory=dict)
 
 
 class DefenderAnalysis(AgentHardenerModel):

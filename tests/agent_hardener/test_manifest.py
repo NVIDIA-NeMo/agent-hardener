@@ -248,6 +248,15 @@ def test_expand_guardrails_opt_in() -> None:
     assert config.defenders[1].config["target_tool"] == "transfer_funds"
 
 
+def test_the_guardrails_defender_has_one_entry_point_and_no_version_flag() -> None:
+    defender = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT).defenders[1]
+
+    assert defender.implementation == "agent_hardener.agents.defenders.guardrails_defender:run"
+    assert defender.config == {}
+    with pytest.raises(ValueError, match="guardrails_version"):
+        AgentManifest.model_validate({**AGENT, "defenders": {"guardrails_version": "v3"}})
+
+
 def test_overrides_deep_merge() -> None:
     base = {**AGENT, "overrides": {"run": {"rounds": 5}}}
     config = expand(AgentManifest.model_validate(base), base_dir=REPO_ROOT)

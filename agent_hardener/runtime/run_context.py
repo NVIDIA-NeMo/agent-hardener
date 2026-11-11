@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from agent_hardener.traces import TraceProvider
+
 
 def _noop_progress(msg: str, cur: int | None = None, tot: int | None = None) -> None:
     pass
@@ -25,3 +27,6 @@ class RunContext:
     """
 
     emit_progress: Callable[[str, int | None, int | None], None] = field(default=_noop_progress)
+    #: The victim's traces. ``None`` only for a plain HTTP target with no relay-victim block, where
+    #: there is nothing to read; consumers then run without them.
+    trace_provider: TraceProvider | None = None

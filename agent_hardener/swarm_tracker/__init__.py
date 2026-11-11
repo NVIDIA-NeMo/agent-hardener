@@ -10,6 +10,7 @@ should build paths into run_logs/ directly.
 from agent_hardener.swarm_tracker.layout import (
     GARAK,
     OPENSHELL_LOGS,
+    TRACES,
     ArtifactKind,
     RunLayout,
     Scope,
@@ -33,6 +34,7 @@ from agent_hardener.swarm_tracker.writers import write_component_output, write_r
 __all__ = [
     "GARAK",
     "OPENSHELL_LOGS",
+    "TRACES",
     "ArtifactKind",
     "RunLayout",
     "Scope",

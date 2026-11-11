@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, ValidationInfo, field_validator, model_validator
 
@@ -39,10 +39,32 @@ class RunConcurrencySettings(AgentHardenerModel):
 class RunSettings(AgentHardenerModel):
     """Run-loop and retry settings."""
 
+    #: Feature flag for the retry loop: after a failed validation, the validators' findings are fed back to
+    #: the defenders for another defend → deploy → validate iteration, up to ``retry_limit`` times. Off by
+    #: default because that loop has not been tested or evaluated with the current defenders; while it is
+    #: off every round runs one iteration and ``retry_limit`` is ignored.
+    retries_enabled: bool = False
     retry_limit: int = Field(default=0, ge=0)
     rounds: int = Field(default=500, ge=1)
     round_interval_seconds: float = Field(default=0.0, ge=0)
     concurrency: RunConcurrencySettings = Field(default_factory=RunConcurrencySettings)
+
+    @property
+    def effective_retry_limit(self) -> int:
+        """The retries a round may run: ``retry_limit`` with the feature flag on, else none."""
+        return self.retry_limit if self.retries_enabled else 0
+
+
+class TracesConfig(AgentHardenerModel):
+    """Which backend the victim's execution traces come from.
+
+    Traces are always on: the guardrails defender grounds every rail in an attack's trace, and the
+    validators read the replay traces. ``relay`` (NeMo Relay's ATOF log, which every victim already
+    writes) is the only backend so far; another is one more name here and one ``case`` in
+    :func:`agent_hardener.traces.factory.build_trace_provider`.
+    """
+
+    provider: Literal["relay"] = "relay"
 
 
 class SessionConfig(AgentHardenerModel):
@@ -51,6 +73,7 @@ class SessionConfig(AgentHardenerModel):
     storage: StorageConfig
     run: RunSettings = Field(default_factory=RunSettings)
     victim_control: VictimControlConfig = Field(default_factory=VictimControlConfig)
+    traces: TracesConfig = Field(default_factory=TracesConfig)
     garak: GarakSettings | None = None
     target: TargetInput
     context: dict[str, Any] = Field(default_factory=dict)

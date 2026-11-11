@@ -6,7 +6,7 @@ The current main demo protects a NAT research agent running inside an OpenShell 
 
 - Garak-style attack evidence or live Garak attackers.
 - An OpenShell policy defender that creates candidate network policy updates.
-- A guardrails defender that updates the NAT workflow YAML with pre-tool verifier middleware.
+- A traces guardrails defender that reads each attack's execution trace and writes a NeMo Relay guardrail on the tool call that did the harm.
 - OpenShell victim-control that applies policy updates, uploads workflow updates, and restarts the victim.
 - Attack and benign validators that prove the defended agent blocks the attacks without breaking normal requests.
 
@@ -456,7 +456,9 @@ Useful run controls:
 
 ```text
 --rounds N         Carry generated policy/workflow forward across N hardening rounds.
---replay           Skip live attackers; replay hits from the latest run instead.
+--replay           Skip live attackers; replay hits from the latest run instead. Their recorded attack
+                   traces are loaded; attacks with none are sent to the agent once to record them.
+--with-traces PATH With --replay: load the attack traces from PATH instead.
 --reuse            Skip sandbox rebuild if it is already running; a --victim-image sandbox is reused as-is.
 --victim-image     Create the sandbox from a pre-built image (see `agent-hardener stage`) instead of docker build.
 --no-cleanup       Leave sandbox running after the run.

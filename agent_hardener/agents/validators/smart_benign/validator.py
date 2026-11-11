@@ -21,6 +21,8 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
+from agent_hardener.agents.validators.args_judge import build_args_judge
+from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import agent_concurrency
 from agent_hardener.env import INFERENCE_API_KEY, inference_api_key
 from agent_hardener.events import EventType
@@ -32,12 +34,15 @@ from .driver import drive_synth
 from .graph import quiet_warnings
 from .models import GeneratedRequest
 from .replay_judge import ReplayJudgeConfig, format_finding, run_all, stats_key
+from .replay_judge import traces as trace_section
 from .state import SynthInputs, SynthState
 from .subgraphs.profile_synthesizer import compute_input_hash
 from .tracing import make_langfuse_callbacks
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
+
+    from agent_hardener.runtime.run_context import RunContext
 
     from .driver import AnswerProvider
     from .replay_judge.config import ReplayMode
@@ -63,12 +68,16 @@ class SynthResult:
         return self.request_count > 0
 
 
-async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
+async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None = None) -> ValidatorReport:
     """Replay the pre-synthesized benign suite against the victim and judge refusal.
 
     Synthesis happens out-of-loop (see :func:`synthesize`); this loads the cached
     ``requests.csv`` and replays it. If no suite exists yet, it hard-fails with
     guidance rather than running the expensive synth DAG inside the retry loop.
+
+    With the victim's traces (``ctx.trace_provider``) the rows also say whether their tool ran, and a
+    refusal says which tool was blocked and by what (:mod:`.replay_judge.traces`); without them this is
+    the judge-only validator.
     """
     started = perf_counter()
     log_fields: dict[str, Any] = {
@@ -95,9 +104,14 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> ValidatorReport:
         return _empty_report(agent, started, artifact_dir, reason=f"{csv_path} is empty")
 
     cfg = _build_config(request, agent)
+    # Opened before any replay so the window excludes everything the victim did earlier.
+    window = await open_trace_window(ctx)
     with quiet_warnings():
         row_results = await run_all(requests, cfg)
-    return _build_report(agent, artifact_dir, row_results, started)
+    traced = window is not None and await trace_section.apply_traces(
+        row_results, requests, window, build_args_judge(agent, "benign")
+    )
+    return _build_report(agent, artifact_dir, row_results, started, traced=traced)
 
 
 def cached_suite_count(request: AgentRunInput, agent: AgentConfig) -> int | None:
@@ -415,6 +429,7 @@ def _benign_report(
     findings: list[str] | None = None,
     error: str | None = None,
     metadata: dict[str, Any] | None = None,
+    false_positives: list[str] | None = None,
 ) -> ValidatorReport:
     """Build a benign ``ValidatorReport``, stamping ``duration_ms`` into its metadata."""
     meta = {"duration_ms": round((perf_counter() - started) * 1000, 3), **(metadata or {})}
@@ -427,7 +442,11 @@ def _benign_report(
         findings=findings or [],
         error=error,
         metadata=meta,
+        false_positives=false_positives or [],
     )
+
+
+_JUDGE_STATUSES = frozenset({"complied", "refused", "error"})
 
 
 def _build_report(
@@ -435,29 +454,47 @@ def _build_report(
     artifact_dir: Path,
     row_results: list[dict[str, Any]],
     started: float,
+    *,
+    traced: bool = False,
 ) -> ValidatorReport:
     per_tool: dict[str, dict[str, int]] = {}
     counts = {"complied": 0, "refused": 0, "error": 0}
     for result in row_results:
-        status = result["verdict"]["status"]
-        counts[status] += 1
+        status = final_status(result)
+        counts[status] = counts.get(status, 0) + 1
         tool_stats = per_tool.setdefault(result["tool"], {"complied": 0, "refused": 0, "errors": 0})
-        tool_stats[stats_key(status)] += 1
+        tool_stats[stats_key(status)] = tool_stats.get(stats_key(status), 0) + 1
+    # Trace relabels (only present when the trace step ran) get their own count after the usual three.
+    trace_counts = {f"{status}_count": count for status, count in counts.items() if status not in _JUDGE_STATUSES}
+    if traced:
+        trace_counts["traced_count"] = sum(
+            1 for result in row_results if result["tool_facts"].get("trace_status") == "inspected"
+        )
+    # How each row counts: served, refused, not counted (agent_refused) or error; see traces.benign_outcome.
+    outcomes = [trace_section.benign_outcome(result) for result in row_results]
+    served, refused, errors = outcomes.count("served"), outcomes.count("refused"), outcomes.count("error")
+    not_counted = outcomes.count("not_counted")
+    declined = f", {not_counted} declined by the agent, not counted" if not_counted else ""
 
     return _benign_report(
         agent,
         started,
-        ok=counts["refused"] == 0 and counts["error"] == 0,
+        ok=refused == 0 and errors == 0,
         summary=(
-            f"{counts['complied']}/{len(row_results)} benign requests complied "
-            f"({counts['refused']} refused, {counts['error']} errors)"
+            f"{served}/{len(row_results) - not_counted} benign requests complied "
+            f"({refused} refused, {errors} errors{declined})"
         ),
         findings=[format_finding(r) for r in row_results],
+        # Only with traces: each refusal they blame on our guardrail or network policy (or could not
+        # explain), so a retry's defenders see which tool they over-blocked.
+        false_positives=[fp for fp in map(trace_section.false_positive, row_results) if fp] if traced else [],
         metadata={
             "total": len(row_results),
-            "complied_count": counts["complied"],
-            "refused_count": counts["refused"],
-            "error_count": counts["error"],
+            "complied_count": served,
+            "refused_count": refused,
+            "error_count": errors,
+            "not_counted_count": not_counted,
+            **trace_counts,
             "per_tool": per_tool,
             "results": row_results,
             "artifact_dir": str(artifact_dir),

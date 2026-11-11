@@ -209,74 +209,73 @@ adversarial outputs but is not applied on the benign path. <br>
 ## Evaluation Agent(s): <br>
 The evaluated system is Agent Hardener's own loop, comprising: <br>
 * **1 attacker** — Agent Breaker, driving a garak probe swarm <br>
-* **2 defenders** — the Guardrails defender (writes pre-tool verifier middleware) and the
+* **2 defenders** — the Traces guardrails defender (reads each attack's execution trace and writes a
+  guardrail on the tool call that did the harm, enforced inside the victim through NeMo Relay) and the
   OpenShell defender (writes network policy) <br>
 * **2 validators** — an attack validator and a benign validator, which judge whether each
   request was blocked or served <br>
 * **1 benign analyser**, which synthesises the legitimate-traffic suite <br>
 
+The results below exercise the Traces guardrails defender alone, with the OpenShell defender off. <br>
+
 ## Evaluation Task(s): <br>
-A non-public, preloaded suite of adversarial prompts (prompt injection, indirect injection through
-tools, jailbreaks, tool misuse) totalling 1,050 attack attempts: 409 in round 1 and 641 in round 2,
-replayed against live agents inside an OpenShell sandbox, paired with a
-synthetic benign-traffic suite of about 150 requests per agent to measure collateral blocking. Run over **2 hardening rounds** and repeated
-**3 times** to test consistency, since each run may generate different defences. Breadth results
-cover **8 agents**. The round-over-round figures below are aggregate across the evaluated suite. <br>
+Two evaluations, on NVIDIA-internal LangGraph agents running inside an OpenShell sandbox: <br>
+* **Fixed suite, repeated.** 8 agents; 70 adversarial prompts from garak's `agent_breaker` probe
+  (prompt injection and tool misuse) that had landed on the undefended agents, each replayed with
+  its recorded execution trace, and 161 synthetic benign requests to measure collateral blocking.
+  **1 hardening round, repeated 4 times** to test consistency, since each run may write different
+  guardrails. <br>
+* **Live war games.** 3 games on 11 agents. Each game runs fresh live garak attacks against the
+  undefended agents and generates a fresh benign suite; an attack that duplicates a benign request
+  is dropped (40 of 230 attacks), never the benign one. 1 hardening round per game. In one game two
+  agents sat out: one produced no attack that reached a tool, the other no usable benign request. <br>
+
+Run setup for both: Nemotron 3 Nano (`nvidia/nvidia/Nemotron-3-Nano-30B-A3B`) as the defender, its
+grader and the in-victim guardrail judge; garak's detector on Nemotron 3 Super
+(`nvidia/nvidia/nemotron-3-super-120b-long-ctx`); tool guardrails only (no input rails); execution
+traces on, read from NeMo Relay 0.11. Measured at commit `368a3e5`; later changes removed the
+previous defender, made traces mandatory and renamed the defender, without changing its behaviour. <br>
 
 ## Evaluation Metric(s): <br>
-Attack block rate; benign-traffic pass rate; attempt success rate (share of adversarial prompts
-that land); absolute attacks landed; cost per success (prompts required per successful attack);
-tools fully defended; and validator precision and recall against manually adjudicated ground
-truth. Guardrail quality was separately rated for overfitting, generalisation, over-blocking and
-repeat consistency, and guardrail latency was measured against an unguarded baseline. <br>
+Attacks blocked: the share of replayed attacks that did not land, as judged by garak's detector,
+or by the victim's execution trace when the detector gave no verdict. Benign requests served: the
+share the benign validator's judge saw served; requests it could not judge are left out. Every rate
+is reported with its counts (k/n) and a Wilson 95% interval. Guardrail latency was measured against
+an unguarded baseline. <br>
 
 ## Evaluation Result(s): <br>
-**Headline:** the two defenders together **block 94% of attacks while still serving 83% of benign
-traffic** — roughly one in six legitimate requests is caught. Of the benign traffic that was
-blocked, 20% was rejected by network policy for resembling attack traffic. <br>
 
-**Round over round** (cumulative, 2 rounds): <br>
+| Evaluation | Attacks blocked | Benign requests served |
+|---|---|---|
+| Fixed suite, 4 repeats (8 agents) | 249/260 = **96%** (93–98%) | 488/576 = **85%** (82–87%) |
+| Live war games, 3 games (11 agents) | 172/190 = **91%** (86–94%) | 231/264 = **88%** (83–91%) |
 
-| Measure | Round 1 | Round 2 | Change |
-|---|---|---|---|
-| Attempt success rate | 34.5% | 9.8% | 3.5&times; lower |
-| Attacks landed | 141 | 63 | &minus;55% |
-| Cost per success | 2.9 | 10.2 prompts | 3.5&times; more expensive to attack |
-| Tools fully defended | 1 of 32 | 7 of 32 | &mdash; |
+**Missed attacks follow abstentions.** The defender writes no guardrail when no tool guardrail
+could tell the attack apart from ordinary use. It abstained on 5 of 280 attacks on the fixed suite
+but on 29 of 193 in the live war games, where the two agents with the most abstentions (7 each) let
+through 11 of the 18 attacks that landed. Every guardrail written is a tool guardrail tied to the
+attack it was written for. <br>
 
-Round 2 faced **57% more prompts** (409 → 641) yet **55% fewer landed**. Across **8 agents**,
-every agent improved, with a **median 3.2&times; gain** (range 2.2&times;–13.1&times;). <br>
+**Over-blocking is uneven across agents.** In the live war games the weakest agent served 17 of 28
+benign requests (61%, 42–76%); three agents served all of theirs. <br>
 
-**Validator reliability**, against manual adjudication: on attack traffic, precision **100%** and
-recall **91%** — when the validator reports an attack as blocked it is never wrong, but it
-under-reports about 1 in 10 blocks it actually achieved. On benign traffic, precision **98%** and
-recall **99%**. The under-reporting is conservative: the dominant cause is the validator scoring
-an attack as successful on the agent's demonstrated *intent* even when the guardrail refused the
-call and the tool body never executed. <br>
-
-**Guardrail quality**, rated across the suite: <br>
-
-| Criterion | Low | Medium | High |
-|---|---|---|---|
-| Overfitting to the literal attack prompt | 32% | 47% | 21% |
-| Generalisation to paraphrases and variants | 12% | 39% | 49% |
-| Over-blocking of similar benign requests | 10% | 57% | 33% |
-
-Consistency across the 3 repeats is the weakest dimension: 41% of guardrails scored well in no
-repeat, 58% in some, and only 1% in all three. <br>
-
-**Latency:** negligible. Each generated guardrail costs roughly 870 input tokens and a single
-output token (classification only, no generation); a benign suite of ~150 requests per agent, run
-10 times guarded and unguarded, showed no meaningful added runtime. Serving path mattered far more
-than the guardrail itself. <br>
+**Latency:** negligible. Measured on agents hardened by the previous version of Agent Hardener
+(0.0.15, whose guardrails defender worked from the attack prompt rather than the trace); the
+in-victim guardrail judge it measures is unchanged. Each generated guardrail costs roughly 870 input
+tokens and a single output token (classification only, no generation); a benign suite of ~150
+requests per agent, run 10 times guarded and unguarded, showed no meaningful added runtime. Serving
+path mattered far more than the guardrail itself. <br>
 
 **Caveats on these figures, stated for accuracy:** <br>
-* The evaluation used a detector that **had not yet been merged into garak** at the time of
-  measurement, so these results do not describe the behaviour of the shipped dependency pin
-  as-is. <br>
+* Attack outcomes are judged by a language model (garak's detector); its precision and recall were
+  not re-measured against manual adjudication for this defender. <br>
+* Agent Hardener turns model reasoning off for Nemotron models, for the defender, the guardrail
+  judge and the detector alike. <br>
+* Per-agent counts are small, especially in the live war games, so per-agent rates carry wide
+  intervals. <br>
 * Results are from NVIDIA-internal test agents, not customer deployments. <br>
-* Attack coverage is bounded by the probe suite used; these numbers measure improvement against
-  those probes, not absolute security. <br>
+* Attack coverage is bounded by the probe suite used; these numbers measure blocking against those
+  probes, not absolute security. <br>
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** — internal red-team scan, September 2026. <br>
@@ -317,7 +316,12 @@ operator supplies `AGENT_HARDENER_EVENT_SINK_URL`. No telemetry destination in t
 to a non-local host. All run artefacts &mdash; garak hitlogs and reports, round logs, validator
 results and hardened-agent bundles &mdash; are written to the operator's local filesystem under
 `.agent-hardener/run-logs/`, and there is no code path that uploads them anywhere. Replay outputs
-are redacted and excerpted by default. <br>
+are redacted and excerpted by default. <b>Agent traces are not redacted:</b> every run keeps a copy
+of the victim's Relay event log (`traces/`), the attack traces handed to the defenders
+(`attack_traces.json`) and the traces guardrails defender's per-attack records
+(`traces_guardrails_defender/`). The event log is copied as Relay wrote it; the attack traces and
+the defender's records hold each request's prompt, the victim's answers and every tool call's
+arguments and result, though not the conversation sent to the victim's model. <br>
 
 **Data that does leave the operator's machine.** Agent Hardener is LLM-driven, so model calls leave
 the host by design. <b>Unless the operator overrides the endpoint, those calls go to NVIDIA's hosted
@@ -326,6 +330,9 @@ API at `https://integrate.api.nvidia.com/v1` (build.nvidia.com)</b>, authenticat
 the in-victim guardrail judge. The content transmitted includes the adversarial prompts, the victim
 agent's responses to them &mdash; <b>which may contain whatever data the operator's agent can
 reach</b> &mdash; the attacked tool names and arguments, and the guardrail text derived from them.
+The traces guardrails defender also sends each attack's trace &mdash; its prompt, the
+victim's answers and every tool call's arguments and result, each clipped to 600 characters &mdash;
+to the defender's endpoint.
 By default every role uses NVIDIA Nemotron 3 Ultra (`nvidia/nemotron-3-ultra-550b-a55b`). The endpoint is fully retargetable via `AGENT_HARDENER_BASE_URL` (and
 `GARAK_RED_TEAM_MODEL_URI` / `GARAK_DETECTOR_MODEL_URI`), so an operator may direct all inference to
 a self-hosted endpoint. Separately, `agent-hardener setup` downloads `garak==0.17.0` and its

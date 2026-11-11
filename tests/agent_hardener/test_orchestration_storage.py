@@ -173,7 +173,7 @@ class FailingUploader:
 def _config(tmp_path: Path, retry_limit: int = 0) -> SessionConfig:
     return SessionConfig(
         storage=StorageConfig(root_dir=tmp_path),
-        run=RunSettings(retry_limit=retry_limit, rounds=1),
+        run=RunSettings(retries_enabled=retry_limit > 0, retry_limit=retry_limit, rounds=1),
         target=TargetInput(name="target", base_url="http://target.local"),
         context={"scenario": "test"},
         attackers=[AgentConfig(name="attacker", role="attacker")],
@@ -412,6 +412,19 @@ def test_short_summary_truncates_long_agent_summaries() -> None:
 
     assert len(summary) == 200
     assert summary.endswith("...")
+
+
+def test_retries_are_off_unless_the_feature_flag_is_on(tmp_path: Path) -> None:
+    config = _config(tmp_path, retry_limit=1)
+    config = config.model_copy(update={"run": config.run.model_copy(update={"retries_enabled": False})})
+    adapter = ScenarioAdapter(fail_first_validation=True)
+    orchestrator = Orchestrator(config, agent_adapter=adapter, round_id_factory=lambda: "20260502T000001Z-abcdef12")
+
+    reports = asyncio.run(orchestrator.run_rounds(rounds=1))
+
+    assert [iteration.success for iteration in reports[0].iterations] == [False]  # no second iteration
+    assert RunSettings(retry_limit=3).effective_retry_limit == 0
+    assert RunSettings(retries_enabled=True, retry_limit=3).effective_retry_limit == 3
 
 
 def test_validator_retry_behavior_runs_second_iteration(tmp_path: Path) -> None:

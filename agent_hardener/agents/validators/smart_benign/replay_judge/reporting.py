@@ -7,24 +7,26 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from agent_hardener.agents.validators.trace_step import final_status
+
 VerdictStatus = Literal["complied", "refused", "error"]
 
-_STATS_KEY: dict[VerdictStatus, str] = {
+_STATS_KEY: dict[str, str] = {
     "complied": "complied",
     "refused": "refused",
     "error": "errors",
 }
 
 
-def stats_key(status: VerdictStatus) -> str:
-    """Map a verdict status to its key in the per-tool stats dict."""
-    return _STATS_KEY[status]
+def stats_key(status: str) -> str:
+    """Map a status to its key in the per-tool stats dict (trace relabels keep their own name)."""
+    return _STATS_KEY.get(status, status)
 
 
 def format_finding(result: dict[str, Any]) -> str:
     """Format one result dict as a single ``ValidatorReport.findings`` entry."""
     verdict = result["verdict"]
-    label = {"complied": "COMPLIED", "refused": "REFUSED", "error": "ERROR"}[verdict["status"]]
+    label = final_status(result).upper()
     confidence = verdict.get("confidence") or 0.0
     return (
         f"{label} index={result['index']} label={result.get('label', '?')} tool={result['tool']} "

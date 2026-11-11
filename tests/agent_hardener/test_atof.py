@@ -15,7 +15,14 @@ from pathlib import Path
 
 import pytest
 
-from agent_hardener.atof import has_quarantined_scopes, is_atof_record, iter_records, load_records, tool_calls
+from agent_hardener.atof import (
+    has_quarantined_scopes,
+    is_atof_record,
+    iter_records,
+    load_records,
+    succeeded,
+    tool_calls,
+)
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "atof" / "concurrent_tool_calls.atof.jsonl"
 
@@ -109,6 +116,26 @@ def test_error_status_marks_the_call_failed() -> None:
     ]
     (call,) = tool_calls(records)
     assert call.ok is False
+
+
+@pytest.mark.parametrize("key", ["status_code", "otel_status_code", "otel.status_code"])
+def test_every_status_key_is_read(key: str) -> None:
+    """Real Relay streams carry the dotted ``otel.status_code``; an ERROR there must not read as ok."""
+    assert succeeded({"metadata": {key: "ERROR"}}) is False
+    assert succeeded({"metadata": {key: "OK"}}) is True
+
+
+def test_real_stream_error_status_marks_the_call_failed() -> None:
+    """A real end record from the example victim, with its status flipped to ERROR."""
+    records = load_records(REAL_STREAM)
+    end = next(r for r in records if r.get("scope_category") == "end" and r.get("category") == "tool")
+    assert succeeded(end) is True
+    assert succeeded({**end, "metadata": {**end["metadata"], "otel.status_code": "ERROR"}}) is False
+
+
+def test_missing_or_unknown_metadata_reads_as_ok() -> None:
+    assert succeeded({}) is True
+    assert succeeded({"metadata": {"error": "boom"}}) is False
 
 
 def test_quarantined_scope_stack_is_surfaced() -> None:

@@ -23,6 +23,8 @@ from agent_hardener.models import (
     DefendersManagerOutput,
     ValidationFeedback,
 )
+from agent_hardener.traces.attacks import attack_key
+from agent_hardener.traces.attacks import record_prompt as record_prompt_text
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +83,7 @@ def _build_policy_patches(
 ) -> list[dict[str, Any]]:
     """Build the correct patch structure based on the defender result type.
 
-    For relay_guardrail_component results (guardrails_defender_v2), the component writer has already
+    For relay_guardrail_component results (the guardrails defender), the component writer has already
     written the extended guardrail set to relay_plugins_path (the active-state copy). We need a
     victim_workflow_candidate patch so the adapter copies it to the deploy target and restarts.
 
@@ -172,6 +174,7 @@ class DefendersManager:
                 record_prompt = str(record.get("prompt", attack.summary))
                 record_response = _record_response_text(record)
                 attacked_tool = _parse_attacked_tool(record_prompt) or attack.metadata.get("attacked_tool", "")
+                attack_trace = input_data.attack_traces.get(attack_key(record_prompt_text(record)))
                 for defender in defenders:
                     if validation_feedback and defender.agent_id not in validation_feedback:
                         continue
@@ -180,10 +183,12 @@ class DefendersManager:
                         agent_response=record_response,
                         attacked_tool=attacked_tool,
                         benign_requests=benign_requests,
+                        benign_suite=input_data.benign_requests,
                         context={**enriched_context, **defender.config},
                         relay_plugins_path=relay_plugins_path,
                         feedback=validation_feedback.get(defender.agent_id) if validation_feedback else None,
                         relay_victim_spec=input_data.relay_victim_spec,
+                        attack_trace=attack_trace,
                     )
                     task_meta.append((defender, inp))
 

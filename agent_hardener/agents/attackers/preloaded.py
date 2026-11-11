@@ -16,14 +16,29 @@ from typing import TYPE_CHECKING, Any
 from agent_hardener.agents.attackers.hits import normalize_hit_record
 from agent_hardener.ids import normalize_agent_name
 from agent_hardener.models import AttackRecord, PreloadedAttackConfig
+from agent_hardener.traces.attacks import by_prompt, load_recording
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+    from agent_hardener.traces import AgentTrace
 
 
 def load_preloaded_attacks(configs: list[PreloadedAttackConfig]) -> list[AttackRecord]:
     """Load configured attack hit records from JSON/JSONL files."""
     return [record for config in configs for record in _load_preloaded_attack(config)]
+
+
+def load_preloaded_attack_traces(configs: list[PreloadedAttackConfig]) -> dict[str, AgentTrace]:
+    """The recorded attack traces of a replay with traces, keyed like live ones (normalized prompt).
+
+    Hits with no recorded entry get no trace, so each falls back to running without one.
+    """
+    traces: dict[str, AgentTrace] = {}
+    for config in configs:
+        if config.traces_path is not None:
+            traces.update(by_prompt(load_recording(config.traces_path)))
+    return traces
 
 
 def _load_preloaded_attack(config: PreloadedAttackConfig) -> list[AttackRecord]:
