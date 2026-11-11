@@ -221,29 +221,47 @@ def _stage_guardrail_plugin(build_root: Path) -> None:
     shutil.copytree(_PLUGIN_SOURCE, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
 
 
-#: Hermes reads Relay plugin config from this env var and nowhere else — not from the ``/etc`` path
-#: Relay itself discovers — so the upload destination has to be named to it explicitly. And its Relay
-#: integration is an opt-in plugin: without ``plugins enable`` the env var is read by nobody.
+#: Current Hermes owns the Relay lifecycle in core. Point its explicit user-file override at the
+#: uploaded config; enabling the removed observability/nemo_relay plugin fails the image build.
 _HERMES_WIRING = """
-# --- Agent Hardener: Hermes reads plugin config only from this variable, and Relay is opt-in ---
+# --- Agent Hardener: point Hermes core's Relay lifecycle at the uploaded plugin config ---
 ENV HERMES_NEMO_RELAY_PLUGINS_TOML={destination}
-RUN hermes plugins enable observability/nemo_relay
 """
+
+# The staged guardrail judge imports LangChain on its first tool call. Hermes itself does not
+# require it, and its adapter can use a different interpreter from the image's default Python.
+# Keep the fallback install pinned to the project's locked langchain-openai version.
+_HERMES_JUDGE_INSTALL = (
+    'RUN set -eu; judge_python="${ADAPTER_PYTHON:-python}"; '
+    'if ! "$judge_python" -c "import langchain_core, langchain_openai" >/dev/null 2>&1; then '
+    "if command -v uv >/dev/null 2>&1; then "
+    'uv pip install --python "$judge_python" "langchain-openai==1.1.9"; '
+    'else "$judge_python" -m pip install --no-cache-dir "langchain-openai==1.1.9"; fi; fi\n'
+)
 
 
 def _inject_hermes_wiring(staged_dockerfile: Path) -> None:
-    """Point Hermes at the uploaded plugin config and turn its Relay plugin on.
+    """Point Hermes core's Relay lifecycle at the uploaded plugin config.
 
     Only for ``harness: hermes``. Every other harness lets Relay discover ``/etc/nemo-relay`` on its
-    own; Hermes does not look there, so without these two lines the guardrails are uploaded, parsed
-    by nobody, and the victim answers every attack while the run reports a clean install.
+    own. This explicit override ensures Hermes loads the exact uploaded guardrails without invoking
+    the removed legacy plugin command or requiring the Hermes CLI during the image build.
 
     The agent config must also omit its ``telemetry:`` block — the Fabric adapter pops and overwrites
     this variable whenever Relay telemetry is declared. That half cannot be enforced from here; the
     manifest's ``harness`` is what lets the preflight say so.
+
+    Install the staged judge's dependencies in the actual adapter interpreter when absent. Otherwise
+    registration succeeds, but every guarded tool call fails open with a missing LangChain import.
     """
+    restore = _final_stage_user(staged_dockerfile)
     with staged_dockerfile.open("a", encoding="utf-8") as dockerfile:
-        dockerfile.write(_HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST))
+        dockerfile.write(
+            _HERMES_WIRING.format(destination=RELAY_PLUGINS_UPLOAD_DEST)
+            + "USER root\n"
+            + _HERMES_JUDGE_INSTALL
+            + (f"USER {restore}\n" if restore else "")
+        )
 
 
 def _final_stage_user(staged_dockerfile: Path) -> str | None:
