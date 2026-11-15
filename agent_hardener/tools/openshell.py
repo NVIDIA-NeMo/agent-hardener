@@ -345,7 +345,13 @@ def managed_victim_sandbox(
     docker build plus the whole benign interview first.
     """
     openshell = openshell_config(config)
-    reused = reuse and sandbox_is_ready(openshell) and OpenShellLifecycle(openshell).runs_configured_image()
+    current = OpenShellLifecycle(openshell)
+    reused = (
+        reuse
+        and sandbox_is_ready(openshell)
+        and current.runs_configured_image()
+        and current.credentials_drift() is None
+    )
     prepared = prepare_relay_victim(openshell)
     lifecycle = OpenShellLifecycle(prepared)
     if not reused:

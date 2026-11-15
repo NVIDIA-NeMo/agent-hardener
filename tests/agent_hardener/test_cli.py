@@ -1079,6 +1079,9 @@ def test_up_command(monkeypatch: pytest.MonkeyPatch) -> None:
         def up(self) -> OpenShellCommandResult:
             return _ok("brought-up")
 
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> str | None:
             return None
 
@@ -1102,6 +1105,9 @@ def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPa
 
         def up(self) -> OpenShellCommandResult:
             return _ok("brought-up")
+
+        def credentials_drift(self) -> str | None:
+            return None
 
         def image_context_drift(self) -> str | None:
             return "victim image reg/agent:1 was built from a different staged context"
@@ -1144,6 +1150,9 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
 
         def runs_configured_image(self) -> bool:
             return True
+
+        def credentials_drift(self) -> str | None:
+            return None
 
         def image_context_drift(self) -> str | None:
             return None

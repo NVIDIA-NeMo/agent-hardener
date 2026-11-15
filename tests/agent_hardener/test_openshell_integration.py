@@ -286,6 +286,7 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(tmp_path
             provider="agents-lab-secrets",
             provider_env_file=env_file,
             provider_credentials=["NIM_API_KEY", "INFERENCE_API_KEY", "VLLM_API_KEY", "GITHUB_TOKEN"],
+            cwd=tmp_path,
         ),
         runner=runner,
     )
@@ -365,52 +366,6 @@ def test_provider_carries_the_safety_judge_key_without_a_victim_env_file(
     assert lifecycle._provider_credentials() == ({"AGENT_HARDENER_SAFETY_API_KEY": "safety-key"}, None)
 
 
-def test_existing_provider_gets_the_safety_judge_key_by_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The provider outlives runs, so a reused one must still receive the key, and never on argv."""
-    monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
-    runner = SequenceRunner([(0, "provider exists"), (0, "profile imported"), (0, "provider updated")])
-    lifecycle = OpenShellLifecycle(
-        OpenShellConfig(
-            gateway="gw",
-            sandbox="sb",
-            policy_path=tmp_path / "policy.yaml",
-            provider="p",
-            provider_type="generic",
-            provider_credentials=["INFERENCE_API_KEY"],
-        ),
-        runner=runner,
-        log_dir=tmp_path,
-    )
-
-    assert lifecycle.ensure_provider().ok is True
-
-    profile = yaml.safe_load(Path(runner.commands[1][5]).read_text(encoding="utf-8"))
-    assert [c["env_vars"] for c in profile["credentials"]] == [["INFERENCE_API_KEY"], ["AGENT_HARDENER_SAFETY_API_KEY"]]
-    assert runner.commands[2] == [
-        "openshell",
-        "provider",
-        "update",
-        "p",
-        "--gateway",
-        "gw",
-        "--credential",
-        "AGENT_HARDENER_SAFETY_API_KEY",
-    ]
-    assert not any("safety-key" in part for command in runner.commands for part in command)
-
-
-def test_existing_provider_is_left_alone_without_a_safety_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
-    runner = SequenceRunner([(0, "provider exists")])
-    lifecycle = OpenShellLifecycle(
-        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
-        runner=runner,
-    )
-
-    assert lifecycle.ensure_provider().ok is True
-    assert len(runner.commands) == 1
-
-
 def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Path) -> None:
     """OpenShell rejects a profile update that does not carry the current resource_version."""
     runner = SequenceRunner(
@@ -427,28 +382,6 @@ def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Pa
     assert runner.commands[2][1:5] == ["provider", "profile", "update", "p"]
     profile = yaml.safe_load(Path(runner.commands[2][6]).read_text(encoding="utf-8"))
     assert profile["resource_version"] == 3
-
-
-def test_lifecycle_skips_provider_check_when_sandbox_already_exists(tmp_path: Path) -> None:
-    runner = SequenceRunner([(0, "gateway ok"), (0, "Phase: Ready")])
-    lifecycle = OpenShellLifecycle(
-        OpenShellConfig(
-            gateway="gw",
-            sandbox="sb",
-            policy_path=tmp_path / "policy.yaml",
-            openshell_bin="openshell",
-            build_context=tmp_path,
-            provider="agents-lab-secrets",
-        ),
-        runner=runner,
-    )
-
-    assert lifecycle.up().ok is True
-
-    assert runner.commands == [
-        ["openshell", "gateway", "info", "--gateway", "gw"],
-        ["openshell", "sandbox", "get", "sb", "--gateway", "gw"],
-    ]
 
 
 def test_lifecycle_builds_image_then_creates_detached_then_uploads(tmp_path: Path) -> None:

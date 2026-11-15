@@ -61,6 +61,9 @@ class OpenShellConfig:
     provider_type: str = "generic"
     provider_env_file: Path | None = None
     provider_credentials: list[str] = field(default_factory=list)
+    # When the configured credential values differ from the ones the provider was last given, update the
+    # provider and replace the sandbox. False only warns, leaving the provider and sandbox as they are.
+    refresh_provider_credentials: bool = True
     forward: str | None = None
     start_command: str | None = None
     # OpenShell makes this the sandbox's canonical main process: when it exits the sandbox goes
@@ -98,6 +101,7 @@ class OpenShellConfig:
             provider_type=str(data.get("provider_type", "generic")),
             provider_env_file=Path(str(data["provider_env_file"])) if data.get("provider_env_file") else None,
             provider_credentials=[str(value) for value in data.get("provider_credentials", [])],
+            refresh_provider_credentials=bool(data.get("refresh_provider_credentials", True)),
             forward=str(data["forward"]) if data.get("forward") else None,
             start_command=str(data["start_command"]) if data.get("start_command") else None,
             create_command=_create_command_from_value(data.get("create_command")),

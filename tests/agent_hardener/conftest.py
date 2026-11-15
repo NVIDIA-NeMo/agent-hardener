@@ -50,6 +50,7 @@ class FakeLifecycle:
         self.fetch_error: Exception | None = None
         self.fetched: list[tuple[str, Path]] = []
         self.drift: str | None = None
+        self.stale_credentials: str | None = None
 
     def down(self) -> OpenShellCommandResult:
         self.calls.append("down")
@@ -60,6 +61,9 @@ class FakeLifecycle:
         if self.up_result.ok:
             write_victim_image(self.config.cwd, self.config.sandbox, self.config.image)
         return self.up_result
+
+    def credentials_drift(self) -> str | None:
+        return self.stale_credentials
 
     def image_context_drift(self) -> str | None:
         return self.drift
