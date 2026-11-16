@@ -16,6 +16,11 @@ on:
         required: false
         type: string
         default: main
+      helix_repository:
+        description: nemo-helix repository to check the ref out from (a fork, to test its branch)
+        required: false
+        type: string
+        default: NVIDIA-NeMo/nemo-helix
 
 permissions:
   contents: read
@@ -73,6 +78,7 @@ jobs:
       - name: Set up NeMo Helix
         uses: ./agent-hardener/.github/actions/setup-helix
         with:
+          repository: ${{ inputs.helix_repository || 'NVIDIA-NeMo/nemo-helix' }}
           ref: ${{ inputs.helix_ref || 'main' }}
           path: nemo-helix
           uv_version: ${{ env.UV_VERSION }}
