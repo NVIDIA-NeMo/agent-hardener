@@ -10,7 +10,7 @@ import tomllib
 from typing import TYPE_CHECKING
 
 from agent_hardener.agents.defenders.traces_guardrails_defender.nodes.component_writer import append_guardrail
-from agent_hardener.relay_plugin.config import PLUGIN_KIND, GuardrailsComponentConfig
+from agent_hardener.relay_plugin.config import PLUGIN_KIND, GuardrailsComponentConfig, judge_credentials
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -39,13 +39,16 @@ def test_writes_a_guardrail_the_plugin_can_load(tmp_path: Path) -> None:
     assert [(rail.name, rail.target_tool) for rail in config.guardrails] == [("custom_guardrail_1", "transfer_funds")]
 
 
-def test_the_api_key_is_never_written_only_its_env_var_name(tmp_path: Path) -> None:
+def test_the_api_key_is_never_written_only_its_env_var_name(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """This file is uploaded into the victim image and rendered in run reports."""
+    monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
+    monkeypatch.delenv("INFERENCE_API_KEY", raising=False)
     target = tmp_path / "plugins.toml"
     _append(target)
     model = _component(target)["model"]
     assert model["api_key_env"] == "INFERENCE_API_KEY"
     assert "api_key" not in model
+    assert judge_credentials() == {}
 
 
 def test_the_judge_uses_its_own_endpoint_and_key_when_set(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,27 +56,38 @@ def test_the_judge_uses_its_own_endpoint_and_key_when_set(tmp_path: Path, monkey
     monkeypatch.setenv("AGENT_HARDENER_BASE_URL", "https://analysis.example/v1")
     monkeypatch.setenv("AGENT_HARDENER_SAFETY_BASE_URL", "http://10.0.0.5:8000/v1")
     monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
+    monkeypatch.setenv("INFERENCE_API_KEY", "analysis-key")
     target = tmp_path / "plugins.toml"
 
     _append(target)
 
+    text = target.read_text(encoding="utf-8")
     model = _component(target)["model"]
     assert model["base_url"] == "http://10.0.0.5:8000/v1"
     assert model["api_key_env"] == "AGENT_HARDENER_SAFETY_API_KEY"
-    assert "safety-key" not in target.read_text(encoding="utf-8")
+    assert "safety-key" not in text
+    assert "analysis-key" not in text
+    assert judge_credentials() == {"AGENT_HARDENER_SAFETY_API_KEY": "safety-key"}
 
 
-def test_the_judge_falls_back_to_the_analysis_endpoint(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_judge_inherits_analysis_endpoint_and_key_under_a_dedicated_name(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With no safety key, the judge reads the analysis key, never the victim's own INFERENCE_API_KEY."""
     monkeypatch.delenv("AGENT_HARDENER_SAFETY_BASE_URL", raising=False)
     monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
     monkeypatch.setenv("AGENT_HARDENER_BASE_URL", "https://analysis.example/v1")
+    monkeypatch.setenv("INFERENCE_API_KEY", "analysis-key")
     target = tmp_path / "plugins.toml"
 
     _append(target)
 
+    text = target.read_text(encoding="utf-8")
     model = _component(target)["model"]
     assert model["base_url"] == "https://analysis.example/v1"
-    assert model["api_key_env"] == "INFERENCE_API_KEY"
+    assert model["api_key_env"] == "AGENT_HARDENER_SAFETY_API_KEY"
+    assert judge_credentials() == {"AGENT_HARDENER_SAFETY_API_KEY": "analysis-key"}
+    assert "analysis-key" not in text
 
 
 def test_rails_append_into_the_one_component_entry(tmp_path: Path) -> None:
