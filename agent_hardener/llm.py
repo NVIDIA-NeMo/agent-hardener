@@ -12,14 +12,21 @@ provider, base URL, or auth scheme.
 
 from __future__ import annotations
 
+import functools
+import importlib
 import os
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+import openai
 from langchain_openai import ChatOpenAI
 
 from agent_hardener.env import inference_api_key
 from agent_hardener.llm_telemetry import LlmTelemetryCallback
+from agent_hardener.rate_limits import AsyncRateLimitRetryTransport, RateLimitRetryTransport
 from agent_hardener.relay_plugin.config import no_reasoning_body
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 # NVIDIA's OpenAI-compatible inference endpoint that every agent talks to by default. Overridable via
 # AGENT_HARDENER_BASE_URL so an operator can retarget every default-model caller (defenders, benign
@@ -59,6 +66,10 @@ def build_chat_model(
     # agent's model traffic is captured and attributed to the running agent.
     callbacks = list(kwargs.pop("callbacks", None) or [])
     callbacks.append(LlmTelemetryCallback())
+    # A rate limit is waited out (backoff, then retry) below the SDK, so every caller gets it without
+    # handling 429 itself; a caller that passes its own HTTP clients keeps them.
+    if "http_client" not in kwargs and "http_async_client" not in kwargs:
+        kwargs["http_client"], kwargs["http_async_client"] = _rate_limited_http_clients()
     return ChatOpenAI(
         model=model,
         base_url=base_url or DEFAULT_BASE_URL,
@@ -66,3 +77,29 @@ def build_chat_model(
         callbacks=callbacks,
         **kwargs,
     )
+
+
+@functools.cache
+def _rate_limited_http_clients() -> tuple[openai.DefaultHttpxClient, openai.DefaultAsyncHttpxClient]:
+    """The HTTP clients every chat model shares: the SDK's defaults, over a transport that waits out rate limits.
+
+    Shared rather than built per model, like the SDK's own default clients, so each ``build_chat_model``
+    call does not open a new connection pool.
+    """
+    http = _sdk_http_module()
+    return (
+        openai.DefaultHttpxClient(transport=RateLimitRetryTransport(http.HTTPTransport())),
+        openai.DefaultAsyncHttpxClient(transport=AsyncRateLimitRetryTransport(http.AsyncHTTPTransport())),
+    )
+
+
+def _sdk_http_module() -> ModuleType:
+    """The HTTP library the installed openai SDK is built on: ``httpx`` (openai 1.x/2.x) or ``httpx2`` (3.x).
+
+    The retrying transport only wraps the real one, so the real one must come from the same library as
+    the SDK's client: a request of one library cannot be sent by the other's transport.
+    """
+    for cls in openai.DefaultAsyncHttpxClient.__mro__:
+        if cls.__name__ == "AsyncClient":
+            return importlib.import_module(cls.__module__.split(".", 1)[0])
+    raise RuntimeError(f"cannot tell which HTTP library openai {openai.__version__} uses")  # pragma: no cover

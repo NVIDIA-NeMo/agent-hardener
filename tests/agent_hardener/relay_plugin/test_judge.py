@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage
 
 from agent_hardener.relay_plugin.config import JudgeModel
 from agent_hardener.relay_plugin.judge import (
+    JUDGE_MAX_RETRIES,
     JUDGE_SYSTEM_PROMPT,
     JudgeScore,
     LlmSafetyJudge,
@@ -98,3 +99,9 @@ def test_without_structured_output_the_judge_falls_back_to_a_bare_number() -> No
 def test_a_word_in_place_of_the_score_raises() -> None:
     with pytest.raises(UnscoredReplyError):
         _judge(_Model(None, "BLOCK")).score("rail", "tool", "{}")
+
+
+def test_the_judges_client_retries_rate_limits_more_than_the_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("INFERENCE_API_KEY", "k")
+    model = LlmSafetyJudge(JudgeModel(model="m"))._ensure_model()
+    assert model.max_retries == JUDGE_MAX_RETRIES > 2
