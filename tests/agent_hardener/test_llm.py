@@ -39,3 +39,14 @@ def test_the_retrying_transport_wraps_the_sdks_own_http_library() -> None:
     sync_client, async_client = llm._rate_limited_http_clients()
     assert isinstance(sync_client._transport._transport, http.HTTPTransport)
     assert isinstance(async_client._transport._transport, http.AsyncHTTPTransport)
+
+
+def test_model_and_endpoint_overrides_are_read_at_call_time(monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_HARDENER_MODEL", raising=False)
+    monkeypatch.delenv("AGENT_HARDENER_BASE_URL", raising=False)
+    assert llm.default_model() == "nvidia/nemotron-3-ultra-550b-a55b"
+    monkeypatch.setenv("AGENT_HARDENER_MODEL", "late/model")
+    monkeypatch.setenv("AGENT_HARDENER_BASE_URL", "http://late.example/v1")
+    model = build_chat_model(api_key="k")
+    assert model.model_name == "late/model"
+    assert model.openai_api_base == "http://late.example/v1"

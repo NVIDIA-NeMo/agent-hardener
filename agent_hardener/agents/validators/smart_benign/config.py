@@ -33,8 +33,8 @@ class SynthLLMDefaults(AgentHardenerModel):
     so the single "analysis" model lever governs the benign validator alongside the defenders.
     """
 
-    model: str = Field(default_factory=lambda: llm.DEFAULT_MODEL)
-    base_url: str = Field(default_factory=lambda: llm.DEFAULT_BASE_URL)
+    model: str = Field(default_factory=llm.default_model)
+    base_url: str = Field(default_factory=llm.default_base_url)
     retries: int = Field(ge=0)
     concurrency: int = Field(ge=1)
     max_tokens: int = Field(gt=0)
@@ -47,8 +47,8 @@ class JudgeLLMDefaults(AgentHardenerModel):
     (see :class:`SynthLLMDefaults`).
     """
 
-    model: str = Field(default_factory=lambda: llm.DEFAULT_MODEL)
-    base_url: str = Field(default_factory=lambda: llm.DEFAULT_BASE_URL)
+    model: str = Field(default_factory=llm.default_model)
+    base_url: str = Field(default_factory=llm.default_base_url)
     max_tokens: int = Field(gt=0)
     timeout_seconds: float = Field(gt=0)
     temperature: float | None = None

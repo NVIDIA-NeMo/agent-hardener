@@ -278,6 +278,16 @@ export AGENT_HARDENER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
 export AGENT_HARDENER_BASE_URL=https://integrate.api.nvidia.com/v1
 ```
 
+**Which value wins.** For `AGENT_HARDENER_MODEL` and `AGENT_HARDENER_BASE_URL`, highest priority first:
+
+1. An explicit value in code or config (for example the validator's per-component `model` / `base_url`).
+2. A variable already set in the process environment (for example `export` in your shell, or injected by CI).
+3. The `--env-file` value. The file only fills variables that are not already set, so a shell export overrides it.
+4. The built-in default (`nvidia/nemotron-3-ultra-550b-a55b`, `https://integrate.api.nvidia.com/v1`). An empty value also falls through to the default.
+
+The same order applies to `INFERENCE_API_KEY`, except it has no built-in default. If a model change in
+your env file seems ignored, check for a stale export with `env | grep AGENT_HARDENER`.
+
 Before a run, `agent-hardener run` preflights any model you overrode (`AGENT_HARDENER_MODEL` or
 `GARAK_RED_TEAM_MODEL_NAME`) against its endpoint and fails fast — listing the models the credentials
 can reach — if the name, URL, or key is wrong, so a typo costs seconds instead of a full sandbox build.

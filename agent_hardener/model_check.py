@@ -24,7 +24,7 @@ import httpx
 
 from agent_hardener.env import INFERENCE_API_KEY, NIM_API_KEY, inference_api_key
 from agent_hardener.errors import ModelUnavailableError
-from agent_hardener.llm import DEFAULT_BASE_URL, DEFAULT_MODEL
+from agent_hardener.llm import default_base_url, default_model
 
 _PROBE_TIMEOUT_S = 10.0
 # garak's attacker/detector default endpoint (mirrors agent_breaker.config.DEFAULT_MODEL_URI).
@@ -94,12 +94,8 @@ def preflight_configured_models() -> None:
             ),
         )
     if os.environ.get("AGENT_HARDENER_MODEL"):
-        _raise_if_bad(
-            "analysis",
-            DEFAULT_MODEL,
-            DEFAULT_BASE_URL,
-            validate_choice(DEFAULT_MODEL, DEFAULT_BASE_URL, inference_api_key()),
-        )
+        model, base_url = default_model(), default_base_url()
+        _raise_if_bad("analysis", model, base_url, validate_choice(model, base_url, inference_api_key()))
     attack_model = os.environ.get("GARAK_RED_TEAM_MODEL_NAME")
     if attack_model:
         attack_uri = os.environ.get("GARAK_RED_TEAM_MODEL_URI") or _ATTACK_DEFAULT_URI
