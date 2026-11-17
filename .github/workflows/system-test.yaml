@@ -7,8 +7,8 @@ on:
   push:
     branches: [main]
   schedule:
-    # Nightly at 00:00 UTC: 02:00 Israel time in winter, 03:00 in summer.
-    - cron: "0 0 * * *"
+    # Nightly at 00:17 UTC (off the top of the hour, where GitHub delays or drops schedules): 02:17 Israel time in winter, 03:17 in summer.
+    - cron: "17 0 * * *"
   workflow_dispatch:
     inputs:
       helix_ref:

@@ -5,7 +5,7 @@
 
 ## `workflows/system-test.yaml`
 
-Runs on every push to `main`, nightly at 00:00 UTC, and on manual dispatch (with an optional
+Runs on every push to `main`, nightly at 00:17 UTC, and on manual dispatch (with an optional
 `helix_ref` to test against a different NeMo Helix ref). It runs one full war-game per NeMo Helix
 example agent, through the Helix CLI:
 
