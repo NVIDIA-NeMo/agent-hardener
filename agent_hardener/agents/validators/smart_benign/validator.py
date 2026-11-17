@@ -33,6 +33,7 @@ from .config import defaults
 from .driver import drive_synth
 from .graph import quiet_warnings
 from .models import GeneratedRequest
+from .progress import PHASE_LABELS
 from .replay_judge import ReplayJudgeConfig, format_finding, run_all, stats_key
 from .replay_judge import traces as trace_section
 from .state import SynthInputs, SynthState
@@ -225,22 +226,6 @@ def _invalidate_cache(artifact_dir: Path) -> None:
     (artifact_dir / INPUT_HASH_FILE).unlink(missing_ok=True)
 
 
-# Human-readable progress line per synth-DAG node, emitted as each node completes so an
-# operator can see the recon advancing rather than staring at a silent prompt. Keys are the
-# node names registered in ``graph.py``; nodes absent here (none currently) stream nothing.
-_PROGRESS_LABELS: dict[str, str] = {
-    "nl_parser": "recon: parsed capabilities from the description",
-    "github_analyzer": "recon: analyzed the GitHub repository",
-    "api_prober": "recon: probed the victim endpoint for tools",
-    "profile_synthesizer": "recon: merged the victim capability profile",
-    "gap_detector": "recon: checked the profile for gaps",
-    "interviewer": "recon: recorded an interview answer",
-    "request_generator": "recon: generated the benign request suite",
-    "critic": "recon: filtered and deduplicated requests",
-    "profile_writer": "recon: wrote profile.json + requests.csv",
-}
-
-
 async def _run_synth_dag(
     inputs: SynthInputs,
     artifact_dir: Path,
@@ -269,9 +254,9 @@ async def _run_synth_dag(
     tracing = make_langfuse_callbacks(round_id=round_id, target_name=target_name)
     lf_config: dict[str, Any] = {"callbacks": tracing.callbacks} if tracing.callbacks else {}
 
-    def _on_node(node_name: str) -> None:
-        label = _PROGRESS_LABELS.get(node_name)
-        if label:
+    def _on_node(node_name: str, _update: dict[str, Any]) -> None:
+        if node_name in PHASE_LABELS:
+            label = f"recon: {PHASE_LABELS[node_name]}"
             logger.info(label)  # text → agent-hardener.log
             emit_event(
                 EventType.SYNTH_PHASE, {"phase": node_name, "label": label}

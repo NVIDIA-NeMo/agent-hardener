@@ -41,11 +41,12 @@ async def drive_synth(
     answer_provider: AnswerProvider,
     lf_config: dict[str, Any] | None = None,
     thread_id: str = "synth",
-    on_node: Callable[[str], None] | None = None,
+    on_node: Callable[[str, dict[str, Any]], None] | None = None,
 ) -> SynthState:
     """Run synth to completion, calling *answer_provider* at each interview interrupt.
 
-    *on_node* (optional) is invoked with each node name as it completes, for progress reporting.
+    *on_node* (optional) is invoked with each node's name and its state update as it completes, for progress
+    reporting.
     """
     graph = build_synth_graph(checkpointer=MemorySaver())
     usage = UsageMetadataCallbackHandler()
@@ -64,8 +65,8 @@ async def drive_synth(
                     if "__interrupt__" in chunk:
                         interrupted = chunk["__interrupt__"]
                     elif on_node:
-                        for node_name in chunk:
-                            on_node(node_name)
+                        for node_name, update in chunk.items():
+                            on_node(node_name, update if isinstance(update, dict) else {})
                 elif mode == "values":  # full state snapshot after each step
                     final_values = chunk
             if interrupted is None:

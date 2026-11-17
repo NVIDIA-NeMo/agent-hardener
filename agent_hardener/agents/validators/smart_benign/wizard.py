@@ -23,6 +23,7 @@ from typing import TYPE_CHECKING
 from agent_hardener.config import load_config
 
 from .driver import drive_synth
+from .progress import SynthProgress
 from .state import SynthState
 from .tracing import TracingContext, make_langfuse_callbacks
 from .validator import build_synth_inputs
@@ -74,7 +75,15 @@ def run_synth_wizard(
     state = SynthState.from_inputs(inputs, interactive=interactive, artifact_dir=artifact_dir)
     tracing = make_langfuse_callbacks(target_name=session.target.name)
     lf_config: dict[str, object] = {"callbacks": tracing.callbacks} if tracing.callbacks else {}
-    final = asyncio.run(_run_synth(state, lf_config, answer_provider))
+    with SynthProgress(state) as progress:
+        final = asyncio.run(
+            drive_synth(
+                state,
+                answer_provider=progress.pausing(answer_provider),
+                lf_config=lf_config,
+                on_node=progress.on_node,
+            )
+        )
 
     if yes:
         answers_mode = "auto-accepted defaults"
@@ -88,10 +97,6 @@ def run_synth_wizard(
         _upload_to_langfuse_dataset(final.requests, session.target.name, tracing)
 
     return 0 if not final.errors else 1
-
-
-async def _run_synth(state: SynthState, lf_config: dict[str, object], answer_provider: AnswerProvider) -> SynthState:
-    return await drive_synth(state, answer_provider=answer_provider, lf_config=lf_config)
 
 
 def _upload_to_langfuse_dataset(requests: list[GeneratedRequest], target_name: str, tracing: TracingContext) -> None:

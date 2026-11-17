@@ -286,7 +286,10 @@ def test_run_synth_dag_emits_synth_phase(tmp_path: Path, monkeypatch: pytest.Mon
         )
 
     assert isinstance(result, SynthState)
-    assert ("synth_phase", {"phase": "gap_detector", "label": validator._PROGRESS_LABELS["gap_detector"]}) in seen
+    assert (
+        "synth_phase",
+        {"phase": "gap_detector", "label": f"recon: {validator.PHASE_LABELS['gap_detector']}"},
+    ) in seen
     assert all(payload.get("phase") != "not_a_phase" for _event, payload in seen)
 
 
