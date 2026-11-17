@@ -71,6 +71,8 @@ _TRANSIENT_MODEL_ERRORS = (
 #: its request open until the caller gives up: garak's attack turn times out after 600s and fails the
 #: whole attacker, and the benign validator scores the request as an error after 240s.
 TOOL_TIMEOUT_SECONDS = 30
+#: Longest a stopped call's output is read for after the kill.
+_DRAIN_TIMEOUT_SECONDS = 2
 
 
 def _run_tool_process(args: str | list[str], *, shell: bool) -> str:
@@ -93,8 +95,14 @@ def _run_tool_process(args: str | list[str], *, shell: bool) -> str:
             stdout, stderr = process.communicate(timeout=TOOL_TIMEOUT_SECONDS)
         except subprocess.TimeoutExpired:
             os.killpg(process.pid, signal.SIGKILL)
-            stdout, stderr = process.communicate()
-            return f"{stdout}{stderr}error: timed out after {TOOL_TIMEOUT_SECONDS}s and was stopped"
+            stopped = f"error: timed out after {TOOL_TIMEOUT_SECONDS}s and was stopped"
+            try:
+                stdout, stderr = process.communicate(timeout=_DRAIN_TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                # A child that started its own session (`setsid cmd &`) escapes the group kill and
+                # still holds the pipes open; give up on the output rather than wait for it.
+                return stopped
+            return f"{stdout}{stderr}{stopped}"
     output = stdout + stderr
     return output if output else f"(exit {process.returncode}, no output)"
 
