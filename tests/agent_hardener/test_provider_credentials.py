@@ -35,17 +35,23 @@ _IMAGE = "registry.example.com/team/agent:1"
 class SequenceRunner:
     def __init__(self, responses: list[tuple[int, str]]) -> None:
         self.commands: list[list[str]] = []
+        self.environments: list[dict[str, str] | None] = []
         self.responses = responses
 
-    def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def run(
+        self, args: list[str], cwd: Path | None = None, *, env: dict[str, str] | None = None
+    ) -> subprocess.CompletedProcess[str]:
         self.commands.append(args)
+        self.environments.append(env)
         returncode, stdout = self.responses.pop(0)
         return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout)
 
 
 @pytest.fixture(autouse=True)
 def _no_judge_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The judge inherits the analysis key when it has none of its own.
     monkeypatch.delenv(_JUDGE, raising=False)
+    monkeypatch.delenv("INFERENCE_API_KEY", raising=False)
 
 
 def _lifecycle(
@@ -107,9 +113,13 @@ def test_an_unreadable_record_reads_as_none(tmp_path: Path, content: str | None)
 # --- refreshing an existing provider ---------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("recorded", [None, "old-key"], ids=["unrecorded", "rotated"])
+@pytest.mark.parametrize(
+    ("recorded", "sent"),
+    [(None, ["INFERENCE_API_KEY", _JUDGE]), ("old-key", ["INFERENCE_API_KEY"])],
+    ids=["unrecorded-sends-every-key", "rotated-sends-only-the-changed-key"],
+)
 def test_an_existing_provider_is_updated_in_place_with_the_new_key(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str | None
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, recorded: str | None, sent: list[str]
 ) -> None:
     monkeypatch.setenv(_JUDGE, "judge-key")
     if recorded:
@@ -121,7 +131,7 @@ def test_an_existing_provider_is_updated_in_place_with_the_new_key(
     assert result.ok is True
     assert "refreshing provider" in result.output
     assert runner.commands[1][1:4] == ["provider", "profile", "import"]
-    # The judge's key is passed by name, so OpenShell reads it from the environment and it stays off argv.
+    # Every key is passed by name and read from a child-only environment, so no value reaches argv.
     assert runner.commands[2] == [
         "openshell",
         "provider",
@@ -129,12 +139,12 @@ def test_an_existing_provider_is_updated_in_place_with_the_new_key(
         "p",
         "--gateway",
         "gw",
-        "--credential",
-        "INFERENCE_API_KEY=new-key",
-        "--credential",
-        _JUDGE,
+        *[part for name in sent for part in ("--credential", name)],
     ]
-    assert not any("judge-key" in part for command in runner.commands for part in command)
+    child_env = runner.environments[2]
+    assert child_env is not None
+    assert child_env["INFERENCE_API_KEY"] == "new-key"
+    assert not any(key in str(runner.commands) for key in ("new-key", "judge-key"))
     assert _recorded(tmp_path).changed({"INFERENCE_API_KEY": "new-key", _JUDGE: "judge-key"}) == []
 
 
@@ -144,6 +154,23 @@ def test_an_existing_provider_with_current_keys_is_left_alone(tmp_path: Path) ->
 
     assert _lifecycle(tmp_path, runner).ensure_provider().ok is True
     assert len(runner.commands) == 1
+
+
+def test_a_custom_provider_type_is_updated_without_a_generated_profile(tmp_path: Path) -> None:
+    _record(tmp_path, INFERENCE_API_KEY="old-key")
+    runner = SequenceRunner([(0, "provider exists"), (0, "provider updated")])
+
+    assert _lifecycle(tmp_path, runner, provider_type="custom").ensure_provider().ok is True
+    assert runner.commands[1][1:3] == ["provider", "update"]
+
+
+def test_a_key_dropped_from_the_config_is_recorded_without_an_update(tmp_path: Path) -> None:
+    _record(tmp_path, INFERENCE_API_KEY="new-key", RETIRED_KEY="gone")
+    runner = SequenceRunner([(0, "provider exists")])
+
+    assert _lifecycle(tmp_path, runner).ensure_provider().ok is True
+    assert len(runner.commands) == 1
+    assert _recorded(tmp_path).changed({"INFERENCE_API_KEY": "new-key"}) == []
 
 
 def test_with_refreshing_off_a_stale_provider_is_only_warned_about(tmp_path: Path) -> None:
@@ -224,7 +251,9 @@ def test_up_updates_the_provider_and_replaces_a_sandbox_holding_the_old_key(
 
     verbs = [command[1:3] for command in runner.commands]
     assert verbs.index(["sandbox", "delete"]) < verbs.index(["provider", "update"]) < verbs.index(["sandbox", "create"])
-    assert "INFERENCE_API_KEY=new-key" in runner.commands[verbs.index(["provider", "update"])]
+    update = verbs.index(["provider", "update"])
+    assert runner.commands[update][-2:] == ["--credential", "INFERENCE_API_KEY"]
+    assert (runner.environments[update] or {})["INFERENCE_API_KEY"] == "new-key"
     # The new sandbox records the provider revision it started under, so the next run reuses it.
     assert lifecycle.credentials_drift() is None
 

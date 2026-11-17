@@ -38,11 +38,11 @@ class OpenShellCommandExecutor:
         self.runner = runner
         self.log_dir = log_dir
 
-    def run(self, args: list[str]) -> OpenShellCommandResult:
-        """Run a command, capturing output (via a tempfile under the subprocess runner)."""
+    def run(self, args: list[str], *, env: dict[str, str] | None = None) -> OpenShellCommandResult:
+        """Run a command with an optional child environment, keeping credentials off argv."""
         command = [self.config.openshell_bin, *args]
         if isinstance(self.runner, SubprocessCommandRunner):
-            completed, captured, duration, error = self._run_to_file(command, log_file=None)
+            completed, captured, duration, error = self._run_to_file(command, log_file=None, env=env)
             if error is not None:
                 logger.info(
                     "openshell command failed op=%s duration_seconds=%.3f error=%s",
@@ -60,7 +60,11 @@ class OpenShellCommandExecutor:
             )
             return OpenShellCommandResult(ok=completed.returncode == 0, command=command, output=captured)
         try:
-            completed = self.runner.run(command, cwd=self.config.cwd)
+            completed = (
+                self.runner.run(command, cwd=self.config.cwd, env=env)
+                if env is not None
+                else self.runner.run(command, cwd=self.config.cwd)
+            )
         except OSError as exc:
             return OpenShellCommandResult(ok=False, command=command, output=str(exc))
         return OpenShellCommandResult.from_completed(command, completed)
@@ -108,7 +112,7 @@ class OpenShellCommandExecutor:
         return log_dir / f"{safe_path_token(self.config.sandbox)}-{safe_path_token(command_name)}-{timestamp}.log"
 
     def _run_to_file(
-        self, command: list[str], *, log_file: Path | None
+        self, command: list[str], *, log_file: Path | None, env: dict[str, str] | None = None
     ) -> tuple[subprocess.CompletedProcess[str] | None, str, float, OSError | None]:
         """Run ``command`` capturing stdout+stderr to a stream, avoiding inherited-pipe hangs.
 
@@ -126,6 +130,7 @@ class OpenShellCommandExecutor:
                     completed = subprocess.run(  # noqa: S603 - explicit arg lists built by lifecycle callers.
                         command,
                         cwd=self.config.cwd,
+                        env=env,
                         check=False,
                         text=True,
                         stdout=stream,
@@ -137,6 +142,7 @@ class OpenShellCommandExecutor:
                     completed = subprocess.run(  # noqa: S603 - explicit arg lists built by lifecycle callers.
                         command,
                         cwd=self.config.cwd,
+                        env=env,
                         check=False,
                         text=True,
                         stdout=stream,
