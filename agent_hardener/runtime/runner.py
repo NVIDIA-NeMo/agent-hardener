@@ -330,12 +330,17 @@ class Mission:
         fp_path = agent_fingerprint_path(base_config.cwd or Path.cwd(), base_config.sandbox)
         if self._adopted_image:
             self._announce(f"reusing the pre-built victim image recorded for this sandbox: {self._adopted_image}")
-        reuse_ok = self.ctx.skip_initial_up and _read_fingerprint(fp_path) == fp
-        if self.ctx.skip_initial_up and not reuse_ok:
+        fingerprint_ok = _read_fingerprint(fp_path) == fp
+        # A rotated API key leaves the provider (and every sandbox started under it) holding the old one.
+        credentials_drift = self._lifecycle.credentials_drift()
+        reuse_ok = self.ctx.skip_initial_up and fingerprint_ok and credentials_drift is None
+        if self.ctx.skip_initial_up and not fingerprint_ok:
             self._announce(
                 "running sandbox does not match the configured agent (fingerprint mismatch or "
                 "unknown) — rebuilding instead of reusing"
             )
+        if credentials_drift:
+            self._announce(f"{credentials_drift} — refreshing the provider and rebuilding the sandbox")
         if not reuse_ok:
             self._lifecycle.down()
             with self._status("Building and starting sandbox"):

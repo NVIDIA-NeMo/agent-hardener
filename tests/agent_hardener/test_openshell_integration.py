@@ -20,6 +20,7 @@ from agent_hardener.models import (
     AgentRunInput,
     TargetInput,
 )
+from agent_hardener.openshell.credentials import CredentialRecord, write_credential_record
 from agent_hardener.openshell.lifecycle import (
     OpenShellConfig,
     OpenShellLifecycle,
@@ -28,9 +29,16 @@ from agent_hardener.openshell.lifecycle import (
 )
 from agent_hardener.runtime.adapters import _policy_digest
 from agent_hardener.swarm_tracker import read_victim_image, write_victim_image
+from agent_hardener.swarm_tracker.layout import provider_credentials_path
 from agent_hardener.tools.openshell import main as openshell_tool_main
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def _run_from_tmp_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Configs without ``cwd`` write their sidecars under the process cwd; keep them out of the repo."""
+    monkeypatch.chdir(tmp_path)
 
 
 _NOT_FOUND = "code: 'Some requested entity was not found', message: \"sandbox not found\""
@@ -71,6 +79,11 @@ class SequenceRunner:
         self.environments.append(env)
         returncode, stdout = self.responses.pop(0)
         return subprocess.CompletedProcess(args=args, returncode=returncode, stdout=stdout)
+
+
+def _record_provider(tmp_path: Path, credentials: dict[str, str]) -> None:
+    """Record the credentials provider ``p`` on gateway ``gw`` was last given, as an earlier run would."""
+    write_credential_record(provider_credentials_path(tmp_path, "gw", "p"), CredentialRecord.of(credentials))
 
 
 def _request() -> AgentRunInput:
@@ -301,6 +314,7 @@ def test_lifecycle_creates_provider_from_env_file_before_sandbox_create(
             provider="agents-lab-secrets",
             provider_env_file=env_file,
             provider_credentials=["NIM_API_KEY", "INFERENCE_API_KEY", "VLLM_API_KEY", "GITHUB_TOKEN"],
+            cwd=tmp_path,
         ),
         runner=runner,
     )
@@ -512,6 +526,8 @@ def test_existing_provider_gets_the_safety_judge_key_by_name(tmp_path: Path, mon
     """The provider outlives runs, so a reused one must still receive the key, and never on argv."""
     monkeypatch.setenv("AGENT_HARDENER_SAFETY_API_KEY", "safety-key")
     monkeypatch.setenv("INFERENCE_API_KEY", "analysis-key")
+    # A previous run recorded the victim's keys, so only the judge's is new.
+    _record_provider(tmp_path, {"INFERENCE_API_KEY": "analysis-key"})
     runner = SequenceRunner([(0, "provider exists"), (0, "profile imported"), (0, "provider updated")])
     lifecycle = OpenShellLifecycle(
         OpenShellConfig(
@@ -521,6 +537,7 @@ def test_existing_provider_gets_the_safety_judge_key_by_name(tmp_path: Path, mon
             provider="p",
             provider_type="generic",
             provider_credentials=["INFERENCE_API_KEY"],
+            cwd=tmp_path,
         ),
         runner=runner,
         log_dir=tmp_path,
@@ -593,6 +610,8 @@ def test_existing_provider_receives_inherited_key_without_updating_victim_creden
     monkeypatch.setenv("INFERENCE_API_KEY", "analysis-key")
     env_file = tmp_path / ".env"
     env_file.write_text("INFERENCE_API_KEY=victim-key\n", encoding="utf-8")
+    # A previous run recorded the victim's keys, so only the judge's is new.
+    _record_provider(tmp_path, {"INFERENCE_API_KEY": "victim-key"})
     runner = SequenceRunner([(0, "provider exists"), (0, "profile imported"), (0, "provider updated")])
     lifecycle = OpenShellLifecycle(
         OpenShellConfig(
@@ -602,6 +621,7 @@ def test_existing_provider_receives_inherited_key_without_updating_victim_creden
             provider="p",
             provider_env_file=env_file,
             provider_credentials=["INFERENCE_API_KEY"],
+            cwd=tmp_path,
         ),
         runner=runner,
         log_dir=tmp_path,
@@ -635,9 +655,11 @@ def test_existing_provider_receives_inherited_key_without_updating_victim_creden
 def test_existing_provider_is_left_alone_without_a_safety_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("AGENT_HARDENER_SAFETY_API_KEY", raising=False)
     monkeypatch.delenv("INFERENCE_API_KEY", raising=False)
+    # A previous run recorded the same (empty) credentials, so nothing changed.
+    _record_provider(tmp_path, {})
     runner = SequenceRunner([(0, "provider exists")])
     lifecycle = OpenShellLifecycle(
-        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p", cwd=tmp_path),
         runner=runner,
     )
 
@@ -673,6 +695,8 @@ def test_adding_inherited_judge_preserves_existing_provider_profile_credentials(
         {"name": "inference_api_key", "env_vars": ["INFERENCE_API_KEY"], "required": True},
         {"name": "service_token", "env_vars": ["SERVICE_TOKEN"], "required": False, "description": "Victim service"},
     ]
+    # A previous run recorded the victim's keys, so only the judge's is new.
+    _record_provider(tmp_path, {"INFERENCE_API_KEY": "victim-key", "SERVICE_TOKEN": "service-key"})
     runner = SequenceRunner(
         [
             (0, "provider exists"),
@@ -690,6 +714,7 @@ def test_adding_inherited_judge_preserves_existing_provider_profile_credentials(
             provider="p",
             provider_env_file=env_file,
             provider_credentials=[],
+            cwd=tmp_path,
         ),
         runner=runner,
         log_dir=tmp_path,
@@ -709,28 +734,6 @@ def test_adding_inherited_judge_preserves_existing_provider_profile_credentials(
     assert runner.commands[4][-2:] == ["--credential", "AGENT_HARDENER_SAFETY_API_KEY"]
     for key in ("analysis-key", "victim-key", "service-key"):
         assert key not in profile_text + str(result) + str(runner.commands)
-
-
-def test_lifecycle_skips_provider_check_when_sandbox_already_exists(tmp_path: Path) -> None:
-    runner = SequenceRunner([(0, "gateway ok"), (0, "Phase: Ready")])
-    lifecycle = OpenShellLifecycle(
-        OpenShellConfig(
-            gateway="gw",
-            sandbox="sb",
-            policy_path=tmp_path / "policy.yaml",
-            openshell_bin="openshell",
-            build_context=tmp_path,
-            provider="agents-lab-secrets",
-        ),
-        runner=runner,
-    )
-
-    assert lifecycle.up().ok is True
-
-    assert runner.commands == [
-        ["openshell", "gateway", "info", "--gateway", "gw"],
-        ["openshell", "sandbox", "get", "sb", "--gateway", "gw"],
-    ]
 
 
 def test_lifecycle_builds_image_then_creates_detached_then_uploads(tmp_path: Path) -> None:
