@@ -84,6 +84,7 @@ packages = ["agent_hardener"]
 # none of which a consumer of the package can use.
 [tool.hatch.build.targets.sdist]
 exclude = [
+  ".agents",
   ".claude",
   ".codex",
   ".coderabbit.yaml",

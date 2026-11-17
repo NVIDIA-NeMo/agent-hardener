@@ -37,6 +37,17 @@ def _check_byo_flags(dockerfile: str | None, binary: list[str]) -> None:
         raise typer.Exit(1)
 
 
+def _install_agent_skill(*, force: bool, skip: bool) -> None:
+    """Copy the bundled Agent Hardener skill into ``./.claude/skills/`` (unless skipped) and say where it went."""
+    if skip:
+        return
+    from agent_hardener.skills import install_skill
+
+    skill_dir, written = install_skill(Path.cwd(), force=force)
+    info(f"  agent skill   {skill_dir}{'' if written else ' (kept existing; --force to refresh)'}")
+    info("                teaches Claude Code how to run and read Agent Hardener")
+
+
 @app.command()
 def init(
     project_dir: Path | None = typer.Option(None, "--project-dir", help="Path to your NAT project."),
@@ -71,7 +82,12 @@ def init(
     ),
     output: Path = typer.Option(DEFAULT_MANIFEST, "--output", "-o", help="Manifest path to write."),
     yes: bool = typer.Option(False, "--yes", "-y", help="Non-interactive: accept defaults, no prompts."),
-    force: bool = typer.Option(False, "--force", "-f", help="Overwrite an existing manifest."),
+    force: bool = typer.Option(
+        False, "--force", "-f", help="Overwrite an existing manifest and refresh the installed agent skill."
+    ),
+    skip_skill: bool = typer.Option(
+        False, "--skip-skill", help="Do not copy the Agent Hardener skill into ./.claude/skills/."
+    ),
 ) -> None:
     """Scaffold an ``agent-hardener.yaml`` manifest (auto-detecting your agent project)."""
     from agent_hardener.cli_prompts import (
@@ -194,6 +210,7 @@ def init(
     info("                editable garak agent_breaker scaffold the attacker overlays each run")
     info(f"  secrets       {env_path.resolve()}{'' if env_path.exists() else ' (create + fill before running)'}")
     info("                env file holding your agent's API keys and credentials")
+    _install_agent_skill(force=force, skip=skip_skill)
     info("\nNext:")
     info(f"  uv run agent-hardener synth-benign --config {output}   # generate the benign test suite")
     info(f"  uv run agent-hardener run --config {output}            # run Agent Hardener against your agent")
