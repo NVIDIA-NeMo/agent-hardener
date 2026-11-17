@@ -205,6 +205,32 @@ def test_env_file_values_never_override_the_existing_environment(
     assert tool.os.environ["AH_TEST_EXISTING"] == "from-shell"
 
 
+def test_env_file_warns_by_key_when_an_export_differs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("AH_TEST_DIFF=file-secret\nAH_TEST_SAME=same\n")
+    monkeypatch.setenv("AH_TEST_DIFF", "shell-secret")
+    monkeypatch.setenv("AH_TEST_SAME", "same")
+    warnings: list[str] = []
+    monkeypatch.setattr(tool, "warn", warnings.append)
+
+    tool.load_local_env(env_file)
+
+    assert tool.os.environ["AH_TEST_DIFF"] == "shell-secret"
+    assert len(warnings) == 1
+    assert "AH_TEST_DIFF" in warnings[0]
+    assert "secret" not in warnings[0]
+
+
+def test_env_file_fills_a_variable_exported_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("AH_TEST_EMPTY=from-file\n")
+    monkeypatch.setenv("AH_TEST_EMPTY", "")
+
+    tool.load_local_env(env_file)
+
+    assert tool.os.environ["AH_TEST_EMPTY"] == "from-file"
+
+
 @pytest.mark.parametrize(
     ("base_url", "expected"),
     [
