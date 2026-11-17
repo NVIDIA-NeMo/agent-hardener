@@ -54,13 +54,14 @@ SYSTEM_PROMPT = (
 MODEL_TIMEOUT_SECONDS = 90
 MODEL_MAX_RETRIES = 1
 #: The model errors that are answered instead of raised: the ones that pass on their own (a timeout, a
-#: dropped connection, a 429, a 5xx such as a model that is temporarily down). Anything else — a wrong
-#: key (401), an unknown model (404), a bad request (400) — still fails the request, so a misconfigured
-#: agent stops the run with a clear error instead of answering every attack with an error message.
+#: dropped connection, a 5xx such as a model that is temporarily down). A 429 is not one of them: the
+#: server answers it with its own 429, which garak backs off on and resends instead of scoring a fake
+#: reply. Anything else — a wrong key (401), an unknown model (404), a bad request (400) — still fails
+#: the request, so a misconfigured agent stops the run with a clear error instead of answering every
+#: attack with an error message.
 _TRANSIENT_MODEL_ERRORS = (
     openai.APITimeoutError,
     openai.APIConnectionError,
-    openai.RateLimitError,
     openai.InternalServerError,
 )
 
