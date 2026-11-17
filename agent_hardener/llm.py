@@ -67,9 +67,12 @@ def build_chat_model(
     callbacks = list(kwargs.pop("callbacks", None) or [])
     callbacks.append(LlmTelemetryCallback())
     # A rate limit is waited out (backoff, then retry) below the SDK, so every caller gets it without
-    # handling 429 itself; a caller that passes its own HTTP clients keeps them.
+    # handling 429 itself; a caller that passes its own HTTP clients keeps them. The SDK's own retries
+    # are turned off with it: they sit on top of the transport, so each re-send would get a fresh wait
+    # budget (3 x 600s in the worst case). The cost is that a 5xx or timeout is no longer retried.
     if "http_client" not in kwargs and "http_async_client" not in kwargs:
         kwargs["http_client"], kwargs["http_async_client"] = _rate_limited_http_clients()
+        kwargs.setdefault("max_retries", 0)
     return ChatOpenAI(
         model=model,
         base_url=base_url or DEFAULT_BASE_URL,

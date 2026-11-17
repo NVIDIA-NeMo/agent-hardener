@@ -27,11 +27,18 @@ def test_every_chat_model_waits_out_rate_limits_on_shared_clients() -> None:
     assert isinstance(first.http_client._transport, RateLimitRetryTransport)
     assert isinstance(first.http_async_client._transport, AsyncRateLimitRetryTransport)
     assert first.http_async_client is second.http_async_client  # one connection pool, not one per model
+    assert first.max_retries == 0  # the transport owns retries; the SDK's would restart its wait budget
+
+
+def test_a_caller_supplied_max_retries_is_kept() -> None:
+    assert build_chat_model(api_key="k", max_retries=4).max_retries == 4
 
 
 def test_a_caller_supplied_http_client_is_kept() -> None:
     client = httpx.AsyncClient()
-    assert build_chat_model(api_key="k", http_async_client=client).http_async_client is client
+    model = build_chat_model(api_key="k", http_async_client=client)
+    assert model.http_async_client is client
+    assert model.max_retries is None  # the SDK's own retries stay on when the transport is not ours
 
 
 def test_the_retrying_transport_wraps_the_sdks_own_http_library() -> None:
