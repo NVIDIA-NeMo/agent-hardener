@@ -147,3 +147,36 @@ def test_a_bundle_needs_a_build_root_or_an_image(tmp_path: Path) -> None:
         write_hardened_bundle(
             build_root=None, plugins_toml=plugins, destination=tmp_path / "out", agent="ledger", run_id="r"
         )
+
+
+def test_the_bundle_leaves_out_what_the_dockerignore_keeps_out_of_the_image(tmp_path: Path) -> None:
+    root = _build_root(tmp_path)
+    (root / "experiments" / "results").mkdir(parents=True)
+    (root / "experiments" / "results" / "big.json").write_text("{}", encoding="utf-8")
+    (root / "notes.md").write_text("draft", encoding="utf-8")
+    (root / ".dockerignore").write_text("# results\nexperiments/\n*.md\nDockerfile\n", encoding="utf-8")
+    plugins = tmp_path / "plugins.toml"
+    plugins.write_text("version = 1\n", encoding="utf-8")
+    bundle = write_hardened_bundle(
+        build_root=root, plugins_toml=plugins, destination=tmp_path / "out", agent="a", run_id="r"
+    )
+    assert not (bundle / "experiments").exists()
+    assert not (bundle / "notes.md").exists()
+    # Docker sends the Dockerfile whatever the ignore file says, and the bundle cannot build without it.
+    assert (bundle / "Dockerfile").is_file()
+    assert (bundle / "openshell-shims" / "agent_hardener_guardrail" / "plugin.py").is_file()
+
+
+def test_a_re_included_file_inside_an_excluded_directory_is_kept(tmp_path: Path) -> None:
+    root = _build_root(tmp_path)
+    (root / "docs").mkdir()
+    (root / "docs" / "keep.md").write_text("k", encoding="utf-8")
+    (root / "docs" / "drop.md").write_text("d", encoding="utf-8")
+    (root / ".dockerignore").write_text("docs\n!docs/keep.md\n", encoding="utf-8")
+    plugins = tmp_path / "plugins.toml"
+    plugins.write_text("version = 1\n", encoding="utf-8")
+    bundle = write_hardened_bundle(
+        build_root=root, plugins_toml=plugins, destination=tmp_path / "out", agent="a", run_id="r"
+    )
+    assert (bundle / "docs" / "keep.md").is_file()
+    assert not (bundle / "docs" / "drop.md").exists()
