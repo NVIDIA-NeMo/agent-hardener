@@ -6,6 +6,9 @@ name: System test
 on:
   push:
     branches: [main]
+  schedule:
+    # Nightly at 00:17 UTC (off the top of the hour, where GitHub delays or drops schedules): 02:17 Israel time in winter, 03:17 in summer.
+    - cron: "17 0 * * *"
   workflow_dispatch:
     inputs:
       helix_ref:
@@ -18,8 +21,9 @@ permissions:
   contents: read
 
 # Each war-game spends real inference tokens, so a newer push to main supersedes a running one.
+# The event name keeps a push and the nightly run from cancelling each other.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
