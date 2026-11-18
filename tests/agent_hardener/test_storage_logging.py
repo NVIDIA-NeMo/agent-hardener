@@ -56,7 +56,7 @@ def test_build_round_logger_uses_single_logger_and_replaces_handlers(tmp_path: P
     second = build_round_logger("session-b", dir_b)
 
     assert second is first
-    assert len(second.handlers) == 2
+    assert len(second.handlers) == 1  # round.log only; the console is the CLI handler's job
     assert all(new_handler is not old_handler for new_handler in second.handlers for old_handler in first_handlers)
 
 

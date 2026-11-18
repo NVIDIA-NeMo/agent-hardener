@@ -25,7 +25,7 @@ from ..prompting import messages
 from ..schemas import BenignArgsResponse, BenignToolCall
 from ..state import DefenderState  # noqa: TC001 - LangGraph reads node annotations at runtime
 
-logger = logging.getLogger("agent_hardener.session")
+logger = logging.getLogger(__name__)
 
 #: Benign calls per tool: enough to catch an over-broad rail, few enough to keep validation cheap.
 BENIGN_CALLS = 8
@@ -85,7 +85,7 @@ def _synthesize(llm: BaseChatModel, tool_name: str, attack_args: Any, requests: 
     try:
         response = llm.with_structured_output(BenignArgsResponse).invoke(prompt)
     except Exception:
-        logger.exception("traces guardrails defender could not write benign calls for %s", tool_name)
+        logger.info("traces guardrails defender could not write benign calls for %s", tool_name, exc_info=True)
         return []
     if not isinstance(response, BenignArgsResponse):
         response = BenignArgsResponse.model_validate(response)

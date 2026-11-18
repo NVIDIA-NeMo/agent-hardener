@@ -42,12 +42,25 @@ def render_outputs_verbose(outputs: Iterable[dict[str, Any]], ctx: DisplayContex
     return parts
 
 
-def render_attack_summary(payload: dict[str, Any], ctx: DisplayContext) -> tuple[Text, list[Any]]:
-    """Build the attack phase headline and optional verbose renderables."""
+def render_attack_summary(payload: dict[str, Any], ctx: DisplayContext) -> tuple[list[Text], list[Any]]:
+    """Build the attack phase headline (``hits / attempts``, plus each failed attacker) and verbose renderables."""
     attacks = [a for a in (payload.get("attacks") or []) if isinstance(a, dict)]
     hits = sum(len(a.get("records") or []) for a in attacks)
-    line = Text("✓ ATTACK complete — ")
-    line.append(f"{hits} hit{'' if hits == 1 else 's'}", style="bold red" if hits else "green")
+    attempts = _attempt_total(attacks)
+    failed = [a for a in attacks if not a.get("ok", True)]
+    if attempts == 0 and not failed:
+        # The attacker ran but sent nothing (e.g. garak found no tools): not a clean bill of health.
+        line = Text("! ATTACK complete — ").append("no attempts were made; see the attacker log", style="yellow")
+    else:
+        line = Text(f"{'✗' if failed else '✓'} ATTACK complete — ")
+        landed = (
+            f"{hits} / {attempts} attempts landed" if attempts is not None else f"{hits} hit{'' if hits == 1 else 's'}"
+        )
+        line.append(landed, style="bold red" if hits else "green")
+    head = [line]
+    for attack in failed:
+        reason = attack.get("error") or attack.get("summary") or "failed"
+        head.append(Text(f"  {attack.get('agent_name', '<unknown>')}: ").append(str(reason), style="red"))
     verbose_parts: list[Any] = []
     if ctx.verbose and attacks:
         from agent_hardener.display.renderers.garak_attacker import (  # noqa: PLC0415
@@ -69,7 +82,25 @@ def render_attack_summary(payload: dict[str, Any], ctx: DisplayContext) -> tuple
             detail = renderer.verbose(attack, ctx)
             if detail is not None:
                 verbose_parts.append(detail)
-    return line, verbose_parts
+    return head, verbose_parts
+
+
+def _attempt_total(attacks: list[dict[str, Any]]) -> int | None:
+    """Attempts behind the hits, summed over attackers — ``None`` unless every attacker reported its count.
+
+    A hit count without its denominator reads as a rate it is not; when any attacker cannot say how many
+    attempts it made, the headline falls back to the bare hit count rather than a wrong total.
+    """
+    counts = [(a.get("metadata") or {}).get("attempt_count") for a in attacks]
+    if not counts or not all(isinstance(c, int) for c in counts):
+        return None
+    return sum(counts)
+
+
+def _failed_because(error: object) -> str:
+    """``failed`` plus the first line of the agent's error, when it gave one."""
+    reason = str(error or "").strip().splitlines()
+    return f"failed: {reason[0]}" if reason else "failed"
 
 
 def render_defender_summary(payload: dict[str, Any], ctx: DisplayContext) -> tuple[list[Text], list[Any]]:
@@ -81,7 +112,7 @@ def render_defender_summary(payload: dict[str, Any], ctx: DisplayContext) -> tup
         ok = defender.get("ok", True)
         line = Text(f"  {defender.get('agent_name', '<unknown>')}: ")
         if not ok:
-            line.append("failed", style="red")
+            line.append(_failed_because(defender.get("error_message") or defender.get("error")), style="red")
         else:
             line.append(f"{patches} patch{'' if patches == 1 else 'es'}", style="green" if patches else "dim")
         lines.append(line)
@@ -101,7 +132,7 @@ def render_validator_summary(payload: dict[str, Any], ctx: DisplayContext) -> tu
         ok = validator.get("ok", True)
         line = Text(f"  {validator.get('agent_name', '<unknown>')}: ")
         if not ok:
-            line.append("failed", style="red")
+            line.append(_failed_because(validator.get("error")), style="red")
         else:
             line.append(str(validator.get("summary") or "ok"), style="green")
         lines.append(line)

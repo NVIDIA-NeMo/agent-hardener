@@ -239,12 +239,14 @@ class DefenseStage:
             )
         except Exception as exc:
             duration_seconds = perf_counter() - started_at
-            recorder.logger.exception(
+            # File-only: the AGENT_FAILED event below puts the reason on the defender's progress row.
+            recorder.logger.info(
                 "defender stop name=%s id=%s ok=False duration_seconds=%.3f error=%s",
                 agent.name,
                 agent.agent_id,
                 duration_seconds,
                 str(exc),
+                exc_info=True,
             )
             recorder.emit(
                 EventType.AGENT_FAILED, **payload, duration_seconds=round(duration_seconds, 6), error=str(exc)

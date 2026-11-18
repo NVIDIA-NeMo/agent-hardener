@@ -27,7 +27,7 @@ from .state import DefenderState
 if TYPE_CHECKING:
     from langchain_core.language_models import BaseChatModel
 
-logger = logging.getLogger("agent_hardener.session")
+logger = logging.getLogger(__name__)
 
 #: Why an attack without an execution trace gets no rail.
 NO_TRACE_REASON = (
@@ -47,7 +47,7 @@ def run(
         outcome = Outcome(attack=attack, status="error", reason=NO_TRACE_REASON)
         recorder.write_file(OUTCOME_FILENAME, outcome.model_dump_json(indent=2))
         recorder.write_file(SUMMARY_FILENAME, render_summary(outcome, None, [], []))
-        logger.error("traces guardrails defender %s: %s", attack, NO_TRACE_REASON)
+        logger.info("traces guardrails defender %s: %s", attack, NO_TRACE_REASON)
         return DefenderOutput(ok=False, error_message=f"traces guardrails defender failed: {NO_TRACE_REASON}")
     if llm is None:
         llm = get_llm()
@@ -61,7 +61,7 @@ def run(
         outcome: Outcome = final["outcome"]
         output: DefenderOutput = final["output"]
     except Exception as exc:
-        logger.exception("traces guardrails defender failed on %s", attack)
+        logger.info("traces guardrails defender failed on %s", attack, exc_info=True)
         outcome = Outcome(attack=attack, status="error", reason=f"{type(exc).__name__}: {exc}")
         output = DefenderOutput(ok=False, error_message=f"traces guardrails defender failed: {outcome.reason}")
     recorder.write_file(OUTCOME_FILENAME, outcome.model_dump_json(indent=2))

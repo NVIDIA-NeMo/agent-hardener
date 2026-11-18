@@ -166,7 +166,7 @@ def test_answer_mode_is_derived_from_flags_and_tty(
     assert run(**kwargs) == 0
 
     assert run.started[0].interactive is interactive
-    assert f"Answers:       {label}" in capsys.readouterr().out
+    assert f"  answers       {label}" in capsys.readouterr().out
 
 
 def test_the_artifact_dir_is_under_the_storage_root_by_target_name(
@@ -178,7 +178,7 @@ def test_the_artifact_dir_is_under_the_storage_root_by_target_name(
 
     expected = tmp_path / "benign_profiles" / "victim"
     assert run.started[0].artifact_dir == expected
-    assert f"Artifact dir:  {expected}" in capsys.readouterr().out
+    assert f"  artifact dir  {expected}" in capsys.readouterr().out
 
 
 def test_preseeded_interview_answers_are_not_reported_as_new(
@@ -253,21 +253,21 @@ def test_summary_counts_unresolved_gaps_against_answered_ones(tmp_path: Path, ca
     wizard._print_summary(final, tmp_path, answers_mode="prompted (TTY)")
 
     out = capsys.readouterr().out
-    assert "Tools:         1" in out
-    assert "Personas:      2" in out
-    assert "Out-of-scope:  1" in out
-    assert "Gaps:          2 unresolved (3 total)" in out
-    assert "Q&A collected: 2 (3 question(s) asked)" in out
-    assert "Requests:      1" in out
+    assert "  tools         1" in out
+    assert "  personas      2" in out
+    assert "  out-of-scope  1" in out
+    assert "  gaps          2 / 3 unresolved" in out
+    assert "  Q&A           2 collected, 3 question(s) asked" in out
+    assert "✓ Benign suite: 1 request(s)" in out
 
 
 def test_summary_without_a_profile_reports_zeroes(tmp_path: Path, capsys: Any) -> None:
     wizard._print_summary(_final(), tmp_path, answers_mode="x")
 
     out = capsys.readouterr().out
-    assert "Tools:         0" in out
-    assert "Personas:      0" in out
-    assert "Out-of-scope:  0" in out
+    assert "  tools         0" in out
+    assert "  personas      0" in out
+    assert "  out-of-scope  0" in out
 
 
 def test_summary_shows_only_the_first_five_errors(tmp_path: Path, capsys: Any) -> None:
@@ -276,15 +276,16 @@ def test_summary_shows_only_the_first_five_errors(tmp_path: Path, capsys: Any) -
     wizard._print_summary(final, tmp_path, answers_mode="x")
 
     out = capsys.readouterr().out
-    assert "Errors:        8" in out
-    assert "- err-4" in out
+    assert "8 error(s)" in out
+    assert "! err-4" in out
     assert "err-5" not in out
+    assert "3 more error(s) in the log" in out
 
 
 def test_summary_without_errors_has_no_error_section(tmp_path: Path, capsys: Any) -> None:
     wizard._print_summary(_final(), tmp_path, answers_mode="x")
 
-    assert "First errors:" not in capsys.readouterr().out
+    assert "error(s)" not in capsys.readouterr().out
 
 
 def test_summary_points_at_the_editable_suite_and_the_run_command(tmp_path: Path, capsys: Any) -> None:
@@ -365,7 +366,7 @@ def test_upload_creates_a_named_dataset_and_one_item_per_request(capsys: Any) ->
     }
     assert client.items[1]["input"]["persona"] is None
     assert client.flushed == 1
-    assert "uploaded 2 item(s) to 'victim-benign'" in capsys.readouterr().out
+    assert "✓ Langfuse dataset: uploaded 2 / 2 item(s) to 'victim-benign'" in capsys.readouterr().out
 
 
 def test_one_failing_item_does_not_stop_the_rest(capsys: Any, caplog: pytest.LogCaptureFixture) -> None:
@@ -376,5 +377,5 @@ def test_one_failing_item_does_not_stop_the_rest(capsys: Any, caplog: pytest.Log
 
     assert [i["input"]["payload"] for i in client.items] == ["ok-1", "ok-2"]
     assert client.flushed == 1
-    assert "uploaded 2 item(s)" in capsys.readouterr().out
+    assert "! Langfuse dataset: uploaded 2 / 3 item(s)" in capsys.readouterr().out
     assert "failed to upload dataset item" in caplog.text

@@ -186,7 +186,7 @@ class _RetryPolicy:
                 waited,
             )
             return None
-        logger.warning(
+        logger.info(
             "%s rate limited the request (HTTP %s); retry %d in %.1fs (waited %.0fs of %.0fs)",
             request.url.host,
             response.status_code,

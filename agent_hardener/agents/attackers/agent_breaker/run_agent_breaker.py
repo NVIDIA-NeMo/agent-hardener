@@ -12,6 +12,7 @@ overridden via ``target_uri`` (whole URL) or ``target_port`` (swap the port only
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -271,12 +272,33 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         metadata={
             "garak_return_code": result.return_code,
             "hit_count": hit_count,
+            "attempt_count": count_attempts(result.report_path),
             "garak_report_path": result.report_path,
             "garak_config_path": result.config_path,
             "target": request.target.name,
             "target_uri": target_uri,
         },
     )
+
+
+def count_attempts(report_path: str | None) -> int | None:
+    """Distinct attempts in a garak report (the denominator for its hits); ``None`` when it cannot be read.
+
+    garak writes an ``attempt`` row per attempt state change, so rows are counted by ``uuid``.
+    """
+    if not report_path:
+        return None
+    uuids: set[str] = set()
+    try:
+        with Path(report_path).open(encoding="utf-8") as report:
+            for line in report:
+                with contextlib.suppress(json.JSONDecodeError):
+                    row = json.loads(line)
+                    if isinstance(row, dict) and row.get("entry_type") == "attempt" and row.get("uuid"):
+                        uuids.add(str(row["uuid"]))
+    except OSError:
+        return None
+    return len(uuids)
 
 
 def _summary(hit_count: int, *, partial: bool = False) -> str:

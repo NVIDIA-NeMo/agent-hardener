@@ -87,7 +87,7 @@ def _mission(tmp_path: Path, relay_victim: object) -> Mission:
     )
     mission._run_id = "run-1"
     mission._base_config = SimpleNamespace(relay_victim=relay_victim, cwd=tmp_path)
-    mission._announce = lambda _message: None
+    mission._announce = lambda _message, **_kw: None
     return mission
 
 

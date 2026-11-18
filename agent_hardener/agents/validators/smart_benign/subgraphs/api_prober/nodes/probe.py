@@ -59,7 +59,7 @@ async def probe(state: ApiProberState) -> dict[str, object]:
 
     for question, result in zip(questions, results, strict=True):
         if isinstance(result, BaseException):
-            logger.warning("api_prober question failed (%s): %s", question[:40], result)
+            logger.info("api_prober question failed (%s): %s", question[:40], result)
             errors.append(f"probe failed [{question[:40]}...]: {result}")
         else:
             responses.append((question, result))

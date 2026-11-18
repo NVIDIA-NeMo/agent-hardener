@@ -104,7 +104,7 @@ async def _carries_attack(
     try:
         return await args_judge(call.name, prompt, call.args)
     except Exception:
-        logger.warning("args judge failed; counting the tool_failed hit as landed", exc_info=True)
+        logger.info("args judge failed; counting the tool_failed hit as landed", exc_info=True)
         return None
 
 
@@ -115,7 +115,7 @@ async def _declined(
     try:
         return await refusal_judge(tool, prompt, answer)
     except Exception:
-        logger.warning("refusal judge failed; reporting tool_not_called", exc_info=True)
+        logger.info("refusal judge failed; reporting tool_not_called", exc_info=True)
         return False
 
 

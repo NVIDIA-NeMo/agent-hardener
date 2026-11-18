@@ -1038,7 +1038,7 @@ def _patch_common(monkeypatch: pytest.MonkeyPatch, base_config: object) -> None:
 
 
 def test_down_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_common(monkeypatch, base_config="cfg")
+    _patch_common(monkeypatch, base_config=SimpleNamespace(sandbox="sb"))
 
     class FakeLifecycle:
         def __init__(self, _cfg: object) -> None:
@@ -1050,7 +1050,8 @@ def test_down_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
     result = runner.invoke(app, ["down", "--config", "x.yaml"])
     assert result.exit_code == 0
-    assert "torn-down" in result.output
+    assert "✓ Sandbox sb torn down" in result.output
+    assert "torn-down" not in result.output  # the raw OpenShell output goes to the log file
 
 
 def test_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1070,7 +1071,7 @@ def test_status_command(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_up_command(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_common(monkeypatch, base_config="cfg")
+    _patch_common(monkeypatch, base_config=SimpleNamespace(sandbox="sb"))
 
     class FakeLifecycle:
         def __init__(self, _cfg: object) -> None:
@@ -1088,12 +1089,15 @@ def test_up_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
     result = runner.invoke(app, ["up", "--config", "x.yaml"])
     assert result.exit_code == 0
+    assert "✓ Sandbox sb is ready" in result.output
 
 
 def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_common(monkeypatch, base_config="cfg")
     seen: list[object] = []
-    monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda vc: seen.append(vc) or "cfg")
+    monkeypatch.setattr(
+        "agent_hardener.tools.openshell.openshell_config", lambda vc: seen.append(vc) or SimpleNamespace(sandbox="sb")
+    )
     monkeypatch.setattr(
         "agent_hardener.config.load_config",
         lambda _p: SimpleNamespace(victim_control=VictimControlConfig(type="openshell", config={"sandbox": "sb"})),
@@ -1118,8 +1122,8 @@ def test_up_victim_image_reaches_the_sandbox_config(monkeypatch: pytest.MonkeyPa
     assert result.exit_code == 0
     (victim_control,) = seen
     assert victim_control.config == {"sandbox": "sb", "image": "reg/agent:1", "allow_context_drift": True}
-    assert "brought-up" in result.output
-    assert "different staged context" in result.output
+    assert "✓ Sandbox sb is ready" in result.output
+    assert "! victim image reg/agent:1 was built from a different staged context" in result.output
 
 
 def test_stage_prints_the_staged_build_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

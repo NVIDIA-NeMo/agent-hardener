@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 import typer
@@ -16,7 +17,7 @@ from agent_hardener.cli._app import (
     VICTIM_IMAGE_OPTION,
     app,
 )
-from agent_hardener.display.console import fail, info, section, status_factory
+from agent_hardener.display.console import fail, ok, section, status_factory
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
 
 
@@ -84,13 +85,15 @@ def synth_benign(
         answer_provider = auto_answer_provider if yes else tty_answer_provider
         # The sandbox build (docker) can take minutes; show a spinner so the command isn't silent.
         with ExitStack() as sandbox:
+            started = time.monotonic()
             with status_factory("Building and starting victim sandbox"):
                 sandbox.enter_context(
                     managed_victim_sandbox(
                         victim_control, reuse=reuse, no_cleanup=no_cleanup, base_url=session.target.base_url
                     )
                 )
-            info("Sandbox ready — starting synthesis")
+            ok("Sandbox ready", elapsed=time.monotonic() - started)
+            section("Synthesis")
             code = run_synth_wizard(
                 config,
                 answer_provider=answer_provider,

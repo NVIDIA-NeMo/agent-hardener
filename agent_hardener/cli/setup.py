@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+import time
+
 import typer
 
 from agent_hardener.cli._app import app
@@ -28,14 +30,15 @@ def setup(
     from agent_hardener.garak_venv import provision_garak_venv
 
     section("Provisioning garak venv")
+    started = time.monotonic()
     with status_factory("Installing garak"):
         try:
             python = provision_garak_venv(force=force)
         except RuntimeError as exc:
-            fail(str(exc))
+            fail(str(exc), markup=False)
             raise typer.Exit(1) from exc
-    ok(f"garak ready: {python}")
+    ok(f"garak ready: {python}", elapsed=time.monotonic() - started, markup=False)
 
     section("Configuring OpenShell gateway")
     result = register_local_gateway()
-    (ok if result.ok else warn)(result.message)
+    (ok if result.ok else warn)(result.message, markup=False)

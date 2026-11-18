@@ -67,7 +67,7 @@ async def replay_attacks_for_traces(
             continue
         trace = find_attack_trace(traces, prompt, answer, claimed=claimed)
         if trace is None:
-            logger.warning("no trace found for a replayed attack: %.80s", prompt)
+            logger.info("no trace found for a replayed attack: %.80s", prompt)
             continue
         replayed.append(RecordedAttackTrace(prompt=prompt, response=answer, trace=trace))
     logger.info("replayed %d attack(s) for their traces; %d traced", len(pending), len(replayed))
@@ -103,6 +103,6 @@ async def _send(client: httpx.AsyncClient, contract: EndpointContract, prompt: s
         response.raise_for_status()
         body: Any = response.json()
     except (httpx.HTTPError, ValueError) as exc:
-        logger.warning("could not replay an attack to the agent (%s): %.80s", exc, prompt)
+        logger.info("could not replay an attack to the agent (%s): %.80s", exc, prompt)
         return None
     return contract.extract_text(body)
