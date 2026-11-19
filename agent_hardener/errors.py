@@ -123,6 +123,11 @@ class ModelUnavailableError(AgentHardenerError):
     default_remediation = "Check the model name, endpoint URL, and API key; the error lists the reachable models."
 
 
+#: An attacker's ``metadata["failure_code"]`` when its own red-team or detector model is unusable. The attack
+#: stage raises :class:`ModelUnavailableError` for it rather than a generic :class:`AttackerError`.
+ATTACKER_LLM_UNAVAILABLE = "attacker_llm_unavailable"
+
+
 def write_run_error(category: str, message: str, *, remediation: str = "", stack: str = "") -> None:
     """Write a structured failure to ``$AGENT_HARDENER_ERROR_FILE`` as ``{category, message, remediation, stack}``.
 

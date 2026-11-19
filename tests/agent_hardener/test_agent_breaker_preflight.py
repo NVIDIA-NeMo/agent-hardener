@@ -12,6 +12,8 @@ from agent_hardener import model_check
 from agent_hardener.agents.attackers.agent_breaker import preflight, run_agent_breaker
 from agent_hardener.agents.attackers.agent_breaker.config import build_agent_breaker_config
 from agent_hardener.errors import ModelUnavailableError
+from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
+from agent_hardener.runtime.stages.attack import raise_on_attacker_failure
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -80,3 +82,19 @@ def test_a_failed_preflight_stops_garak_from_starting(tmp_path: Path, monkeypatc
             )
         )
     assert started == []
+
+
+def test_a_failed_preflight_reaches_the_operator_as_a_model_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not as an AttackerError, whose advice (raise garak.timeout_s) is wrong for a dead model endpoint."""
+
+    async def failing_scan(**_kwargs: Any) -> run_agent_breaker.ScanResult:
+        raise ModelUnavailableError("detector down", remediation="fix the detector")
+
+    monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", failing_scan)
+    request = AgentRunInput(round_id="r1", target=TargetInput(name="victim", base_url="http://127.0.0.1:8000/v1"))
+    agent = AgentConfig(name="garak-agent-breaker", role="attacker")
+    record = asyncio.run(run_agent_breaker.run(request, agent))
+    assert record.ok is False
+    with pytest.raises(ModelUnavailableError, match="detector down") as exc_info:
+        raise_on_attacker_failure([agent], [record])
+    assert exc_info.value.remediation == "fix the detector"

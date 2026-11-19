@@ -114,7 +114,11 @@ def raise_if_unavailable(label: str, model: str | None, base_url: str, verdict: 
         raise ModelUnavailableError(f"Could not reach the {label} model endpoint {base_url} ({verdict.detail}).")
     if verdict.reason in ("timeout", "error"):
         raise ModelUnavailableError(
-            f"The {label} model {model!r} at {base_url} failed a one-token test request ({verdict.detail})."
+            f"The {label} model {model!r} at {base_url} failed a one-token test request ({verdict.detail}).",
+            remediation=(
+                f"Check that {base_url} is serving {model!r}. A slow reasoning model that needs longer to answer "
+                "can be given more time with garak.model_timeout."
+            ),
         )
     available = ", ".join(verdict.available[:20]) or "none"
     raise ModelUnavailableError(

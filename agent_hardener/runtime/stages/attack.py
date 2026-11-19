@@ -10,7 +10,12 @@ from typing import TYPE_CHECKING, Any
 
 from agent_hardener.agents.attackers.preloaded import load_preloaded_attacks
 from agent_hardener.concurrency import gather_limited_ordered
-from agent_hardener.errors import AttackerError
+from agent_hardener.errors import (
+    ATTACKER_LLM_UNAVAILABLE,
+    AgentHardenerError,
+    AttackerError,
+    ModelUnavailableError,
+)
 from agent_hardener.events import EventType
 from agent_hardener.models import ARTIFACT_DIR_KEY, AgentRunInput, AttackRecord
 from agent_hardener.runtime.stages.agent_invoker import all_ok, collect_outputs
@@ -133,16 +138,27 @@ class AttackStage:
         return outputs
 
 
+#: An attacker's ``metadata["failure_code"]`` whose cause is not the attacker. Every other code is an
+#: :class:`AttackerError`.
+_FAILURE_ERRORS: dict[str, type[AgentHardenerError]] = {ATTACKER_LLM_UNAVAILABLE: ModelUnavailableError}
+
+
 def raise_on_attacker_failure(attackers: list[Any], live_outputs: list[AttackRecord]) -> None:
-    """Raise :class:`AttackerError` if any live attacker did not complete (``ok=False``).
+    """Raise if any live attacker did not complete (``ok=False``), classified by its failure code.
 
     A failed/partial attacker produces no scored hits, so a run that continued would report "0 hits" —
     a false negative that reads as "the victim resisted" when the scan never finished. Replay/preloaded
     runs empty ``config.attackers``, so this is a no-op for them.
+
+    An attacker that knows why it failed names it in ``metadata["failure_code"]`` and says what to do in
+    ``metadata["remediation"]``. The first failure's code picks the error class, so a dead model endpoint
+    is reported as a model problem rather than as an attacker timeout.
     """
     failed = [(agent, out) for agent, out in zip(attackers, live_outputs, strict=False) if not out.ok]
     if not failed:
         return
     names = ", ".join(agent.name for agent, _ in failed)
     reason = "; ".join(str(out.error or "did not complete") for _, out in failed)
-    raise AttackerError(f"attacker(s) {names} did not complete: {reason}")
+    metadata = failed[0][1].metadata
+    error = _FAILURE_ERRORS.get(str(metadata.get("failure_code")), AttackerError)
+    raise error(f"attacker(s) {names} did not complete: {reason}", remediation=metadata.get("remediation") or None)
