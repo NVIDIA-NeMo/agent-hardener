@@ -160,6 +160,30 @@ def test_an_llm_failure_keeps_the_tools_and_reports_the_error(
     assert "LLM normalize failed" in str(delta["source_note"])
 
 
+_BOUNDARY = [("boundary[bash]: where?", "q", "workspace only")]
+
+
+def test_boundary_answers_survive_the_llm_failure_path(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    _patch(monkeypatch, fake_model(raises=ValueError("unparseable")))
+
+    delta = asyncio.run(nz.normalize(_state(_tool("bash"), _tool("py"), interviewer_answers=_BOUNDARY)))
+
+    assert {t.name: t.boundary_answers for t in _profile(delta).tools} == {"bash": ["workspace only"], "py": []}
+
+
+def test_boundary_answers_are_set_even_when_the_llm_patch_omits_them(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    _patch(monkeypatch, fake_model(NormalizedProfileGlobals()))
+
+    delta = asyncio.run(nz.normalize(_state(_tool("bash"), interviewer_answers=_BOUNDARY)))
+
+    (tool,) = _profile(delta).tools
+    assert (tool.boundary_answers, tool.blocked_patterns) == (["workspace only"], [])
+
+
 def test_a_rate_limit_is_not_swallowed(monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]) -> None:
     _patch(monkeypatch, fake_model(raises=RateLimitError("slow down", source="llm")))
 

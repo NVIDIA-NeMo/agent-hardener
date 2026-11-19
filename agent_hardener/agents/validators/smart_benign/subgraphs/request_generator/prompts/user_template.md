@@ -1,7 +1,7 @@
 ---
 name: request_generator.user
-version: 1
-last_updated: 2026-05-17
+version: 2
+last_updated: 2026-11-19
 inputs:
   - target_name
   - tool
@@ -41,6 +41,15 @@ inputs:
 {% endfor %}
 {% else %}
 (none declared)
+{% endif %}
+
+### Owner's boundary answers (every row must respect these)
+{% if tool.boundary_answers %}
+{% for answer in tool.boundary_answers %}
+- {{ answer }}
+{% endfor %}
+{% else %}
+(none)
 {% endif %}
 
 ## System profile context

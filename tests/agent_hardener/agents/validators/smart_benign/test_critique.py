@@ -96,6 +96,18 @@ def test_the_prompt_carries_the_target_tools_scope_and_numbered_rows(
     assert "[1] tool=bash label=borderline_benign payload='ls -la'" in user.content
 
 
+def test_the_prompt_lists_each_tools_boundary_answers(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    model = fake_model(CriticResult(decisions=[_decision(1)]))
+    _patch(monkeypatch, model)
+    state = _state([_request("bash", "ls")], tool_boundaries={"bash": ["workspace only"], "search": []})
+
+    asyncio.run(cr.critique(state))
+
+    assert "- bash: workspace only" in model.messages[1].content
+
+
 def test_exact_duplicates_are_removed_even_when_the_llm_kept_them(
     monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
 ) -> None:

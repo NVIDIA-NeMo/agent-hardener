@@ -25,6 +25,7 @@ class CriticState(AgentHardenerModel):
     requests: list[GeneratedRequest] = Field(default_factory=list)
     out_of_scope: list[str] = Field(default_factory=list)
     tool_names: list[str] = Field(default_factory=list)
+    tool_boundaries: dict[str, list[str]] = Field(default_factory=dict)
     synth_model: str
     synth_base_url: str
     synth_api_key: str

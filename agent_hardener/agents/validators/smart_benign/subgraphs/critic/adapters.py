@@ -21,11 +21,13 @@ def entry_adapter(parent: SynthState) -> CriticState:
     d = defaults()
     out_of_scope = list(parent.profile.out_of_scope) if parent.profile else []
     tool_names = [t.name for t in parent.profile.tools] if parent.profile else []
+    tool_boundaries = {t.name: list(t.boundary_answers) for t in parent.profile.tools} if parent.profile else {}
     return CriticState(
         target_name=parent.inputs.target_name,
         requests=list(parent.requests),
         out_of_scope=out_of_scope,
         tool_names=tool_names,
+        tool_boundaries=tool_boundaries,
         synth_model=d.synth_llm.model,
         synth_base_url=d.synth_llm.base_url,
         synth_api_key=inference_api_key() or "",

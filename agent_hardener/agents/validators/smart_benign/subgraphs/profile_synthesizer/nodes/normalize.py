@@ -23,6 +23,7 @@ from agent_hardener.agents.validators.smart_benign.prompt_loader import load_pro
 from agent_hardener.llm import build_chat_model
 from agent_hardener.rate_limits import RateLimitError, rate_limit_error_from_exception
 
+from ...gap_detector.nodes.analyze_boundaries import boundary_tool
 from ..schemas import NormalizedProfileGlobals, ToolPatch
 
 if TYPE_CHECKING:
@@ -93,7 +94,7 @@ async def normalize(state: ProfileSynthesizerState) -> dict[str, object]:
         return {
             "profile": VictimCapabilityProfile(
                 target_name=state.target_name,
-                tools=state.merged_tools,
+                tools=_apply_boundary_answers(state.merged_tools, state.interviewer_answers),
                 personas=[],
                 out_of_scope=[],
                 source_notes=state.source_notes,
@@ -105,7 +106,9 @@ async def normalize(state: ProfileSynthesizerState) -> dict[str, object]:
         }
 
     personas = [Persona(name=p.name, description=p.description) for p in output.personas]
-    patched_tools = _apply_tool_patches(state.merged_tools, output.tool_patches)
+    patched_tools = _apply_boundary_answers(
+        _apply_tool_patches(state.merged_tools, output.tool_patches), state.interviewer_answers
+    )
     merge_proposals = [
         ToolMergeProposal(
             canonical_name=m.canonical_name,
@@ -138,6 +141,23 @@ def _format_tool_gaps(tools: list[ToolSpec]) -> str:
         if not t.example_inputs:
             lines.append(f"- {t.name}: missing example_inputs")
     return "\n".join(lines) if lines else "(none)"
+
+
+def _apply_boundary_answers(tools: list[ToolSpec], answers: list[tuple[str, str, str]]) -> list[ToolSpec]:
+    """Record each answered ``boundary[<tool>]:`` reply on its tool, so it never depends on the LLM rewrite."""
+    by_tool: dict[str, list[str]] = {}
+    for gap, _q, answer in answers:
+        tool_name = boundary_tool(gap)
+        if tool_name is not None and answer.strip():
+            by_tool.setdefault(tool_name, []).append(answer.strip())
+    if not by_tool:
+        return tools
+    return [
+        tool.model_copy(update={"boundary_answers": list(dict.fromkeys([*tool.boundary_answers, *by_tool[tool.name]]))})
+        if tool.name in by_tool
+        else tool
+        for tool in tools
+    ]
 
 
 def _apply_tool_patches(tools: list[ToolSpec], patches: list[ToolPatch]) -> list[ToolSpec]:
