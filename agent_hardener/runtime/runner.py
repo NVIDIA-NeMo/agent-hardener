@@ -19,6 +19,8 @@ import contextlib
 import hashlib
 import json
 import logging
+import signal
+import threading
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -154,6 +156,42 @@ def _write_fingerprint(path: Path, fingerprint: str) -> None:
     path.write_text(fingerprint + "\n", encoding="utf-8")
 
 
+#: Ways a run ends other than Ctrl-C: ``kill`` or a supervisor's stop (TERM), a closed terminal or dropped
+#: SSH session (HUP). SIGHUP does not exist on Windows.
+TERMINATION_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
+
+
+@contextlib.contextmanager
+def teardown_on_termination() -> Iterator[None]:
+    """Make SIGTERM and SIGHUP end the run the way Ctrl-C does, so its ``finally`` still tears down.
+
+    Python's default for both is to exit on the spot, skipping every ``finally``: the sandbox, its port
+    forward and the host backends were left running, and the forward kept the port bound. Raising
+    ``KeyboardInterrupt`` reuses the one path a run already handles. Only the first signal raises; later
+    ones are ignored, so a repeated stop cannot abort the teardown the first one started — SIGKILL still
+    ends the process outright.
+
+    A no-op off the main thread, where Python cannot install signal handlers.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _interrupt(signum: int, _frame: object) -> None:
+        for sig in TERMINATION_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
+        name = signal.Signals(signum).name
+        logging.getLogger("agent_hardener.run").warning("received %s; tearing down", name)
+        raise KeyboardInterrupt(name)
+
+    previous = {sig: signal.signal(sig, _interrupt) for sig in TERMINATION_SIGNALS}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 @dataclass
 class MissionSpec:
     """The repeatable inputs to a mission, grouped so the runner and its phases share one ``ctx``."""
@@ -208,6 +246,7 @@ class Mission:
     def run(self) -> MissionResult:
         """Open the log/event sinks, run the phases in order, and always tear down at the end."""
         with contextlib.ExitStack() as sinks:
+            sinks.enter_context(teardown_on_termination())
             self._open_sinks(sinks)
             try:
                 self._load_benign_suite()

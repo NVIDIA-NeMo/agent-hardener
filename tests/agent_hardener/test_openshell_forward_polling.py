@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import os
 import signal
 import subprocess
 from pathlib import Path
@@ -52,6 +53,7 @@ class FakeProcess:
 
 
 def _lifecycle(tmp_path: Path, runner: Any = None, **overrides: Any) -> OpenShellLifecycle:
+    overrides.setdefault("cwd", tmp_path)
     config = OpenShellConfig(
         gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", forward=_FORWARD, **overrides
     )
@@ -59,7 +61,15 @@ def _lifecycle(tmp_path: Path, runner: Any = None, **overrides: Any) -> OpenShel
 
 
 def _pid_file(lifecycle: OpenShellLifecycle) -> Path:
-    return lifecycle._managed_forward_pid_path()
+    path = lifecycle._managed_forward_pid_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+@pytest.fixture
+def forward_alive(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The pid in the file is still the ``openshell forward start`` for sandbox ``sb``."""
+    monkeypatch.setattr(_forward, "process_command_line", lambda _pid: f"openshell forward start {_FORWARD} sb")
 
 
 class _FakeClock:
@@ -188,6 +198,7 @@ def test_managed_forward_surfaces_a_failure_to_stop_the_previous_one(
     assert popen == []
 
 
+@pytest.mark.usefixtures("forward_alive")
 def test_restarting_a_managed_forward_reports_the_one_it_replaced(
     tmp_path: Path, popen: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -221,6 +232,37 @@ def test_stop_discards_an_invalid_pid_file(tmp_path: Path) -> None:
     assert not _pid_file(lifecycle).exists()
 
 
+@pytest.mark.parametrize("command_line", [None, "vim notes.txt", "openshell forward start 0.0.0.0:8000 other-sb"])
+def test_stop_never_signals_a_pid_that_is_no_longer_our_forward(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command_line: str | None
+) -> None:
+    sent: list[int] = []
+    monkeypatch.setattr(_forward.os, "killpg", lambda pid, _sig: sent.append(pid))
+    monkeypatch.setattr(_forward, "process_command_line", lambda _pid: command_line)
+    lifecycle = _lifecycle(tmp_path)
+    _pid_file(lifecycle).write_text("321\n")
+
+    result = lifecycle.stop_managed_forward()
+
+    assert sent == []
+    assert (result.ok, result.output) == (True, "managed forward process 321 was not running")
+    assert not _pid_file(lifecycle).exists()
+
+
+def test_process_command_line_reads_a_live_process_and_none_for_a_missing_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert "python" in (_forward.process_command_line(os.getpid()) or "").lower()
+    assert _forward.process_command_line(2**22 + 1) is None
+
+    def no_ps(*_args: Any, **_kwargs: Any) -> None:
+        raise FileNotFoundError("ps")
+
+    monkeypatch.setattr(_forward.subprocess, "run", no_ps)
+    assert _forward.process_command_line(os.getpid()) is None
+
+
+@pytest.mark.usefixtures("forward_alive")
 def test_stop_signals_the_whole_process_group_and_clears_the_pid_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -236,6 +278,7 @@ def test_stop_signals_the_whole_process_group_and_clears_the_pid_file(
     assert not _pid_file(lifecycle).exists()
 
 
+@pytest.mark.usefixtures("forward_alive")
 def test_stop_treats_an_already_dead_process_as_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     def gone(_pid: int, _sig: int) -> None:
         raise ProcessLookupError
@@ -250,6 +293,7 @@ def test_stop_treats_an_already_dead_process_as_success(tmp_path: Path, monkeypa
     assert not _pid_file(lifecycle).exists()
 
 
+@pytest.mark.usefixtures("forward_alive")
 def test_stop_keeps_the_pid_file_when_the_process_cannot_be_signalled(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -318,20 +362,15 @@ def test_forward_is_active_is_false_without_a_configured_forward(tmp_path: Path)
     assert lifecycle._forward_is_active("sb 0.0.0.0:8000") is False
 
 
-def test_pid_file_name_is_filesystem_safe_and_lives_under_the_log_dir(tmp_path: Path) -> None:
-    lifecycle = _lifecycle(tmp_path)
+def test_pid_file_is_per_sandbox_not_per_run_so_the_next_run_finds_an_orphaned_forward(tmp_path: Path) -> None:
+    first = _lifecycle(tmp_path)
+    next_run = _lifecycle(tmp_path)
+    next_run.log_dir = tmp_path / "another-run" / "logs"
 
-    path = _pid_file(lifecycle)
+    path = first._managed_forward_pid_path()
 
-    assert path.parent == tmp_path / "logs"
-    assert path.name == "sb-0.0.0.0_8000.pid"
-
-
-def test_pid_file_defaults_to_the_cwd_when_no_log_dir_is_injected(tmp_path: Path) -> None:
-    lifecycle = _lifecycle(tmp_path, cwd=tmp_path)
-    lifecycle.log_dir = None
-
-    assert _pid_file(lifecycle).parent == tmp_path / ".agent-hardener" / "openshell-forwards"
+    assert path == next_run._managed_forward_pid_path()
+    assert path == tmp_path / ".agent-hardener" / "openshell-forwards" / "sb-0.0.0.0_8000.pid"
 
 
 # --- sandbox readiness -------------------------------------------------------------------------------------
