@@ -44,6 +44,14 @@ class ToolSpec(AgentHardenerModel):
     parameters_schema: dict[str, Any] | None = None
     allowed_patterns: list[str] = Field(default_factory=list)
     blocked_patterns: list[str] = Field(default_factory=list)
+    # Set deterministically from the interview, never by an LLM patch.
+    boundary_answers: list[str] = Field(
+        default_factory=list,
+        description=(
+            "The owner's interview answers about where this tool's legitimate use ends, verbatim; "
+            "they may say what is allowed as well as what is not."
+        ),
+    )
     example_inputs: list[str] = Field(default_factory=list)
     source: ToolSource
     confidence: float = Field(ge=0.0, le=1.0)

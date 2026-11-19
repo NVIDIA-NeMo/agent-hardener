@@ -45,13 +45,16 @@ def boundary_key(tool_name: str) -> str:
     return f"{_BOUNDARY_PREFIX}{tool_name}]:"
 
 
+def boundary_tool(gap: str) -> str | None:
+    """Tool name of a ``boundary[<tool>]:`` gap, or None for any other gap."""
+    if not gap.startswith(_BOUNDARY_PREFIX):
+        return None
+    return gap[len(_BOUNDARY_PREFIX) :].split("]", 1)[0]
+
+
 def _answered_boundary_tools(prior_answers: list[tuple[str, str, str]]) -> set[str]:
     """Tool names whose ``boundary[...]`` gap already has an interview answer."""
-    answered: set[str] = set()
-    for gap, _q, _a in prior_answers:
-        if gap.startswith(_BOUNDARY_PREFIX):
-            answered.add(gap[len(_BOUNDARY_PREFIX) :].split("]", 1)[0])
-    return answered
+    return {tool for gap, _q, _a in prior_answers if (tool := boundary_tool(gap)) is not None}
 
 
 async def analyze_boundaries(state: GapDetectorState) -> dict[str, object]:
