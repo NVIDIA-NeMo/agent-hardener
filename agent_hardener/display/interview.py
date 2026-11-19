@@ -18,6 +18,8 @@ import questionary
 from rich.console import Console
 from rich.padding import Padding
 
+from agent_hardener.agents.validators.smart_benign.subgraphs.gap_detector.nodes.detect_gaps import MERGE_GAP_PREFIX
+
 _SENTINEL_OTHER = "__OTHER__"
 _console = Console()
 _STYLE = questionary.Style(
@@ -92,9 +94,11 @@ async def tty_answer_provider(questions: list[dict[str, Any]]) -> list[dict[str,
 
 
 def _default_answer(item: dict[str, Any]) -> dict[str, Any] | None:
-    """The recommended option (or the first, if none is flagged); ``None`` for free-text questions."""
+    """The recommended option (or the first, if none is flagged); ``None`` for free-text and tool-merge questions."""
     options = item.get("options")
     if not options:  # no suggestion to accept — leave the gap unresolved
+        return None
+    if str(item.get("gap", "")).startswith(MERGE_GAP_PREFIX):  # a merge deletes a tool; only a human may approve it
         return None
     return {"gap": item.get("gap", ""), "question": item.get("question", ""), "answer": _recommended(options)}
 

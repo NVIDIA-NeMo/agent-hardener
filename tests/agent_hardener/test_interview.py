@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING
 
+from agent_hardener.agents.validators.smart_benign.subgraphs.gap_detector.nodes.detect_gaps import MERGE_GAP_PREFIX
 from agent_hardener.display import interview
 
 if TYPE_CHECKING:
@@ -46,6 +47,23 @@ def test_auto_answer_provider_accepts_recommended_and_omits_optionless() -> None
         {"gap": "g1", "question": "a?", "answer": "second"},
         {"gap": "g3", "question": "b?", "answer": "x"},
     ]
+
+
+def test_auto_answer_provider_never_approves_a_tool_merge() -> None:
+    merge_gap = f"{MERGE_GAP_PREFIX} 'a' and 'b' may be the same tool — confirm and choose canonical name"
+    questions = [
+        {"gap": merge_gap, "question": "merge?", "options": _opts()},
+        {"gap": "g1", "question": "a?", "options": _opts()},
+    ]
+    answers = asyncio.run(interview.auto_answer_provider(questions))
+    assert answers == [{"gap": "g1", "question": "a?", "answer": "second"}]
+
+
+def test_ask_batch_keeps_a_human_merge_answer(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(interview, "_ask_with_options", lambda _q, _o: "yes, merge")
+    merge_gap = f"{MERGE_GAP_PREFIX} 'a' and 'b'"
+    collected = interview._ask_batch([{"gap": merge_gap, "question": "merge?", "options": _opts()}])
+    assert collected == [{"gap": merge_gap, "question": "merge?", "answer": "yes, merge"}]
 
 
 def test_ask_batch_collects_options_and_free_text(monkeypatch: pytest.MonkeyPatch) -> None:

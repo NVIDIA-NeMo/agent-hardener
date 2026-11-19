@@ -15,6 +15,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+MERGE_GAP_PREFIX = "tool merge proposal:"
 COMPLETENESS_GAP = "tools completeness: confirm no additional tools are missing from the profile"
 
 
@@ -77,7 +78,7 @@ def _merge_proposal_gaps(profile: VictimCapabilityProfile) -> list[str]:
     for proposal in profile.proposed_tool_merges:
         aliases_str = ", ".join(f"'{a}'" for a in proposal.aliases)
         out.append(
-            f"tool merge proposal: '{proposal.canonical_name}' and {aliases_str} "
+            f"{MERGE_GAP_PREFIX} '{proposal.canonical_name}' and {aliases_str} "
             f"may be the same tool — confirm and choose canonical name"
         )
     return out
