@@ -120,6 +120,7 @@ def test_the_transcript_is_rendered_as_qa_pairs(
 
     system, user = model.messages
     assert system.content
+    assert "abilities of the underlying language model" in system.content
     assert "victim" in user.content
     assert "Q: Q one\nA: A one\n\nQ: Q two\nA: A two" in user.content
 

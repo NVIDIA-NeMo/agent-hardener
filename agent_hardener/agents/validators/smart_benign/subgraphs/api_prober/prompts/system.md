@@ -1,7 +1,7 @@
 ---
 name: api_prober.system
-version: 1
-last_updated: 2026-05-18
+version: 2
+last_updated: 2026-11-19
 model_constraints:
   min_context_tokens: 4096
   max_output_tokens: 2048
@@ -37,6 +37,11 @@ Return a `ProberOutput` JSON object with these fields:
 # Constraints
 
 - Do not invent tools the transcript does not mention or strongly imply.
+- Extract only functions the agent calls with arguments, that is, the tools it
+  registers. Do not extract abilities of the underlying language model, such as
+  running several tool calls in parallel, reading or understanding images,
+  browsing, or code interpretation, unless the agent names them as a specific
+  tool it calls.
 - Prefer fewer high-confidence tools over many low-confidence guesses.
 - Tool names must be valid snake_case identifiers. Each name must appear at
   most once.
