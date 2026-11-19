@@ -70,6 +70,7 @@ async def _call_critic(state: CriticState) -> CriticResult:
             "target_name": state.target_name,
             "tools_summary": _format_tool_names(state.tool_names),
             "tool_boundaries": _format_tool_boundaries(state.tool_boundaries),
+            "blocked_patterns": _format_blocked_patterns(state.blocked_patterns),
             "out_of_scope": _format_list(state.out_of_scope),
             "requests_table": _format_requests(state.requests),
         },
@@ -141,6 +142,12 @@ def _format_tool_names(names: list[str]) -> str:
 def _format_tool_boundaries(boundaries: dict[str, list[str]]) -> str:
     lines = [f"- {tool}: {answer}" for tool, answers in boundaries.items() for answer in answers]
     return "\n".join(lines) if lines else "(none)"
+
+
+def _format_blocked_patterns(blocked: dict[str, list[str]]) -> str:
+    if not blocked:
+        return "(none)"
+    return "\n".join(f"- {tool}:\n" + "\n".join(f"  - {p}" for p in patterns) for tool, patterns in blocked.items())
 
 
 def _format_list(items: list[str]) -> str:

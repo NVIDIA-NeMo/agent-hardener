@@ -108,6 +108,18 @@ def test_the_prompt_lists_each_tools_boundary_answers(
     assert "- bash: workspace only" in model.messages[1].content
 
 
+def test_the_prompt_lists_each_tools_blocked_patterns(
+    monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
+) -> None:
+    model = fake_model(CriticResult(decisions=[_decision(1)]))
+    _patch(monkeypatch, model)
+    state = _state([_request("run_sql", "select * from t")], blocked_patterns={"run_sql": ["queries need row limits"]})
+
+    asyncio.run(cr.critique(state))
+
+    assert "- run_sql:\n  - queries need row limits" in model.messages[1].content
+
+
 def test_exact_duplicates_are_removed_even_when_the_llm_kept_them(
     monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
 ) -> None:

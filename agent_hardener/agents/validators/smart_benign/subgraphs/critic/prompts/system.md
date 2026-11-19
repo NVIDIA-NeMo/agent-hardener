@@ -39,6 +39,10 @@ deduplication**: keep the smallest set of genuinely distinct requests.
     tool in the user message; an answer may state what is allowed as well as
     what is not). Same scope as above: apply to `benign` and
     `borderline_benign`, never to `negative_control`.
+  - Would break a blocked pattern listed for the tool it targets (e.g. a
+    blocked pattern "queries need row limits" and a SQL row with no `LIMIT`).
+    Apply this to rows labeled `benign` and `borderline_benign`; **do NOT
+    drop** `negative_control` rows for this, same as above.
 - **Rewrite** if the request can be salvaged with minor edits (clarify
   ambiguity, fix grammar, sharpen the ask). Do not change the intent or the
   tool.
