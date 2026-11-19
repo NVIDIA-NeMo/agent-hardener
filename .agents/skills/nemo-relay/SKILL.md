@@ -34,7 +34,7 @@ reference victim and every rule below is commented there.
 
 ## A. Connect a LangChain or LangGraph agent
 
-The agent writes no Agent Hardener code. It owes Relay four things.
+The agent writes no Agent Hardener code. It owes Relay five things (four for LangChain `create_agent`).
 
 ### Step A1: Install Relay with the right extra
 
@@ -61,6 +61,36 @@ The code disagrees with itself on refusals: the example's `_refusal` says a refu
 `awrap_tool_call` as `RuntimeError`, while `agent_hardener/relay_plugin/autopatch.py` says Relay's intercept
 returns it. Keep the LangGraph handler (it is harmless either way). For LangChain, check once that a blocked
 tool call still gets an HTTP 200 answer; if it gets a 500, catch the refusal in a `wrap_tool_call` middleware.
+
+### Step A2b: Route model calls through Relay (hand-built LangGraph only)
+
+LangChain's `create_agent` middleware already covers the model. A hand-built graph's model node must send each
+call through `nemo_relay.llm.execute` instead of calling `llm.ainvoke` directly:
+
+```python
+import nemo_relay
+from langchain_core.messages import SystemMessage, messages_from_dict, messages_to_dict
+from nemo_relay.integrations.langchain._serialization import LANGCHAIN_MODEL_RESPONSE_KEY, LangChainCodec
+
+async def model(state: MessagesState) -> dict[str, list]:
+    messages = [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
+    codec = LangChainCodec()
+    request = nemo_relay.LLMRequest({}, {"messages": messages_to_dict(messages), "model": MODEL})
+
+    async def call(request: nemo_relay.LLMRequest) -> Any:
+        reply = await llm.ainvoke(messages_from_dict(request.content["messages"]))
+        return {LANGCHAIN_MODEL_RESPONSE_KEY: {"messages": messages_to_dict([reply])}}
+
+    result = await nemo_relay.llm.execute(MODEL, request, call, model_name=MODEL, codec=codec, response_codec=codec)
+    return {"messages": messages_from_dict(result[LANGCHAIN_MODEL_RESPONSE_KEY]["messages"])}
+```
+
+With a bare `llm.ainvoke`, Relay records no LLM span. Tool guardrails still fire, but each attack's trace has
+no prompt and no model steps, so the traces guardrails defender cannot match the attack to its trace and
+writes no rail from it. The callback handler (Step A4) does not record these calls either. Nothing in the run
+fails on this; it only shows up as a defender that never writes rails. `examples/langgraph-victim/agent.py`
+does not do this yet — follow the snippet, not the example, for the model node. Keep this step in line with
+NeMo Helix's `relay-attachment.md` reference, which teaches the same wiring.
 
 ### Step A3: Initialise Relay's plugin host at startup
 
@@ -97,7 +127,8 @@ The run still verifies it from real traffic; the flag records who said so. The i
 Locally first, without a sandbox: copy `agent_hardener/templates/relay-victim/plugins.toml` to
 `$XDG_CONFIG_HOME/nemo-relay/plugins.toml` (Relay's user config layer), point its `output_directory` at a temp
 dir, start the agent, send one request that uses a tool, and check `events.atof.jsonl` there for a
-`category: tool` scope named after your tool inside a completed `category: agent` scope.
+`category: tool` scope named after your tool and a `category: llm` scope, both inside a completed
+`category: agent` scope. No `llm` scope on a hand-built graph means Step A2b is missing.
 
 Then run the war-game against the agent. Two checks fail the run loudly if Relay is not wired:
 

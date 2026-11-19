@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Skills: they point at code that exists, carry routing cases, and ``init`` installs the customer one.
+"""Skills: they point at code that exists, carry routing cases, and `skills install` copies the customer one.
 
 A skill that names a moved file or a removed flag fails quietly — the agent follows it anyway — so the
 static checks here are what keep the skills honest as the code changes. Whether each ``tests.json`` prompt
@@ -135,8 +135,25 @@ def test_install_skill_copies_without_tests_and_keeps_edits(tmp_path: Path) -> N
     assert (dest / "SKILL.md").read_text(encoding="utf-8") != "edited"
 
 
-@pytest.mark.parametrize("skip", [False, True])
-def test_init_installs_the_skill_unless_skipped(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip: bool) -> None:
+@pytest.mark.parametrize(
+    ("targets", "dirs"),
+    [
+        ([], [".claude/skills"]),
+        (["agents"], [".agents/skills"]),
+        (["claude", "agents"], [".claude/skills", ".agents/skills"]),
+    ],
+)
+def test_skills_install_writes_each_target(tmp_path: Path, targets: list[str], dirs: list[str]) -> None:
+    args = ["skills", "install", "--project-dir", str(tmp_path)] + [f"--target={t}" for t in targets]
+
+    result = CliRunner().invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    installed = sorted(str(p.parent.relative_to(tmp_path)) for p in tmp_path.glob(f".*/skills/{SKILL_NAME}"))
+    assert installed == sorted(dirs)
+
+
+def test_init_does_not_install_the_skill(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / "proj"
     root.mkdir()
     (root / "pyproject.toml").write_text("[project]\nname='proj'\n", encoding="utf-8")
@@ -144,9 +161,8 @@ def test_init_installs_the_skill_unless_skipped(tmp_path: Path, monkeypatch: pyt
     monkeypatch.chdir(tmp_path)
     args = ["init", "--project-dir", str(root), "--name", "proj", "--secrets", "K", "--secrets-file", "agent.env"]
     args += ["--binary", "/app/**", "--start-command", "/app/serve", "--yes", "--force"]
-    args += ["--skip-skill"] if skip else []
 
     result = CliRunner().invoke(app, args)
 
     assert result.exit_code == 0, result.output
-    assert (tmp_path / ".claude" / "skills" / SKILL_NAME / "SKILL.md").exists() is not skip
+    assert not (tmp_path / ".claude").exists()

@@ -52,6 +52,9 @@ agent-hardener setup     # one-time: garak's own venv + registers the `auto-defe
 garak is not a dependency on purpose; until `setup` runs there is no attacker. `setup` is idempotent;
 `--force` rebuilds the garak venv.
 
+After upgrading the package, `agent-hardener skills install --force` refreshes this skill so it matches the
+new version (`--target agents` installs it for Codex and Cursor too).
+
 ## Step 2: Make sure the agent is Relay-connected
 
 Agent Hardener reads tool calls from Relay's trace stream and delivers guardrails as Relay config. The agent
@@ -80,7 +83,6 @@ It writes:
 - `agent-hardener.yaml` — the manifest (`--output` to rename; `--force` to overwrite).
 - `garak-scan.yaml` — the attacker's config, regenerated each `init` so its port matches.
 - the secrets file — prompts (hidden) for any listed secret it does not find.
-- `.claude/skills/agent-hardener/` — this skill (`--skip-skill` to leave it out).
 
 Then edit the manifest: set `harness: langgraph` or `harness: langchain` and, once Step 2 is done,
 `relay_integration_confirmed: true`. Field reference: [references/manifest.md](references/manifest.md).
