@@ -118,6 +118,30 @@ def test_probe_generation_reports_a_server_error(monkeypatch: pytest.MonkeyPatch
     assert "model not found" in verdict.detail
 
 
+def _patch_posts(monkeypatch: pytest.MonkeyPatch, *responses: httpx.Response) -> list[float]:
+    """Answer successive probe requests with *responses*; return the sleeps between them."""
+    queue = list(responses)
+    sleeps: list[float] = []
+    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: queue.pop(0))
+    monkeypatch.setattr(mc.time, "sleep", sleeps.append)
+    return sleeps
+
+
+def test_probe_generation_rides_out_a_brief_overload(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps = _patch_posts(monkeypatch, httpx.Response(503), httpx.Response(429), httpx.Response(200, json={}))
+    assert mc.probe_generation("m", "https://x/v1", "k", timeout=5).ok
+    assert sleeps == [5.0, 15.0]
+
+
+def test_probe_generation_fails_a_backend_that_stays_down(monkeypatch: pytest.MonkeyPatch) -> None:
+    down = httpx.Response(503, headers={"retry-after": "600"}, json={"error": {"message": "backend unavailable"}})
+    sleeps = _patch_posts(monkeypatch, down, down, down)
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
+    assert verdict.reason == "error"
+    assert verdict.detail == "HTTP 503 after 3 attempts: backend unavailable"
+    assert sleeps == [60.0, 60.0]  # Retry-After honoured, but capped
+
+
 _DENIED = {"error": {"message": "The requested model 'm' is not available for this API key", "code": "403"}}
 
 

@@ -18,6 +18,7 @@ soft pass (reachability + auth still confirmed).
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,6 +29,12 @@ from agent_hardener.errors import ModelUnavailableError
 from agent_hardener.llm import default_base_url, default_model
 
 _PROBE_TIMEOUT_S = 10.0
+#: The statuses garak retries with no limit. The one-token probe retries them a few times, so a brief 429 or
+#: 503 doesn't abort a scan garak would have waited out, while a backend that stays down still fails in ~20s.
+_TRANSIENT_STATUSES = frozenset({429, 500, 502, 503, 504})
+_PROBE_ATTEMPTS = 3
+_PROBE_BACKOFF_S = 5.0
+_MAX_RETRY_AFTER_S = 60.0
 # garak's attacker/detector default endpoint (mirrors agent_breaker.config.DEFAULT_MODEL_URI).
 _ATTACK_DEFAULT_URI = "https://integrate.api.nvidia.com/v1/"
 
@@ -74,12 +81,9 @@ def probe_generation(
     url = base_url.rstrip("/") + "/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     payload = {"model": model, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1, **(extra_body or {})}
-    try:
-        resp = httpx.post(url, headers=headers, json=payload, timeout=timeout)
-    except httpx.TimeoutException:
-        return Validation(ok=False, reason="timeout", detail=f"no response within {timeout:g}s")
-    except httpx.HTTPError as exc:
-        return Validation(ok=False, reason="unreachable", detail=str(exc) or exc.__class__.__name__)
+    resp = _post_retrying_transient(url, headers, payload, timeout)
+    if isinstance(resp, Validation):
+        return resp
     if resp.status_code in (401, 403, 404):
         # A gateway can refuse an unknown model with the status it gives a bad key (inference-api.nvidia.com
         # answers both with 403 key_model_access_denied), so ask its model list which one this is.
@@ -89,8 +93,35 @@ def probe_generation(
         reason = "error" if resp.status_code == 404 else "auth"
         return Validation(ok=False, reason=reason, detail=f"HTTP {resp.status_code}: {_server_message(resp)}")
     if resp.status_code >= 400:
-        return Validation(ok=False, reason="error", detail=f"HTTP {resp.status_code}: {_server_message(resp)}")
+        tries = f" after {_PROBE_ATTEMPTS} attempts" if resp.status_code in _TRANSIENT_STATUSES else ""
+        return Validation(ok=False, reason="error", detail=f"HTTP {resp.status_code}{tries}: {_server_message(resp)}")
     return Validation(ok=True)
+
+
+def _post_retrying_transient(
+    url: str, headers: dict[str, str], payload: dict[str, Any], timeout: float
+) -> httpx.Response | Validation:
+    """POST *payload*, retrying a transient status; a request that got no response returns its verdict."""
+    for attempt in range(1, _PROBE_ATTEMPTS + 1):
+        try:
+            resp = httpx.post(url, headers=headers, json=payload, timeout=timeout)
+        except httpx.TimeoutException:
+            # Not retried: the wait was already a full model timeout, as long as garak's own would be.
+            return Validation(ok=False, reason="timeout", detail=f"no response within {timeout:g}s")
+        except httpx.HTTPError as exc:
+            return Validation(ok=False, reason="unreachable", detail=str(exc) or exc.__class__.__name__)
+        if resp.status_code not in _TRANSIENT_STATUSES or attempt == _PROBE_ATTEMPTS:
+            break
+        time.sleep(_retry_delay(resp, attempt))
+    return resp
+
+
+def _retry_delay(resp: httpx.Response, attempt: int) -> float:
+    """The endpoint's ``Retry-After`` seconds (capped), else an exponential backoff: 5s, then 15s."""
+    try:
+        return min(float(resp.headers["retry-after"]), _MAX_RETRY_AFTER_S)
+    except (KeyError, ValueError):
+        return _PROBE_BACKOFF_S * 3.0 ** (attempt - 1)
 
 
 def _server_message(resp: httpx.Response) -> str:
