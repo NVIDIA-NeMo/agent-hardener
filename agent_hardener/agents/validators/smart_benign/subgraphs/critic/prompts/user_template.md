@@ -6,6 +6,7 @@ inputs:
   - target_name
   - tools_summary
   - tool_boundaries
+  - blocked_patterns
   - out_of_scope
   - requests_table
 ---
@@ -19,6 +20,10 @@ inputs:
 ## Owner's boundary answers per tool
 
 {{ tool_boundaries }}
+
+## Blocked patterns per tool
+
+{{ blocked_patterns }}
 
 ## Declared out-of-scope behaviors
 

@@ -15,7 +15,7 @@ class CriticState(AgentHardenerModel):
     """Private state for the critic agent.
 
     Reviews the generated benign suite for duplicates, off-topic rows, and
-    rows that contradict declared out_of_scope rules. Outputs a filtered (and
+    rows that contradict declared out_of_scope rules or a tool's blocked patterns. Outputs a filtered (and
     optionally rewritten) request list. Cannot trigger regeneration — its
     authority is bounded to drop/rewrite.
     """
@@ -26,6 +26,7 @@ class CriticState(AgentHardenerModel):
     out_of_scope: list[str] = Field(default_factory=list)
     tool_names: list[str] = Field(default_factory=list)
     tool_boundaries: dict[str, list[str]] = Field(default_factory=dict)
+    blocked_patterns: dict[str, list[str]] = Field(default_factory=dict)
     synth_model: str
     synth_base_url: str
     synth_api_key: str
