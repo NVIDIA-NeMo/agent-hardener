@@ -20,8 +20,6 @@ import shutil
 from pathlib import PurePath
 from typing import TYPE_CHECKING
 
-from docker.utils.build import exclude_paths
-
 from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, SHIM_DIR
 
 if TYPE_CHECKING:
@@ -146,7 +144,7 @@ def write_hardened_bundle(
     if image is None:
         if build_root is None:
             raise ValueError("a hardened bundle needs a staged build context or a pre-built image")
-        shutil.copytree(build_root, destination, ignore=_build_context_ignore(build_root))
+        shutil.copytree(build_root, destination, ignore=_build_context_ignore(build_root), symlinks=True)
         _strip_sandbox_shim(destination / SHIM_DIR / "sitecustomize.py")
         source = _STAGED_SOURCE
     else:
@@ -197,11 +195,14 @@ def _build_context_ignore(build_root: Path) -> Callable[[str, list[str]], set[st
     staged tree instead ships every file the project's ``.dockerignore`` keeps out of the image: one project's
     125 MB results folder landed in every run directory and filled the disk over a single campaign.
     """
+    # Imported here, not at module level: the runner imports this module, and only the bundle needs docker.
+    from docker.utils.build import exclude_paths  # noqa: PLC0415
+
     dockerignore = build_root / ".dockerignore"
     lines = dockerignore.read_text(encoding="utf-8").splitlines() if dockerignore.is_file() else []
     patterns = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
-    # Docker's own matcher; passing the Dockerfile keeps it and .dockerignore, which docker build always sends.
-    kept = {PurePath(path) for path in exclude_paths(str(build_root), patterns, dockerfile="Dockerfile")}
+    # Docker's own matcher, which always keeps the Dockerfile, as docker build always sends it.
+    kept = {PurePath(path) for path in exclude_paths(str(build_root), patterns)}
     # A file re-included under an excluded directory comes back without its directory; copytree needs both.
     kept |= {parent for path in kept for parent in path.parents}
     kept_paths = {path.as_posix() for path in kept}
