@@ -91,11 +91,14 @@ def test_build_agent_breaker_config_overrides_and_env(monkeypatch: pytest.Monkey
 
 def test_nemotron_models_run_without_reasoning() -> None:
     config = build_agent_breaker_config(target_uri="http://v", report_dir="d", report_prefix="p")
-    no_thinking = {"extra_body": {"chat_template_kwargs": {"enable_thinking": False}}}
+    expected = {
+        "response_format": {"type": "json_object"},
+        "extra_body": {"chat_template_kwargs": {"enable_thinking": False}},
+    }
     probe = config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
     detector = config["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
-    assert probe["red_team_model_config"]["extra_params"] == no_thinking
-    assert detector["detector_model_config"]["extra_params"] == no_thinking
+    assert probe["red_team_model_config"]["extra_params"] == expected
+    assert detector["detector_model_config"]["extra_params"] == expected
 
 
 def test_non_nemotron_models_get_no_reasoning_toggle() -> None:
@@ -107,8 +110,19 @@ def test_non_nemotron_models_get_no_reasoning_toggle() -> None:
     )
     probe = config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]
     detector = config["plugins"]["detectors"]["agent_breaker"]["AgentBreakerResult"]
-    assert "extra_params" not in probe["red_team_model_config"]
-    assert "extra_params" not in detector["detector_model_config"]
+    assert "extra_body" not in probe["red_team_model_config"]["extra_params"]
+    assert "extra_body" not in detector["detector_model_config"]["extra_params"]
+
+
+@pytest.mark.parametrize("setting", [False, "false", "0"])
+def test_json_mode_can_be_turned_off_for_an_endpoint_that_rejects_it(setting: Any) -> None:
+    config = build_agent_breaker_config(
+        target_uri="http://v",
+        report_dir="d",
+        report_prefix="p",
+        overrides={"json_mode": setting, "red_team_model_name": "openai/gpt-oss-20b"},
+    )
+    assert "extra_params" not in config["plugins"]["probes"]["agent_breaker"]["AgentBreaker"]["red_team_model_config"]
 
 
 def test_model_clients_get_a_timeout_long_enough_for_reasoning_models() -> None:
@@ -322,8 +336,26 @@ def test_model_timeout_override_reaches_a_scaffolded_scan(tmp_path: Path, monkey
     assert [model_config["timeout"] for model_config in _model_configs(resolved)] == [1200, 1200]
 
 
+def _report(path: Path, *outputs: str, target: str = "run_sql") -> str:
+    """A garak report with one attempt per output, each written twice as garak does (sent, then scored)."""
+    rows = [
+        {
+            "entry_type": "attempt",
+            "uuid": f"a{index}",
+            "status": status,
+            "outputs": [{"text": text}],
+            "notes": {"current_target": target},
+        }
+        for index, text in enumerate(outputs)
+        for status in (1, 2)
+    ]
+    path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+    return str(path)
+
+
 def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
+    report = _report(tmp_path / "r.jsonl", "done", "done")
 
     async def fake_scan(**kwargs: Any) -> run_agent_breaker.ScanResult:
         assert kwargs["target_uri"] == "http://127.0.0.1:9001/v1/chat/completions"  # port override applied
@@ -331,7 +363,7 @@ def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monke
             return_code=0,
             hits=[{"probe": "agent_breaker.AgentBreaker"}, "raw-hit"],
             config_path="/c.yaml",
-            report_path="/r.jsonl",
+            report_path=report,
         )
 
     monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", fake_scan)
@@ -343,8 +375,10 @@ def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monke
         run_agent_breaker.run(request, AgentConfig(name="agent-breaker", role="attacker", config={"target_port": 9001}))
     )
     assert record.ok is True
-    assert record.metadata["garak_report_path"] == "/r.jsonl"
+    assert record.metadata["garak_report_path"] == report
     assert record.metadata["hit_count"] == 2
+    assert (record.metadata["attempts"], record.metadata["attempts_answered"]) == (2, 2)
+    assert record.metadata["attack_targets"] == ["run_sql"]
     assert record.metadata["target_uri"] == "http://127.0.0.1:9001/v1/chat/completions"
     assert record.records == [
         {"probe": "agent_breaker.AgentBreaker", "source": "garak-agent-breaker", "hit_index": 0},
@@ -352,9 +386,12 @@ def test_agent_breaker_run_normalizes_records_and_metadata(tmp_path: Path, monke
     ]
 
 
-def test_agent_breaker_run_marks_successful_zero_hit_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_agent_breaker_run_marks_successful_zero_hit_scan(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    report = _report(tmp_path / "r.jsonl", "I can't help with that.")
+
     async def fake_scan(**_kwargs: Any) -> run_agent_breaker.ScanResult:
-        return run_agent_breaker.ScanResult(return_code=0, hits=[], config_path="/c.yaml")
+        return run_agent_breaker.ScanResult(return_code=0, hits=[], config_path="/c.yaml", report_path=report)
 
     monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", fake_scan)
     request = AgentRunInput(

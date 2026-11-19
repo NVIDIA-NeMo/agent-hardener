@@ -15,6 +15,7 @@ import contextlib
 from collections.abc import Iterator
 
 import typer
+from rich.markup import escape
 
 from agent_hardener.display.console import fail, info
 from agent_hardener.errors import AgentHardenerError, emit_run_error
@@ -36,11 +37,13 @@ def cli_error_boundary() -> Iterator[None]:
         raise
     except AgentHardenerError as exc:
         emit_run_error(exc)
-        fail(str(exc))
+        # Escaped: a message quotes data (failure codes in brackets, garak log lines), which rich would
+        # otherwise read as style tags and silently drop.
+        fail(escape(str(exc)))
         if exc.remediation:
-            info(f"  → {exc.remediation}")
+            info(f"  → {escape(exc.remediation)}")
         raise typer.Exit(1) from exc
     except Exception as exc:
         emit_run_error(exc)
-        fail(f"Unexpected error: {exc}")
+        fail(f"Unexpected error: {escape(str(exc))}")
         raise typer.Exit(1) from exc

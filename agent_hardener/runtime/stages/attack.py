@@ -15,6 +15,7 @@ from agent_hardener.errors import (
     AgentHardenerError,
     AttackerError,
     ModelUnavailableError,
+    VictimUnavailableError,
 )
 from agent_hardener.events import EventType
 from agent_hardener.models import ARTIFACT_DIR_KEY, AgentRunInput, AttackRecord
@@ -140,7 +141,10 @@ class AttackStage:
 
 #: An attacker's ``metadata["failure_code"]`` whose cause is not the attacker. Every other code is an
 #: :class:`AttackerError`.
-_FAILURE_ERRORS: dict[str, type[AgentHardenerError]] = {ATTACKER_LLM_UNAVAILABLE: ModelUnavailableError}
+_FAILURE_ERRORS: dict[str, type[AgentHardenerError]] = {
+    ATTACKER_LLM_UNAVAILABLE: ModelUnavailableError,
+    "victim_unreachable": VictimUnavailableError,
+}
 
 
 def raise_on_attacker_failure(attackers: list[Any], live_outputs: list[AttackRecord]) -> None:
@@ -152,7 +156,8 @@ def raise_on_attacker_failure(attackers: list[Any], live_outputs: list[AttackRec
 
     An attacker that knows why it failed names it in ``metadata["failure_code"]`` and says what to do in
     ``metadata["remediation"]``. The first failure's code picks the error class, so a dead model endpoint
-    is reported as a model problem rather than as an attacker timeout.
+    is reported as a model problem, and a victim that never answered as a victim problem, rather than as
+    an attacker timeout.
     """
     failed = [(agent, out) for agent, out in zip(attackers, live_outputs, strict=False) if not out.ok]
     if not failed:

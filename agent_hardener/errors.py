@@ -104,6 +104,34 @@ class AttackerError(AgentHardenerError):
     )
 
 
+class AttackerIneffectiveError(AgentHardenerError):
+    """The attacks reached the victim and Relay traced them, but none led its model to ask for a tool.
+
+    Relay is working; the attacks are not. Every guardrail fires on a tool call, so a round with no tool
+    traffic gives the defenders nothing to defend and would report "0 blocked" as if it were a result.
+    """
+
+    category = "attack_no_tool_traffic"
+    default_remediation = (
+        "Make the attacks target the victim's tools: check that the attacker sees the victim's tool "
+        "descriptions, or raise attack_intensity (garak.max_attempts_per_tool)."
+    )
+
+
+class AtofSyncError(AgentHardenerError):
+    """The victim's Relay event stream could not be copied out of its sandbox.
+
+    Distinct from :class:`VictimNotInstrumentedError`: the victim may be tracing correctly, but a stale
+    or missing host copy shows no tool calls, which reads as a wiring fault the operator does not have.
+    """
+
+    category = "atof_sync_failed"
+    default_remediation = (
+        "Check that the sandbox is still running (`openshell sandbox list`) and that the victim writes "
+        "events.atof.jsonl to its configured artifacts directory."
+    )
+
+
 class BenignSuiteError(AgentHardenerError):
     """A smart-benign validator has no usable explicit request suite."""
 

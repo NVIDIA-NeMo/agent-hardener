@@ -61,6 +61,15 @@ def test_boundary_serializes_agent_hardener_error_and_exits(tmp_path, monkeypatc
     assert json.loads(path.read_text(encoding="utf-8"))["category"] == "sandbox"
 
 
+def test_boundary_prints_bracketed_text_verbatim(capsys: pytest.CaptureFixture[str]) -> None:
+    """A failure code in brackets is data; read as a rich style tag it vanished from the console."""
+    with pytest.raises(typer.Exit), cli_error_boundary():
+        raise SandboxProvisioningError("did not complete: [victim_unreachable] refused", remediation="see [log]")
+    out = capsys.readouterr().out
+    assert "[victim_unreachable] refused" in out
+    assert "see [log]" in out
+
+
 def test_boundary_serializes_unexpected_error(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     path = tmp_path / "run-error.json"
     monkeypatch.setenv(ERROR_FILE_ENVVAR, str(path))

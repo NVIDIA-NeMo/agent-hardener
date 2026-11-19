@@ -108,6 +108,8 @@ class GarakSettings(AgentHardenerModel):
     #: Cap on one red-team or detector model call, seconds. Raise for a slow reasoning model.
     model_timeout: int | None = Field(default=None, gt=0)
     generations: int | None = None
+    #: Ask garak's attacker and judge models for JSON mode (``response_format``); on unless set false.
+    json_mode: bool | None = None
     # Hard cap (seconds) on the attacker's own execution. Heavy agents (many tools / long LLM chains)
     # can need well over the default; raise this rather than let a scan be killed mid-probe (which yields
     # a spurious "0 hits"). Unset -> the default in ``_default_attackers``.

@@ -71,10 +71,11 @@ class FakeLifecycle:
     def collect_victim_diagnostics(self) -> OpenShellCommandResult:
         return self.diagnostics
 
-    def fetch_file(self, remote: str, local: Path) -> None:
+    def fetch_file(self, remote: str, local: Path) -> bool:
         if self.fetch_error:
             raise self.fetch_error
         self.fetched.append((remote, local))
+        return True
 
 
 class FakeBackends:
