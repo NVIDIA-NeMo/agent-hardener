@@ -312,6 +312,10 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         retried_after = failure.code
     hits = _coerce_hits(result.hits)
     hit_count = len(hits)
+    # Hits prove attacks were sent, so a report that counts none (missing, truncated) is the broken part:
+    # do not discard real findings over it. Rejected credentials are not report-derived and still fail.
+    if hits and evidence.attempts == 0 and failure is not None and failure.code != ATTACKER_LLM_UNAVAILABLE:
+        failure = None
     if failure is None and result.return_code != 0 and not hits:
         failure = ScanFailure(
             "garak_crashed",

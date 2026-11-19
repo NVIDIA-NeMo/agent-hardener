@@ -229,7 +229,10 @@ def _write_report(path: Path, attempts: int) -> str:
 
 
 def _run(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, scans: list[tuple[int, str, int]]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    scans: list[tuple[int, str, int]],
+    hits: list[dict[str, Any]] | None = None,
 ) -> tuple[AttackRecord, int]:
     """Run the attacker over scripted scans of ``(attempts, detailed log, exit code)``."""
     monkeypatch.chdir(tmp_path)
@@ -245,7 +248,9 @@ def _run(
         (report_dir / run_agent_breaker.STDOUT_LOG_NAME).write_text(f"📜 logging to {detail}\nboom\n", encoding="utf-8")
         detail.write_text(log, encoding="utf-8")
         report = _write_report(tmp_path / f"report-{calls}.jsonl", attempts)
-        return run_agent_breaker.ScanResult(return_code=code, hits=[], config_path="/c.yaml", report_path=report)
+        return run_agent_breaker.ScanResult(
+            return_code=code, hits=hits or [], config_path="/c.yaml", report_path=report
+        )
 
     monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", fake_scan)
     request = AgentRunInput(round_id="r1", target=TargetInput(name="victim", base_url=VICTIM))
@@ -290,6 +295,37 @@ def test_a_crash_with_no_hits_fails_with_garaks_output(monkeypatch: pytest.Monke
     assert record.error is not None
     assert "exited 2 after 1 attack(s)" in record.error
     assert "boom" in record.error
+
+
+def test_hits_are_kept_when_the_report_counts_no_attempts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    hit = [{"probe": "agent_breaker.AgentBreaker"}]
+    record, _ = _run(monkeypatch, tmp_path, [(0, _log(), 0)], hits=hit)
+
+    assert record.ok is True
+    assert record.error is None
+    assert len(record.records) == 1
+
+
+def test_hits_do_not_excuse_rejected_model_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    hit = [{"probe": "agent_breaker.AgentBreaker"}]
+    record, _ = _run(
+        monkeypatch,
+        tmp_path,
+        [
+            (
+                0,
+                _log(
+                    _response("https://integrate.api.nvidia.com/v1/chat/completions", "401 Unauthorized"),
+                    UNPARSED_ANALYSIS,
+                ),
+                0,
+            )
+        ],
+        hits=hit,
+    )
+
+    assert record.ok is False
+    assert record.metadata["failure_code"] == ATTACKER_LLM_UNAVAILABLE
 
 
 def test_garaks_detailed_log_goes_beside_the_report_and_old_reports_are_ignored(tmp_path: Path) -> None:
