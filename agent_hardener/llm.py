@@ -18,12 +18,12 @@ import os
 from typing import TYPE_CHECKING, Any
 
 import openai
-from langchain_openai import ChatOpenAI
 
 from agent_hardener.env import inference_api_key
 from agent_hardener.llm_telemetry import LlmTelemetryCallback
 from agent_hardener.rate_limits import AsyncRateLimitRetryTransport, RateLimitRetryTransport
 from agent_hardener.relay_plugin.config import no_reasoning_body
+from agent_hardener.relay_plugin.structured_chat import RobustChatOpenAI
 
 if TYPE_CHECKING:
     from types import ModuleType
@@ -55,7 +55,7 @@ def build_chat_model(
     api_key: str | None = None,
     temperature: float | None = None,
     **kwargs: Any,
-) -> ChatOpenAI:
+) -> RobustChatOpenAI:
     """Build the shared chat-model client for NVIDIA's inference endpoint.
 
     Args:
@@ -67,7 +67,8 @@ def build_chat_model(
         **kwargs: Extra keyword arguments forwarded verbatim to :class:`ChatOpenAI`.
 
     Returns:
-        A configured :class:`~langchain_openai.ChatOpenAI` instance.
+        A configured :class:`~agent_hardener.relay_plugin.structured_chat.RobustChatOpenAI`: a
+        ``ChatOpenAI`` whose ``with_structured_output`` reads replies that are not bare JSON.
     """
     model = model or default_model()
     if temperature is not None:
@@ -85,7 +86,7 @@ def build_chat_model(
     if "http_client" not in kwargs and "http_async_client" not in kwargs:
         kwargs["http_client"], kwargs["http_async_client"] = _rate_limited_http_clients()
         kwargs.setdefault("max_retries", 0)
-    return ChatOpenAI(
+    return RobustChatOpenAI(
         model=model,
         base_url=base_url or default_base_url(),
         api_key=api_key or inference_api_key(),
