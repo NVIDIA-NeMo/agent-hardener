@@ -1,7 +1,7 @@
 ---
 name: interviewer.system
-version: 10
-last_updated: 2026-06-14
+version: 11
+last_updated: 2026-11-19
 model_constraints:
   min_context_tokens: 2048
   max_output_tokens: 1024
@@ -95,6 +95,11 @@ an `InterviewerQuestion` with:
 Rules for the batch:
 - Generate **one question per gap**, prioritised by importance.
 - Stop when you reach the `remaining_budget` limit or run out of gaps.
+- Keep every option within what is legitimate for the agent's stated role. Never
+  offer an option that would let clearly harmful use count as benign (for
+  example arbitrary data exfiltration, outbound requests to any destination, or
+  access to other users' sensitive data with no role basis). Each option must be
+  a policy a security-minded owner could reasonably choose.
 - Skip a gap only if the conversation already covers it — set `question` to
   `null` in that case (still include the item so the count is accurate).
 - If all gaps are covered, return `{"questions": []}`.
