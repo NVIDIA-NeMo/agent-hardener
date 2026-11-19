@@ -80,11 +80,28 @@ def probe_generation(
         return Validation(ok=False, reason="timeout", detail=f"no response within {timeout:g}s")
     except httpx.HTTPError as exc:
         return Validation(ok=False, reason="unreachable", detail=str(exc) or exc.__class__.__name__)
-    if resp.status_code in (401, 403):
-        return Validation(ok=False, reason="auth", detail=f"HTTP {resp.status_code}")
+    if resp.status_code in (401, 403, 404):
+        # A gateway can refuse an unknown model with the status it gives a bad key (inference-api.nvidia.com
+        # answers both with 403 key_model_access_denied), so ask its model list which one this is.
+        listed = validate_choice(model, base_url, api_key)
+        if listed.reason == "unknown_model":
+            return listed
+        reason = "error" if resp.status_code == 404 else "auth"
+        return Validation(ok=False, reason=reason, detail=f"HTTP {resp.status_code}: {_server_message(resp)}")
     if resp.status_code >= 400:
-        return Validation(ok=False, reason="error", detail=f"HTTP {resp.status_code}: {resp.text[:200]}")
+        return Validation(ok=False, reason="error", detail=f"HTTP {resp.status_code}: {_server_message(resp)}")
     return Validation(ok=True)
+
+
+def _server_message(resp: httpx.Response) -> str:
+    """The ``error.message`` of an OpenAI-style error body, else the start of the raw body."""
+    try:
+        body = resp.json()
+    except ValueError:
+        body = None
+    error = body.get("error") if isinstance(body, dict) else None
+    message = error.get("message") if isinstance(error, dict) else error
+    return str(message or resp.text)[:200]
 
 
 def raise_if_unavailable(label: str, model: str | None, base_url: str, verdict: Validation) -> None:

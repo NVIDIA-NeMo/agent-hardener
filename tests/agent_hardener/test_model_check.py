@@ -111,7 +111,30 @@ def test_probe_generation_reports_a_hung_model(monkeypatch: pytest.MonkeyPatch) 
 
 
 def test_probe_generation_reports_a_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_get(monkeypatch, httpx.Response(404))
     monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(404, text="model not found"))
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
     assert verdict.reason == "error"
     assert "model not found" in verdict.detail
+
+
+_DENIED = {"error": {"message": "The requested model 'm' is not available for this API key", "code": "403"}}
+
+
+def test_probe_generation_reports_an_unlisted_model_as_unknown_not_as_a_bad_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_get(monkeypatch, httpx.Response(200, json={"data": [{"id": "real"}]}))
+    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(403, json=_DENIED))
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
+    assert verdict.reason == "unknown_model"
+    with pytest.raises(ModelUnavailableError, match="Reachable models: real"):
+        mc.raise_if_unavailable("red-team", "m", "https://x/v1", verdict)
+
+
+def test_probe_generation_keeps_the_server_message_for_a_rejected_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_get(monkeypatch, httpx.Response(200, json={"data": [{"id": "m"}]}))
+    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(403, json=_DENIED))
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
+    assert verdict.reason == "auth"
+    assert verdict.detail == f"HTTP 403: {_DENIED['error']['message']}"
