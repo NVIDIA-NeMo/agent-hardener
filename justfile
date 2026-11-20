@@ -126,21 +126,15 @@ obs-status:
         echo "Trace file: not created yet"
     fi
 
-# Bootstrap and expose the OpenShell agents-lab victim on a Linux host
+# Bootstrap and expose the OpenShell victim described by a manifest (--config) on a Linux host
 [unix]
 openshell-bootstrap *args:
     ./scripts/bootstrap-openshell-victim.sh {{args}}
 
-# Reset the OpenShell gateway from scratch and re-bootstrap the victim
+# Recreate the manifest's victim sandbox and provider from scratch (other sandboxes on the gateway are kept)
 [unix]
-openshell-reset env_file=".env" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    set -a
-    . "{{env_file}}"
-    set +a
-    openshell sandbox delete --all --gateway auto-defender || true
-    ./scripts/bootstrap-openshell-victim.sh --env-file "{{env_file}}" {{args}}
+openshell-reset *args:
+    ./scripts/bootstrap-openshell-victim.sh {{args}}
 
 
 # Scaffold an agent-hardener.yaml manifest for your agent
