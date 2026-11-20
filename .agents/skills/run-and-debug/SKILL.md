@@ -70,6 +70,7 @@ Useful flags (all on `run`):
 | `--policy PATH`, `--relay-plugins PATH` | start from a given OpenShell policy / Relay `plugins.toml` |
 | `--victim-image REF` | run a pre-built image (build it from `agent-hardener stage`) |
 | `--verbose` | full final report in a pager |
+| `--debug` | every log record on the console: engine detail, OpenShell commands, tracebacks, third-party logs. Works on every command, before or after its name; `AGENT_HARDENER_LOG_LEVEL=debug` does the same |
 
 Sandbox by hand: `agent-hardener up`, `agent-hardener status`, `agent-hardener down`. Tear down everything:
 `just stop`.
@@ -80,6 +81,7 @@ Everything is under `.agent-hardener/` in the working directory (`storage.root_d
 
 | What | Where |
 | --- | --- |
+| Complete log of one command (every record, tracebacks included) | `.agent-hardener/logs/<command>-<UTC time>.log`, printed as `→ log: <path>` when the command ends; `AGENT_HARDENER_LOG_FILE=<path>` puts it elsewhere |
 | Run log (all build/infra output) | `.agent-hardener/run-logs/<run_id>/agent-hardener.log` |
 | Per-round and per-iteration artifacts | `.agent-hardener/run-logs/<run_id>/round_<N>/…` (`agent_hardener/swarm_tracker/layout.py`) |
 | garak reports and hitlogs | the run's garak dir, unless `garak.report_dir` is set |

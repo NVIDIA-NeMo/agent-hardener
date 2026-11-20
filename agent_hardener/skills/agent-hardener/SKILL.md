@@ -115,6 +115,9 @@ agent-hardener run --config agent-hardener.yaml --env-file .env \
 - `--reuse` keeps a Ready sandbox; `--no-cleanup` leaves sandbox and backends running afterwards.
 - `--policy` / `--relay-plugins` start from your own OpenShell policy or Relay `plugins.toml`.
 - `-v` / `--verbose` opens the full report (transcripts, garak detail, policy diffs) in a pager.
+- `--debug` prints every log record on the console: engine detail, OpenShell commands, tracebacks and
+  third-party library logs. It works on every command, before or after its name
+  (`AGENT_HARDENER_LOG_LEVEL=debug` does the same).
 
 Exit code 0 means every round succeeded. A run takes tens of minutes; run it in the background and
 watch the log.
@@ -165,7 +168,8 @@ Everything lands under `.agent-hardener/` in the working directory:
 
 | Path | What |
 | --- | --- |
-| `run-logs/<run id>/agent-hardener.log` | the full log, including build and infra output |
+| `logs/<command>-<UTC time>.log` | the complete log of one command, every record and traceback included. Every command prints its path as `→ log: <path>` when it ends; set `AGENT_HARDENER_LOG_FILE=<path>` to write it elsewhere |
+| `run-logs/<run id>/agent-hardener.log` | the run's log, including build and infra output |
 | `run-logs/<run id>/round_<n>/report.json` | the round report: `success`, attacks, each iteration's defenders, patches and validators |
 | `run-logs/<run id>/init/` | the agent's files before hardening |
 | `run-logs/<run id>/victim-active-state/` | the files as last deployed (hardened policy, guardrails) |
