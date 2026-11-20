@@ -24,7 +24,7 @@ import typer
 warnings.filterwarnings("ignore")
 
 app = typer.Typer(
-    help="Agent Hardener — run a security war-game against your NAT agent.",
+    help="Agent Hardener — run a security war-game against your Relay-connected agent.",
     no_args_is_help=True,
     add_completion=False,  # hide the built-in --install-completion/--show-completion options
 )

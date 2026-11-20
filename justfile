@@ -74,7 +74,7 @@ install-ci:
 # Provision the dedicated garak venv (~/.agent-hardener/garak-venv) the agent_breaker attacker
 # spawns. Thin wrapper around `agent-hardener setup`, which owns the garak version pin and venv
 # location (single source of truth). garak is intentionally NOT an agent-hardener dependency (it
-# pins litellm -> httpx>=0.28 + torch, which conflict with nvidia-nat), so it lives in its own
+# pins litellm -> httpx>=0.28 + torch, which conflict with this project's dependencies), so it lives in its own
 # venv. Idempotent; pass extra args (e.g. --force) through.
 garak-venv *args:
     uv run agent-hardener setup {{ args }}
@@ -143,11 +143,11 @@ openshell-reset env_file=".env" *args:
     ./scripts/bootstrap-openshell-victim.sh --env-file "{{env_file}}" {{args}}
 
 
-# Scaffold an agent-hardener.yaml manifest for your NAT agent
+# Scaffold an agent-hardener.yaml manifest for your agent
 init *args:
     uv run agent-hardener init {{args}}
 
-# Run Agent Hardener against your NAT agent (uses examples/agent-hardener.yaml by default)
+# Run Agent Hardener against your agent (uses examples/agent-hardener.yaml by default)
 [unix]
 run *args:
     uv run agent-hardener run {{args}}

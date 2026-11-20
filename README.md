@@ -2,7 +2,7 @@
 
 Agent Hardener orchestrates a security hardening loop for agentic applications. It loads attack evidence or runs attackers, routes findings to defenders, applies policy and workflow patches to a victim environment, replays the original attacks, runs benign validation, and writes a full session report.
 
-The current main demo protects a NAT research agent running inside an OpenShell sandbox. It uses:
+Agent Hardener protects a NeMo Relay-connected agent running inside an OpenShell sandbox. It uses:
 
 - Garak-style attack evidence or live Garak attackers.
 - An OpenShell policy defender that creates candidate network policy updates.
@@ -63,16 +63,16 @@ To work on Agent Hardener itself rather than consume it, skip this section and f
 
 ## Quickstart
 
-### Run Agent Hardener on your own NAT agent
+### Run Agent Hardener on your own agent
 
-The easy path. Describe your NAT agent in a thin `agent-hardener.yaml` manifest, then run. Agent Hardener
+The easy path. Describe your Relay-connected agent in a thin `agent-hardener.yaml` manifest, then run. Agent Hardener
 builds your agent into an OpenShell sandbox, starts any host backends, runs the hardening loop
-(the garak attacker spawns the `garak` CLI directly), and cleans up. Only the NAT agent runs inside
+(the garak attacker spawns the `garak` CLI directly), and cleans up. Only your agent runs inside
 the sandbox; backends/DBs stay on the host.
 
 ```bash
 just setup                        # one-time: Docker/OpenShell checks, credentials, deps
-uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detects your NAT project),
+uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detects your agent project),
                                   #   garak-scan.yaml, and .env.example
                                   #   prompts for port (default 8000); pass --port <N> to skip the prompt
 # ...fill in .env with your keys...
@@ -138,10 +138,10 @@ agent_hardener/
     attackers/agent_breaker/         Garak agent_breaker attacker + config builder
     defenders/                       OpenShell policy and guardrails defenders
     validators/                      Attack replay and benign validators
-    victims/                         NAT/OpenShell victim helpers and workflow
+    victims/                         OpenShell victim helpers
   openshell/                         OpenShell lifecycle and policy repair code
-  templates/nat-victim/              Packaged assets: NAT-victim Dockerfile + default/permissive
-                                     OpenShell policies + repair profile
+  templates/relay-victim/            Packaged assets: default/permissive OpenShell policies,
+                                     seed Relay plugins.toml + repair profile
   tools/                             CLI helpers and run summaries
 
 examples/
@@ -231,7 +231,7 @@ just install
 
 `just install` runs `uv sync` (installs agent-hardener's dependencies), provisions the dedicated garak venv (via `agent-hardener setup`), then installs pre-commit hooks. Run it before the main wrapper so `.venv/bin/python3` exists. The wrapper should be run from the repository root. Advanced users can override the interpreter with `PROJECT_PYTHON=/path/to/python`.
 
-garak is **not** an agent-hardener dependency: it pins `litellm -> httpx>=0.28` plus `torch`, which conflict with `nvidia-nat`'s `httpx~=0.27`. agent-hardener never imports garak — it spawns the garak CLI from a separate venv at `~/.agent-hardener/garak-venv`, provisioned by `agent-hardener setup` (`just garak-venv` is a thin wrapper around it). Override the interpreter with `AGENT_HARDENER_GARAK_PYTHON=/path/to/python`. This is what keeps agent-hardener itself pip-installable with no dependency override.
+garak is **not** an agent-hardener dependency: it pins `litellm -> httpx>=0.28` plus `torch`, which conflict with this project's dependencies. agent-hardener never imports garak — it spawns the garak CLI from a separate venv at `~/.agent-hardener/garak-venv`, provisioned by `agent-hardener setup` (`just garak-venv` is a thin wrapper around it). Override the interpreter with `AGENT_HARDENER_GARAK_PYTHON=/path/to/python`. This is what keeps agent-hardener itself pip-installable with no dependency override.
 
 To work with a custom garak fork instead of the PyPI release, overlay it as an editable install into that venv:
 
@@ -268,7 +268,7 @@ Agent Hardener has three model groups, each with a built-in default you can over
 | Attack | garak red-team + detector | `nvidia/nemotron-3-ultra-550b-a55b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
 | Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-ultra-550b-a55b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
 | Safety | the guardrail judge that runs inside the victim | the analysis model | the guardrails defender's `safety_llm` (model); `AGENT_HARDENER_SAFETY_BASE_URL` / `AGENT_HARDENER_SAFETY_API_KEY` (endpoint and key, else the analysis ones) |
-| Agent | the victim's own LLM | your NAT workflow | the `llms:` block in your workflow |
+| Agent | the victim's own LLM | your agent's code | configured inside your agent |
 
 The **analysis** lever is a single pair of env vars that retargets every default-model caller (both
 defenders and the benign validator) at once:
@@ -293,21 +293,6 @@ export, `unset` it to use the file.
 Before a run, `agent-hardener run` preflights any model you overrode (`AGENT_HARDENER_MODEL` or
 `GARAK_RED_TEAM_MODEL_NAME`) against its endpoint and fails fast — listing the models the credentials
 can reach — if the name, URL, or key is wrong, so a typo costs seconds instead of a full sandbox build.
-
-Load the file into your shell when running NAT directly:
-
-```bash
-set -a
-source .env
-set +a
-```
-
-If running NAT outside the OpenShell sandbox, set tracing defaults when Phoenix/OTel are not running:
-
-```bash
-export OTEL_TRACE_ENDPOINT=${OTEL_TRACE_ENDPOINT:-http://127.0.0.1:4318}
-export PHOENIX_TRACE_ENDPOINT=${PHOENIX_TRACE_ENDPOINT:-http://127.0.0.1:6006}
-```
 
 ## OpenShell Gateway Config
 
@@ -543,42 +528,6 @@ Check victim health:
 
 ```bash
 curl -i http://127.0.0.1:8000/health
-```
-
-## Run NAT Directly
-
-Run the research agent once:
-
-```bash
-uv run nat run \
-  --config_file agent_hardener/agents/victims/research_agent_workflow.yaml \
-  --input "what is the time now"
-```
-
-Serve the workflow locally:
-
-```bash
-uv run nat serve \
-  --config_file agent_hardener/agents/victims/research_agent_workflow.yaml \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --disable_legacy_routes true
-```
-
-Then check:
-
-```bash
-curl -i http://127.0.0.1:8000/health
-```
-
-Inside the OpenShell sandbox, the victim runs roughly:
-
-```bash
-/app/agents-lab/.venv/bin/nat serve \
-  --config_file /tmp/research_agent_workflow.rendered.yaml \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --disable_legacy_routes true
 ```
 
 ## OpenShell Helpers
