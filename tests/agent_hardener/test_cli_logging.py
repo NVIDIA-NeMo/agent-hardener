@@ -16,7 +16,6 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from agent_hardener import cli
-from agent_hardener.agents.attackers.agent_breaker.run_agent_breaker import count_attempts
 from agent_hardener.cli._app import app
 from agent_hardener.cli._errors import cli_error_boundary
 from agent_hardener.display import console, progress
@@ -181,7 +180,7 @@ def test_off_a_terminal_the_run_keeps_its_phases_agents_and_summaries(out: io.St
     render("agent_completed", {"agent_id": "b", "agent_name": "replay", "ok": True, "duration_seconds": 3.0})
     render(
         "attack_summary",
-        {"attacks": [{"agent_name": "garak", "records": [{}, {}], "metadata": {"attempt_count": 40}}]},
+        {"attacks": [{"agent_name": "garak", "records": [{}, {}], "metadata": {"attempts": 40}}]},
     )
 
     assert out.getvalue().splitlines() == [
@@ -195,7 +194,7 @@ def test_off_a_terminal_the_run_keeps_its_phases_agents_and_summaries(out: io.St
 
 def test_an_attack_that_made_no_attempts_is_a_warning_not_a_pass(out: io.StringIO) -> None:
     ConsoleRenderer()(
-        "attack_summary", {"attacks": [{"agent_name": "garak", "records": [], "metadata": {"attempt_count": 0}}]}
+        "attack_summary", {"attacks": [{"agent_name": "garak", "records": [], "metadata": {"attempts": 0}}]}
     )
 
     assert out.getvalue().splitlines() == ["! ATTACK complete — no attempts were made; see the attacker log"]
@@ -237,24 +236,6 @@ def test_phase_headlines_count_runs_and_show_a_repeated_failure_once(out: io.Str
         "── DEFENSE (1 agent) ──",
         "✓ DEFENSE complete — 1 defender run(s)",
     ]
-
-
-def test_count_attempts_counts_distinct_attempt_ids(tmp_path: Path) -> None:
-    report = tmp_path / "r.report.jsonl"
-    report.write_text(
-        '{"entry_type": "init"}\n'
-        '{"entry_type": "attempt", "uuid": "a", "status": 1}\n'
-        '{"entry_type": "attempt", "uuid": "a", "status": 2}\n'
-        '{"entry_type": "attempt", "uuid": "b", "status": 1}\n'
-        "not json\n",
-        encoding="utf-8",
-    )
-    assert count_attempts(str(report)) == 2
-    assert count_attempts(str(tmp_path / "missing.jsonl")) is None
-    assert count_attempts(None) is None
-
-
-# --- the remaining branches: lifecycle failures, --reuse, failure reasons, truncation ---------------------
 
 
 def _ok_result(output: str, *, ok: bool = True) -> OpenShellCommandResult:

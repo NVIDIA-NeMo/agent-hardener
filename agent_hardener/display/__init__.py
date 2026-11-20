@@ -91,7 +91,7 @@ def _attempt_total(attacks: list[dict[str, Any]]) -> int | None:
     A hit count without its denominator reads as a rate it is not; when any attacker cannot say how many
     attempts it made, the headline falls back to the bare hit count rather than a wrong total.
     """
-    counts = [(a.get("metadata") or {}).get("attempt_count") for a in attacks]
+    counts = [(a.get("metadata") or {}).get("attempts") for a in attacks]
     if not counts or not all(isinstance(c, int) for c in counts):
         return None
     return sum(counts)

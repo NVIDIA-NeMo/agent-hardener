@@ -1,0 +1,14 @@
+{
+  "skill": "add-attacker",
+  "tests": [
+    {"type": "explicit", "prompt": "Use the add-attacker skill to plug PyRIT in as a second attacker.", "expected_skill": "add-attacker"},
+    {"type": "explicit", "prompt": "Follow add-attacker and wire my prompt-list attacker into the run.", "expected_skill": "add-attacker"},
+    {"type": "implicit", "prompt": "I want to add a new attacker that sends a fixed list of jailbreak prompts to the victim.", "expected_skill": "add-attacker"},
+    {"type": "implicit", "prompt": "How do I make the war-game replay attack hits I recorded last week instead of running garak again?", "expected_skill": "add-attacker"},
+    {"type": "implicit", "prompt": "Add a new attack source alongside the garak agent breaker.", "expected_skill": "add-attacker"},
+    {"type": "contextual", "prompt": "Our red team has an in-house tool that outputs attack hits as JSONL. Hook it into Agent Hardener so its hits reach the defenders and the replay validator.", "expected_skill": "add-attacker"},
+    {"type": "negative-control", "prompt": "Add a new defender that blocks outbound requests to pastebin.", "expected_skill_not": "add-attacker"},
+    {"type": "negative-control", "prompt": "Switch the red-team model to a model served through OpenRouter.", "expected_skill_not": "add-attacker"},
+    {"type": "negative-control", "prompt": "Connect my LangGraph agent to NeMo Relay so its tool calls are traced.", "expected_skill_not": "add-attacker"}
+  ]
+}

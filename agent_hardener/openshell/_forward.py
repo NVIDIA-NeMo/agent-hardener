@@ -30,6 +30,51 @@ if TYPE_CHECKING:
 logger = logging.getLogger("agent_hardener.session")
 
 
+#: Where Linux exposes each process's command line. A module constant so tests can point it elsewhere.
+PROC_ROOT = Path("/proc")
+
+
+class Unverifiable:
+    """:func:`process_command_line`'s answer when it cannot look a process up at all."""
+
+    def __repr__(self) -> str:
+        return "UNVERIFIABLE"
+
+
+#: Neither ``/proc`` nor ``ps`` could say what the process is — not the same as "no such process".
+UNVERIFIABLE = Unverifiable()
+
+
+def process_command_line(pid: int) -> str | Unverifiable | None:
+    """The command line of process *pid*; None when there is no such process; UNVERIFIABLE when we can't tell.
+
+    ``/proc/<pid>/cmdline`` first: it is always there on Linux and needs no binary — Helix's distroless task
+    image has no ``ps``. ``ps`` only where there is no ``/proc``, as on macOS.
+    """
+    if PROC_ROOT.is_dir():
+        try:
+            raw = (PROC_ROOT / str(pid) / "cmdline").read_bytes()
+        except FileNotFoundError:
+            return None
+        except OSError:
+            return UNVERIFIABLE
+        # Arguments are NUL-separated. A zombie or kernel thread has none: present, but nothing to check.
+        args = raw.replace(b"\0", b" ").decode("utf-8", errors="replace").strip()
+        return args or UNVERIFIABLE
+    try:
+        completed = subprocess.run(  # noqa: S603 - fixed argv, the pid is an int.
+            ["ps", "-p", str(pid), "-o", "args="],  # noqa: S607 - ps is resolved from PATH on purpose.
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=5,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return UNVERIFIABLE
+    args = completed.stdout.strip()
+    return args if completed.returncode == 0 and args else None
+
+
 class ForwardMixin:
     """Start/stop the configured port-forward and track its detached process."""
 
@@ -119,6 +164,23 @@ class ForwardMixin:
                 ok=True, command=command, output=f"removed invalid forward pid file {pid_path}"
             )
 
+        # The pid can outlive its process — a pid file left by an earlier run, the pid since reused — and
+        # signalling it would then take down an unrelated process group. Only stop what is still our forward.
+        owned = self._is_managed_forward(pid)
+        if owned is False:
+            pid_path.unlink(missing_ok=True)
+            return OpenShellCommandResult(
+                ok=True, command=command, output=f"managed forward process {pid} was not running"
+            )
+        if owned is None:
+            # Can't tell is not "gone": skipping the stop would leave every forward running, our own included.
+            # Signal it as before the check existed; the reuse risk stays only where nothing can rule it out.
+            logger.warning(
+                "cannot verify that pid %s is still the forward for sandbox %s (no /proc or ps); stopping it anyway",
+                pid,
+                self.config.sandbox,
+            )
+
         try:
             os.killpg(pid, signal.SIGTERM)
         except ProcessLookupError:
@@ -131,6 +193,18 @@ class ForwardMixin:
             output = f"stopped managed forward process {pid}"
         pid_path.unlink(missing_ok=True)
         return OpenShellCommandResult(ok=True, command=command, output=output)
+
+    def _is_managed_forward(self, pid: int) -> bool | None:
+        """Whether *pid* is still this lifecycle's ``openshell forward start`` for the configured sandbox.
+
+        None when that cannot be checked here (see :func:`process_command_line`).
+        """
+        args = process_command_line(pid)
+        if args is None:
+            return False
+        if isinstance(args, Unverifiable):
+            return None
+        return "forward start" in args and self.config.sandbox in args.split()
 
     def _forward_is_active(self, output: str) -> bool:
         if not self.config.forward:
@@ -151,6 +225,7 @@ class ForwardMixin:
         try:
             log_path = self._exec.log_path_for(args)
             pid_path = self._managed_forward_pid_path()
+            pid_path.parent.mkdir(parents=True, exist_ok=True)
             with log_path.open("w", encoding="utf-8") as stream:
                 stream.write(f"command: {shlex.join(command)}\n")
                 stream.flush()
@@ -197,8 +272,10 @@ class ForwardMixin:
         return OpenShellCommandResult(ok=True, command=command, output=output)
 
     def _managed_forward_pid_path(self) -> Path:
-        base_dir = self.log_dir or (self.config.cwd or Path.cwd()) / ".agent-hardener" / "openshell-forwards"
-        base_dir.mkdir(parents=True, exist_ok=True)
+        # Keyed by sandbox and forward, never by run: a run killed before its teardown leaves the forward
+        # running and holding the port, and only a pid file the *next* run can find lets it stop that forward.
+        # Under the per-run log dir, every run looked in its own empty folder.
+        base_dir = (self.config.cwd or Path.cwd()) / ".agent-hardener" / "openshell-forwards"
         safe_sandbox = safe_path_token(self.config.sandbox)
         safe_forward = safe_path_token(self.config.forward or "forward")
         return base_dir / f"{safe_sandbox}-{safe_forward}.pid"

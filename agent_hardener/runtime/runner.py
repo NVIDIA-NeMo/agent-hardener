@@ -19,6 +19,8 @@ import contextlib
 import hashlib
 import json
 import logging
+import signal
+import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -28,12 +30,12 @@ import httpx
 
 from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
-from agent_hardener.atof import load_records
+from agent_hardener.atof import load_records, requested_tools
 from agent_hardener.bundle import write_hardened_bundle
 from agent_hardener.display.console import failure_excerpt, line_text
 from agent_hardener.display.final.render_plain import render_final_run_log
 from agent_hardener.display.final.render_rich import print_final_summary
-from agent_hardener.errors import AgentHardenerError, BenignSuiteError, VictimUnavailableError
+from agent_hardener.errors import AgentHardenerError, AtofSyncError, BenignSuiteError, VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.final_log.mitigations import build_mitigations
 from agent_hardener.final_log.validation_summary import build_validation
@@ -72,7 +74,7 @@ from agent_hardener.traces import build_trace_provider
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from agent_hardener.models import AgentConfig, RoundReport, SessionConfig
+    from agent_hardener.models import AgentConfig, AttackRecord, RoundReport, SessionConfig
     from agent_hardener.openshell.lifecycle import OpenShellConfig
     from agent_hardener.traces import TraceProvider
 
@@ -158,6 +160,42 @@ def _write_fingerprint(path: Path, fingerprint: str) -> None:
     path.write_text(fingerprint + "\n", encoding="utf-8")
 
 
+#: Ways a run ends other than Ctrl-C: ``kill`` or a supervisor's stop (TERM), a closed terminal or dropped
+#: SSH session (HUP). SIGHUP does not exist on Windows.
+TERMINATION_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
+
+
+@contextlib.contextmanager
+def teardown_on_termination() -> Iterator[None]:
+    """Make SIGTERM and SIGHUP end the run the way Ctrl-C does, so its ``finally`` still tears down.
+
+    Python's default for both is to exit on the spot, skipping every ``finally``: the sandbox, its port
+    forward and the host backends were left running, and the forward kept the port bound. Raising
+    ``KeyboardInterrupt`` reuses the one path a run already handles. Only the first signal raises; later
+    ones are ignored, so a repeated stop cannot abort the teardown the first one started — SIGKILL still
+    ends the process outright.
+
+    A no-op off the main thread, where Python cannot install signal handlers.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _interrupt(signum: int, _frame: object) -> None:
+        for sig in TERMINATION_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
+        name = signal.Signals(signum).name
+        logging.getLogger("agent_hardener.run").warning("received %s; tearing down", name)
+        raise KeyboardInterrupt(name)
+
+    previous = {sig: signal.signal(sig, _interrupt) for sig in TERMINATION_SIGNALS}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
 @dataclass
 class MissionSpec:
     """The repeatable inputs to a mission, grouped so the runner and its phases share one ``ctx``."""
@@ -207,11 +245,15 @@ class Mission:
 
     def __init__(self, ctx: MissionSpec) -> None:
         self.ctx = ctx
+        #: Scope ids in the victim's ATOF stream once the startup probe passed: the tool-path check
+        #: counts only the others as attack traffic.
+        self._probe_scopes: frozenset[str] = frozenset()
         self._prepare()
 
     def run(self) -> MissionResult:
         """Open the log/event sinks, run the phases in order, and always tear down at the end."""
         with contextlib.ExitStack() as sinks:
+            sinks.enter_context(teardown_on_termination())
             self._open_sinks(sinks)
             self._infrastructure_started = False
             try:
@@ -437,6 +479,8 @@ class Mission:
                     sync=lambda: self._lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path),
                 )
             )
+        records = load_records(atof_path) if atof_path.exists() else []
+        self._probe_scopes = frozenset(str(record["uuid"]) for record in records if "uuid" in record)
         self._announce("Relay instrumentation confirmed", level="ok")
         self._announce(f"{result.records_observed} Relay event(s) observed from the probe", level="detail")
         if result.quarantined:
@@ -449,38 +493,78 @@ class Mission:
         cwd = self._base_config.cwd or Path.cwd()
         return cwd / spec.atof_path if not spec.atof_path.is_absolute() else spec.atof_path
 
-    def _verify_tool_path(self) -> None:
+    def _verify_tool_path(self, attacks: list[AttackRecord] | None = None) -> None:
         """Prove the victim's tool calls pass through Relay, from the first round's attack traffic.
 
         The startup probe proves Relay is *attached*; it cannot prove tool calls *reach* it, because a
         greeting provokes no tool. Garak does, so this runs once the attacks have — no probe tool to
         declare, no synthetic call, and no side effect Agent Hardener caused itself.
 
+        The copy is fetched strictly here: the startup probe already read the stream, so a fetch that
+        fails now is a sync fault, and judging a stale copy would blame the victim's wiring for it.
+
         Skipped for a plain HTTP target with no relay-victim block, matching the startup probe: there
         is no sandbox to read telemetry out of.
+
+        Args:
+            attacks: The live attackers' records, when they produced the traffic; their targets are
+                checked against the tools the victim actually used. ``None`` after a replay.
         """
         spec = self._base_config.relay_victim
         if spec is None:
             return
         atof_path = self._host_atof_path(spec)
-        self._sync_atof()
+        self._sync_atof(strict=True)
         records = load_records(atof_path) if atof_path.exists() else []
-        tools = check_tool_path(records)
+        tools = check_tool_path(records, before=self._probe_scopes)
         self._announce(f"Tool calls reach Relay ({', '.join(tools)})", level="ok")
+        if attacks:
+            self._warn_untouched_targets(attacks, {*tools, *requested_tools(records)})
 
-    def _sync_atof(self) -> None:
-        """Copy the victim's ATOF stream out of the sandbox, best-effort.
+    def _warn_untouched_targets(self, attacks: list[AttackRecord], used: set[str]) -> None:
+        """Name the attack targets the victim never asked for nor ran.
+
+        Not fatal: the run is valid, but attempts spent on a tool the victim does not have (garak has
+        targeted ``multi_tool_use.parallel``, an artifact of OpenAI's tool-call format) are attacks that
+        never tested anything, and a report that does not say so overstates the coverage.
+        """
+        targets = {str(target) for attack in attacks for target in attack.metadata.get("attack_targets") or []}
+        untouched = sorted(targets - used)
+        if untouched:
+            self._announce(
+                f"attacks targeted {len(untouched)} tool(s) the victim never asked for or ran "
+                f"({', '.join(untouched)}) — they may not exist, so those attempts tested nothing",
+                level="warn",
+            )
+
+    def _sync_atof(self, *, strict: bool = False) -> None:
+        """Copy the victim's ATOF stream out of the sandbox, best-effort unless ``strict``.
 
         Separate from :meth:`_verify_tool_path` because collecting the telemetry and asserting
         something about it are different jobs: the assertion only makes sense when live attackers
         produced the traffic, while the collection is worth doing for every round.
+
+        Raises:
+            AtofSyncError: ``strict`` and the stream could not be copied.
         """
         spec = self._base_config.relay_victim
         if spec is None:
             return
         atof_path = self._host_atof_path(spec)
-        with contextlib.suppress(Exception):
-            self._lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path)
+        remote = f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}"
+        if not strict:
+            with contextlib.suppress(Exception):
+                self._lifecycle.fetch_file(remote, atof_path)
+            return
+        try:
+            fetched = self._lifecycle.fetch_file(remote, atof_path)
+        except Exception as exc:
+            raise AtofSyncError(f"could not copy {remote} out of the victim's sandbox: {exc}") from exc
+        if not fetched:
+            raise AtofSyncError(
+                f"could not copy {remote} out of the victim's sandbox: the copy came back empty, although "
+                "the startup probe read it, so the victim's telemetry is unreadable rather than absent"
+            )
 
     def _load_benign_suite(self) -> None:
         """Pre-flight: seed the supplied benign suite for each smart-benign validator.

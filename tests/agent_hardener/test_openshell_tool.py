@@ -297,8 +297,9 @@ class _Fetcher:
 
     last: _Fetcher
 
-    def fetch_file(self, remote: str, local: Path) -> None:
+    def fetch_file(self, remote: str, local: Path) -> bool:
         self.fetched.append((remote, local))
+        return True
 
 
 def _prepared(atof_path: Path | None, cwd: Path | None) -> OpenShellConfig:

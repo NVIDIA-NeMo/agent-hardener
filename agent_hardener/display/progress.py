@@ -4,15 +4,16 @@
 """Live console renderer: turns run events into colored, phase-structured console output.
 
 Wired by the CLI as the sole ``on_event`` subscriber. All one-way presentation flows through here as
-events: ``output`` highlight lines, ``status_started``/``status_completed`` spinners (sandbox bring-up,
-health, benign recon), ATTACK / DEFENSE / VALIDATION banners, live per-agent progress, and the benign
-synth spinner (label updates on ``synth_phase``; paused around the interview via
+events: ``output`` highlight lines, ``status_started``/``status_completed`` spinners with an elapsed clock
+(sandbox bring-up, health, benign synthesis), ATTACK / DEFENSE / VALIDATION banners, live per-agent progress,
+and benign synthesis steps (each ``synth_phase`` prints a line with what the step produced and moves the
+spinner to the step running now; the spinner is paused around the interview via
 ``interview_started``/``interview_completed`` so questionary owns the terminal). Presentation only; a
-failure here never aborts a run (the event logger guards it).
+failure here never aborts a run (the event bus guards it).
 
 Off a styled terminal (CI, piped) spinners and live progress rows are skipped, but the run keeps its
-structure: ``output`` lines, phase headers, one line per finished agent, and the phase summaries all
-still print, as plain text.
+structure: ``output`` lines, phase headers, one line per finished agent or synth step, and the phase
+summaries all still print, as plain text.
 """
 
 from __future__ import annotations
@@ -37,6 +38,7 @@ _PLAIN_EVENTS = frozenset(
         "attack_summary",
         "defender_summary",
         "validator_summary",
+        "synth_phase",  # one line per finished synth step
     }
 )
 
@@ -57,6 +59,45 @@ _TALLIED_PHASES: dict[str, tuple[str, str]] = {
 }
 
 
+class _Spinner:
+    """A one-line spinner with an elapsed clock, so a long blocking step visibly keeps moving.
+
+    Same ``start``/``stop``/``update`` surface as ``Console.status``, which has no clock. The text is cut to the
+    terminal's width: rich drops the spinner and clock columns, not the text, when a line does not fit.
+    """
+
+    _RESERVED = 12  # spinner + "0:00:00" + the gaps between columns
+
+    def __init__(self, text: str) -> None:
+        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn  # noqa: PLC0415
+
+        self._console = get_console()
+        self._progress = Progress(
+            SpinnerColumn(),
+            TimeElapsedColumn(),
+            TextColumn("{task.description}", markup=False),
+            console=self._console,
+            transient=True,
+        )
+        self._task = self._progress.add_task(self._fit(text), total=None)
+
+    def start(self) -> None:
+        self._progress.start()
+
+    def stop(self) -> None:
+        self._progress.stop()
+
+    def update(self, text: str) -> None:
+        self._progress.update(self._task, description=self._fit(text))
+
+    def _fit(self, text: str) -> str:
+        from rich.text import Text  # noqa: PLC0415
+
+        fitted = Text(text)
+        fitted.truncate(max(10, self._console.width - self._RESERVED), overflow="ellipsis")
+        return fitted.plain
+
+
 class ConsoleRenderer:
     """Stateful event subscriber that renders the run's live console narrative.
 
@@ -69,7 +110,7 @@ class ConsoleRenderer:
         self._rich = is_rich()
         self._progress: Progress | None = None
         self._task_ids: dict[str, TaskID] = {}  # agent_id → rich task id
-        self._status: Any = None  # active rich Console.status (spinner), if any
+        self._status: Any = None  # active spinner (``_Spinner``), if any
         self._status_label = ""
         # This phase's agent results: (name, failure reason or "") -> count. Drives the phase headline and
         # keeps a failure that repeats per attack to one line off a terminal (the log has every one).
@@ -97,7 +138,8 @@ class ConsoleRenderer:
     def _on_status_started(self, payload: dict[str, Any]) -> None:
         self._stop_progress()
         self._status_label = str(payload.get("label") or "")
-        self._status = get_console().status(f"{self._status_label}…", spinner="dots")
+        detail = payload.get("detail")  # what the step is doing first, e.g. the synth's first node
+        self._status = _Spinner(f"{self._status_label} — {detail}…" if detail else f"{self._status_label}…")
         self._status.start()
 
     def _on_status_completed(self, _payload: dict[str, Any]) -> None:
@@ -106,8 +148,14 @@ class ConsoleRenderer:
             self._status = None
 
     def _on_synth_phase(self, payload: dict[str, Any]) -> None:
-        if self._status is not None:
-            self._status.update(f"{self._status_label} — {payload.get('label', '')}")
+        """Print what the finished step produced and point the spinner at the step running now."""
+        line = str(payload.get("label") or payload.get("phase") or "")
+        if payload.get("detail"):
+            line += f" — {payload['detail']}"
+        seconds = payload.get("seconds")
+        ok(line, elapsed=float(seconds) if isinstance(seconds, (int, float)) else None, markup=False)
+        if self._status is not None and payload.get("next"):
+            self._status.update(f"{self._status_label} — {payload['next']}…")
 
     def _on_interview_started(self, _payload: dict[str, Any]) -> None:
         if self._status is not None:

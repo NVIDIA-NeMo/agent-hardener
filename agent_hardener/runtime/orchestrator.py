@@ -70,7 +70,7 @@ class Orchestrator:
         round_id_factory: Callable[[], str] = generate_round_id,
         mission_id_factory: Callable[[], str] = generate_round_id,
         defenders_manager: DefendersManager | None = None,
-        verify_tool_path: Callable[[], None] | None = None,
+        verify_tool_path: Callable[[list[AttackRecord] | None], None] | None = None,
         sync_atof: Callable[[], None] | None = None,
         trace_provider: TraceProvider | None = None,
         replay_attacks: Callable[..., Awaitable[list[RecordedAttackTrace]]] = replay_attacks_for_traces,
@@ -171,7 +171,7 @@ class Orchestrator:
             # invoking the victim at all, so there is no traffic to judge and a passing victim would
             # be failed for someone else's silence (a replay that re-sends attacks checks below).
             if self.verify_tool_path is not None and not self._tool_path_verified and self.config.attackers:
-                self.verify_tool_path()
+                self.verify_tool_path(attacks)
                 self._tool_path_verified = True
             # Recorded whenever traces are on and live attackers ran. A replay loads its recording, and
             # replays the attacks the recording has no trace for to obtain theirs.
@@ -246,7 +246,7 @@ class Orchestrator:
         if replayed:
             # The replay was the run's first tool traffic: prove it reaches Relay before writing guardrails.
             if self.verify_tool_path is not None and not self._tool_path_verified:
-                self.verify_tool_path()
+                self.verify_tool_path(None)
                 self._tool_path_verified = True
             path = store.write_round_json(ATTACK_TRACES_FILENAME, dump_recording(replayed))
             recorder.emit(

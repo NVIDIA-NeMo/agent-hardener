@@ -9,7 +9,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from agent_hardener.errors import AtofSyncError
 from agent_hardener.loggers import emit_event
+from agent_hardener.models import AttackRecord
 from agent_hardener.runtime import runner
 
 if TYPE_CHECKING:
@@ -59,7 +61,7 @@ def test_tool_path_verification_reads_the_synced_log_and_names_the_tools(
     monkeypatch.setattr(runner, "load_records", lambda path: [f"record-from-{path.name}"])
     checked: list[list[str]] = []
 
-    def fake_check(records: list[str]) -> list[str]:
+    def fake_check(records: list[str], **_kwargs: Any) -> list[str]:
         checked.append(records)
         return ["bash", "read_file"]
 
@@ -72,6 +74,38 @@ def test_tool_path_verification_reads_the_synced_log_and_names_the_tools(
     assert checked == [["record-from-events.atof.jsonl"] if atof_exists else []]
     assert "Tool calls reach Relay (bash, read_file)" in harness.lines
     assert harness.lifecycle.fetched[-1] == (f"{runner.SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", atof)
+
+
+@pytest.mark.usefixtures("relay_probe")
+def test_a_failed_copy_at_the_tool_path_check_is_a_sync_error_not_a_wiring_one(
+    build_mission: BuildMission, tmp_path: Path
+) -> None:
+    """A stale host copy shows no tool calls; judging it would blame the victim's Relay wiring."""
+    harness = build_mission(atof_path=tmp_path / "events.atof.jsonl", no_cleanup=True)
+    harness.lifecycle.fetch_error = RuntimeError("sandbox gone")
+    harness.orchestrator_hook = lambda kwargs: kwargs["verify_tool_path"](None)
+
+    with pytest.raises(AtofSyncError, match="sandbox gone"):
+        harness.run()
+
+
+@pytest.mark.usefixtures("relay_probe")
+def test_attack_targets_the_victim_never_used_are_named(
+    build_mission: BuildMission, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "load_records", lambda _path: [])
+    monkeypatch.setattr(runner, "check_tool_path", lambda _records, **_kwargs: ("bash",))
+    attack = AttackRecord(
+        agent_id="a", agent_name="garak", metadata={"attack_targets": ["bash", "multi_tool_use.parallel"]}
+    )
+    harness = build_mission(atof_path=tmp_path / "events.atof.jsonl", no_cleanup=True)
+    harness.orchestrator_hook = lambda kwargs: kwargs["verify_tool_path"]([attack])
+
+    harness.run()
+
+    warnings = [line for line in harness.lines if "never asked for or ran" in line]
+    assert len(warnings) == 1
+    assert "(multi_tool_use.parallel)" in warnings[0]
 
 
 # --- ATOF sync -------------------------------------------------------------------------------------------

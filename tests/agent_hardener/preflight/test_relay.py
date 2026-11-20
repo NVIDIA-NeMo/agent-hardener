@@ -14,10 +14,11 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from agent_hardener.errors import VictimNotInstrumentedError, VictimUnavailableError
+from agent_hardener.errors import AttackerIneffectiveError, VictimNotInstrumentedError, VictimUnavailableError
 from agent_hardener.preflight.relay import check_relay_instrumentation, check_tool_path
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "atof" / "concurrent_tool_calls.atof.jsonl"
@@ -122,20 +123,54 @@ def test_quarantined_scope_stack_is_surfaced_without_failing(tmp_path: Path) -> 
     assert result.quarantined is True
 
 
-def test_no_tool_call_across_a_whole_round_is_fatal() -> None:
+def _model_call(uuid: str, response: Any = None) -> list[dict[str, Any]]:
+    common = {"atof_version": "0.1", "kind": "scope", "category": "llm", "uuid": uuid}
+    return [{**common, "scope_category": "start"}, {**common, "scope_category": "end", "data": response}]
+
+
+def _asks_for(tool: str) -> dict[str, Any]:
+    """A LangChain model response requesting ``tool``, the same call under every key LangChain keeps it."""
+    call = {"id": "call_1", "name": tool, "args": {}}
+    return {
+        "messages": [
+            {
+                "data": {
+                    "tool_calls": [call],
+                    "additional_kwargs": {
+                        "tool_calls": [{"id": "call_1", "function": {"name": tool, "arguments": "{}"}}]
+                    },
+                }
+            }
+        ]
+    }
+
+
+def test_a_requested_tool_that_never_ran_through_relay_is_not_instrumented() -> None:
     """Relay attached, but tool calls bypassing it: unguardable, and the run must not proceed.
 
-    A hand-built LangGraph graph does exactly this — LLM scopes appear, tool calls do not — so the
-    startup probe passes and every guardrail the defenders write is inert. Failing loudly beats a
-    report that reads as weak defenders while attribution silently falls back to guessing the tool.
+    A hand-built LangGraph graph does exactly this — the model asks for tools, but no tool scope
+    appears — so the startup probe passes and every guardrail the defenders write is inert.
     """
-    llm_only = [
-        {"atof_version": "0.1", "kind": "scope", "scope_category": "start", "category": "llm", "uuid": "u1"},
-        {"atof_version": "0.1", "kind": "scope", "scope_category": "end", "category": "llm", "uuid": "u1"},
-    ]
+    with pytest.raises(VictimNotInstrumentedError, match=r"asked for tools \(run_sql x1\)") as raised:
+        check_tool_path(_model_call("u1", _asks_for("run_sql")))
+    assert "awrap_tool_call" in raised.value.remediation
 
-    with pytest.raises(VictimNotInstrumentedError, match="do not pass through Relay"):
-        check_tool_path(llm_only)
+
+def test_a_react_agent_naming_a_tool_in_text_counts_as_a_request() -> None:
+    react = {"text": "Thought: I should look it up.\nAction: lookup_user\nAction Input: admin"}
+    with pytest.raises(VictimNotInstrumentedError, match="lookup_user"):
+        check_tool_path(_model_call("u1", react))
+
+
+def test_no_traced_model_call_after_the_probe_is_not_instrumented() -> None:
+    """The probe's own model call is excluded by its scope id; nothing the attacks caused was traced."""
+    with pytest.raises(VictimNotInstrumentedError, match="no model call among them"):
+        check_tool_path(_model_call("probe"), before={"probe"})
+
+
+def test_model_calls_that_never_ask_for_a_tool_blame_the_attacks_not_relay() -> None:
+    with pytest.raises(AttackerIneffectiveError, match="Relay is working"):
+        check_tool_path(_model_call("u1", {"text": "I can't help with that."}))
 
 
 def test_an_observed_tool_call_satisfies_the_tool_path_check() -> None:

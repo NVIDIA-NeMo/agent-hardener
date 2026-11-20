@@ -299,19 +299,32 @@ def _stream_next(chunks: list[Any]) -> Any:
     return next_call
 
 
+def _run_stream(request: Any, next_call: Any) -> list[Any]:
+    async def run() -> list[Any]:
+        return await _collect(await plugin._latched_llm_stream(_MESSAGE)("model", request, _LLM_CONTEXT, next_call))
+
+    return asyncio.run(run())
+
+
 def test_latched_stream_passes_the_providers_chunks_through_when_not_blocked() -> None:
+    assert _run_stream(_OPENAI_REQUEST, _stream_next(["a", "b"])) == ["a", "b"]
+
+
+def test_latched_stream_hands_back_the_providers_own_iterator_when_not_blocked() -> None:
+    """Re-yielding Relay's native stream from an async generator segfaults CPython 3.14 under load."""
+    provider_stream = object()
+
+    async def next_call(request: Any) -> Any:
+        return provider_stream
+
     intercept = plugin._latched_llm_stream(_MESSAGE)
 
-    chunks = asyncio.run(_collect(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, _stream_next(["a", "b"]))))
-
-    assert chunks == ["a", "b"]
+    assert asyncio.run(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, next_call)) is provider_stream
 
 
 def test_latched_stream_replays_the_refusal_when_blocked(blocked: BlockedRequests) -> None:
     blocked.mark("req-1")
-    intercept = plugin._latched_llm_stream(_MESSAGE)
-
-    chunks = asyncio.run(_collect(intercept("model", _OPENAI_REQUEST, _LLM_CONTEXT, _stream_next(["provider"]))))
+    chunks = _run_stream(_OPENAI_REQUEST, _stream_next(["provider"]))
 
     assert [chunk["choices"][0]["finish_reason"] for chunk in chunks] == [None, "stop"]
     assert chunks[0]["choices"][0]["delta"]["content"] == _MESSAGE
@@ -323,10 +336,8 @@ def test_latched_stream_fails_open_without_an_openai_shaped_request(
     blocked: BlockedRequests, caplog: pytest.LogCaptureFixture, request_: Any
 ) -> None:
     blocked.mark("req-1")
-    intercept = plugin._latched_llm_stream(_MESSAGE)
-
     with caplog.at_level(logging.WARNING, logger="agent_hardener.relay_plugin"):
-        chunks = asyncio.run(_collect(intercept("model", request_, _LLM_CONTEXT, _stream_next(["provider"]))))
+        chunks = _run_stream(request_, _stream_next(["provider"]))
 
     assert chunks == ["provider"]
     assert "did not recognise the harness stream shape" in caplog.text

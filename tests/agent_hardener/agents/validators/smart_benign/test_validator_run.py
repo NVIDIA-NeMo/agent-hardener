@@ -9,11 +9,12 @@ import asyncio
 import csv
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from agent_hardener.agents.validators.smart_benign import driver, validator
 from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest, VictimCapabilityProfile
-from agent_hardener.agents.validators.smart_benign.state import SynthState
+from agent_hardener.agents.validators.smart_benign.state import SynthInputs, SynthState
 from agent_hardener.loggers import using_event_sink
 from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
 
@@ -286,7 +287,10 @@ def test_run_synth_dag_emits_synth_phase(tmp_path: Path, monkeypatch: pytest.Mon
         )
 
     assert isinstance(result, SynthState)
-    assert ("synth_phase", {"phase": "gap_detector", "label": validator._PROGRESS_LABELS["gap_detector"]}) in seen
+    phases = [payload for event, payload in seen if event == "synth_phase"]
+    assert [(p["phase"], p["label"], p["detail"]) for p in phases] == [
+        ("gap_detector", "checked the profile for gaps", "0 gaps unresolved")
+    ]
     assert all(payload.get("phase") != "not_a_phase" for _event, payload in seen)
 
 
@@ -320,3 +324,32 @@ def test_drive_synth_writes_no_usage_when_synthesis_produced_no_profile(
     _drive_to(SynthState(inputs=inputs, artifact_dir=tmp_path), monkeypatch)
 
     assert not (tmp_path / "usage.json").exists()
+
+
+def test_drive_synth_brackets_the_interview_with_events(monkeypatch: pytest.MonkeyPatch) -> None:
+    final_state = SynthState(inputs=SynthInputs(target_name="t"))
+
+    class _InterruptOnce:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def astream(self, _input: Any, _config: Any, stream_mode: Any) -> Any:
+            self.calls += 1
+            if self.calls == 1:
+                yield ("updates", {"__interrupt__": [SimpleNamespace(value={"questions": []})]})
+                return
+            yield ("values", final_state)
+
+    graph = _InterruptOnce()
+    monkeypatch.setattr(driver, "build_synth_graph", lambda **_kwargs: graph)
+    seen: list[str] = []
+
+    async def provider(_questions: Any) -> list[dict[str, Any]]:
+        seen.append("asked")
+        return []
+
+    with using_event_sink(lambda event, _payload: seen.append(event)):
+        asyncio.run(driver.drive_synth(final_state, answer_provider=provider))
+
+    # A live spinner stops before the prompt draws and restarts after it.
+    assert seen == ["interview_started", "asked", "interview_completed"]

@@ -182,27 +182,75 @@ class _FakeStatus:
 
 def test_status_spinner_updates_on_synth_phase_and_pauses(monkeypatch: pytest.MonkeyPatch) -> None:
     status = _FakeStatus()
+    texts: list[str] = []
 
-    class _Con:
-        def status(self, _label: str, spinner: str = "dots") -> _FakeStatus:
-            return status
+    def _spinner(text: str) -> _FakeStatus:
+        texts.append(text)
+        return status
 
+    out = io.StringIO()
     monkeypatch.setattr(progress, "is_rich", lambda: True)
-    monkeypatch.setattr(progress, "get_console", _Con)
+    con = Console(file=out, width=200)
+    monkeypatch.setattr(progress, "get_console", lambda: con)
+    monkeypatch.setattr(console, "get_console", lambda: con)  # the ✓ line prints through console.ok
+    monkeypatch.setattr(progress, "_Spinner", _spinner)
 
     renderer = progress.ConsoleRenderer()
-    renderer("status_started", {"label": "benign recon"})
+    renderer("status_started", {"label": "Synthesizing benign suite", "detail": "reading the description"})
+    assert texts == ["Synthesizing benign suite — reading the description…"]
     assert status.events == ["start"]
-    renderer("synth_phase", {"phase": "gap_detector", "label": "checking the profile for gaps"})
+    renderer(
+        "synth_phase",
+        {
+            "phase": "gap_detector",
+            "label": "checked the profile for gaps",
+            "detail": "2 gaps unresolved",
+            "seconds": 9.2,
+            "next": "composing interview questions",
+        },
+    )
     renderer("other_event", {"label": "ignored"})  # no handler → ignored
-    # The interviewer brackets its prompt with these events; the spinner stops then restarts.
+    # The driver brackets the interview prompt with these events; the spinner stops then restarts.
     renderer("interview_started", {})
     assert status.events == ["start", "stop"]
     renderer("interview_completed", {})
-    renderer("status_completed", {"label": "benign recon"})
-    assert status.updates == ["benign recon — checking the profile for gaps"]
+    renderer("status_completed", {"label": "Synthesizing benign suite"})
+    assert out.getvalue() == "✓ checked the profile for gaps — 2 gaps unresolved (9.2s)\n"
+    assert status.updates == ["Synthesizing benign suite — composing interview questions…"]
     # Resumed after the interview, and stopped on completion.
     assert status.events == ["start", "stop", "start", "stop"]
+
+
+def test_synth_phase_prints_unwrapped_off_tty(monkeypatch: pytest.MonkeyPatch) -> None:
+    out = io.StringIO()
+    con = Console(file=out, width=40)
+    monkeypatch.setattr(progress, "is_rich", lambda: False)
+    monkeypatch.setattr(progress, "get_console", lambda: con)
+    monkeypatch.setattr(console, "get_console", lambda: con)
+
+    renderer = progress.ConsoleRenderer()
+    renderer(
+        "synth_phase",
+        {"phase": "critic", "label": "filtered and deduplicated requests", "detail": "58 → 42 kept", "seconds": 125},
+    )
+    renderer("synth_phase", {"phase": "interview_ask", "label": "recorded the interview answers", "seconds": None})
+
+    assert out.getvalue().splitlines() == [
+        "✓ filtered and deduplicated requests — 58 → 42 kept (2m05s)",  # one line though wider than 40 columns
+        "✓ recorded the interview answers",
+    ]
+
+
+def test_the_spinner_clock_survives_a_long_label(monkeypatch: pytest.MonkeyPatch) -> None:
+    out = io.StringIO()
+    monkeypatch.setattr(progress, "get_console", lambda: Console(file=out, width=50, force_terminal=True))
+
+    spinner = progress._Spinner("x" * 200)
+    spinner.start()
+    spinner.update("y" * 200)
+    spinner.stop()
+
+    assert "0:00:00" in out.getvalue()
 
 
 def test_status_events_noop_off_tty(monkeypatch: pytest.MonkeyPatch) -> None:
