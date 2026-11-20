@@ -31,7 +31,7 @@ _FALSE_POSITIVE = frozenset({"refused", "blocked_guardrail", "blocked_network"})
 #: Fields copied from an item's ``tool_facts`` onto its row, when the validator ran with traces.
 _FACT_FIELDS = ("trace_status", "target_tool", "target_tool_called", "target_tool_outcome", "blocked_tool", "rail")
 _ATTACK_RELABELS = ("blocked_guardrail", "blocked_network", "agent_refused", "tool_not_called", "tool_failed")
-_BENIGN_RELABELS = ("blocked_guardrail", "blocked_network", "agent_refused", "tool_failed")
+_BENIGN_RELABELS = ("blocked_guardrail", "blocked_network", "agent_refused", "tool_failed", "not_exercised")
 
 
 def _with_facts(row: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
