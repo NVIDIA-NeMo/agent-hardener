@@ -6,6 +6,10 @@ name: System test
 on:
   push:
     branches: [main]
+  # The merge gate: branch protection requires "System test status". No path filter, or a PR that
+  # touches none of the paths never reports the check and can't merge.
+  pull_request:
+    branches: [main]
   schedule:
     # Nightly at 00:17 UTC (off the top of the hour, where GitHub delays or drops schedules): 02:17 Israel time in winter, 03:17 in summer.
     - cron: "17 0 * * *"
@@ -20,8 +24,9 @@ on:
 permissions:
   contents: read
 
-# Each war-game spends real inference tokens, so a newer push to main supersedes a running one.
-# The event name keeps a push and the nightly run from cancelling each other.
+# Each war-game spends real inference tokens, so a newer push to main (or to a PR, whose ref is
+# refs/pull/<n>/merge) supersedes a running one. The event name keeps a push and the nightly run
+# from cancelling each other.
 concurrency:
   group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
@@ -52,6 +57,8 @@ jobs:
   war-game:
     # One Helix per agent so the two war-games don't contend on :8080 or the OpenShell gateway.
     name: War-game (${{ matrix.agent }})
+    # A fork's PR gets no secrets, so it can't call a model: skip the war-game rather than fail it.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     runs-on: ubuntu-latest
     timeout-minutes: 90
     strategy:
@@ -99,7 +106,7 @@ jobs:
   war-game-report:
     name: War-game report
     needs: [war-game]
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.war-game.result != 'skipped' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -118,7 +125,8 @@ jobs:
         run: python3 .github/scripts/check_war_game.py war-game-results --agents "$WAR_GAME_AGENTS" --strict
 
   system-test-status:
-    # The single check for branch protection; it passes only when every job above succeeded.
+    # The single check for branch protection; it passes only when every job above succeeded. On a
+    # fork's PR the war-game and its report are skipped (no secrets), and that counts as a pass.
     name: System test status
     needs: [github-scripts, war-game, war-game-report]
     if: always()
@@ -128,6 +136,7 @@ jobs:
         shell: bash
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
+          FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
           {
@@ -137,4 +146,11 @@ jobs:
             echo "| --- | --- |"
             printf '%s\n' "${NEEDS_JSON}" | jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"'
           } >> "${GITHUB_STEP_SUMMARY}"
-          printf '%s\n' "${NEEDS_JSON}" | jq -e 'to_entries | map(.value.result) | all(. == "success")'
+          if [[ "${FORK_PR}" == "true" ]]; then
+            echo "Fork PR: the war-game needs secrets a fork's PR does not get, so it was skipped." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          printf '%s\n' "${NEEDS_JSON}" | jq -e --arg fork "${FORK_PR}" '
+            to_entries | all(
+              .value.result == "success"
+              or ($fork == "true" and (.key == "war-game" or .key == "war-game-report") and .value.result == "skipped")
+            )'
