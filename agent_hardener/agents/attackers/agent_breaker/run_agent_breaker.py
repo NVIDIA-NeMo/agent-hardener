@@ -27,8 +27,10 @@ from agent_hardener.agents.attackers.agent_breaker.config import (
     build_agent_breaker_config,
     resolve_model_timeout,
 )
+from agent_hardener.agents.attackers.agent_breaker.preflight import check_model_endpoints
 from agent_hardener.agents.attackers.hits import normalize_hit_record
 from agent_hardener.env import garak_command
+from agent_hardener.errors import ATTACKER_LLM_UNAVAILABLE, ModelUnavailableError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
 from agent_hardener.models import ARTIFACT_DIR_KEY, AgentConfig, AgentRunInput, Artifact, AttackRecord
 
@@ -38,6 +40,7 @@ DEFAULT_REPORT_PREFIX = "agent-breaker"
 DEFAULT_TARGET_URI = "http://127.0.0.1:8000/v1/chat/completions"
 
 GarakRunner = Callable[[list[str], Path, float | None, dict[str, str] | None], Awaitable[int]]
+Preflight = Callable[[dict[str, Any]], Awaitable[None]]
 
 
 def _garak_command() -> list[str]:
@@ -174,6 +177,7 @@ async def run_agent_breaker_scan(
     timeout_s: float | None = None,
     garak_command: list[str] | None = None,
     runner: GarakRunner = _spawn_garak,
+    preflight: Preflight | None = None,
 ) -> ScanResult:
     """Render the garak config, run the AgentBreaker probe, and collect its hits.
 
@@ -188,6 +192,7 @@ async def run_agent_breaker_scan(
         garak_command: Base garak invocation; defaults to ``GARAK_COMMAND`` or the dedicated
             garak venv interpreter (see ``_garak_command`` / ``AGENT_HARDENER_GARAK_PYTHON``).
         runner: Injectable subprocess runner (return code) for testing.
+        preflight: Check run on the resolved config before garak starts; raises to abort the scan.
 
     Returns:
         A :class:`ScanResult` with the exit code, hitlog rows, and artifact paths.
@@ -209,6 +214,8 @@ async def run_agent_breaker_scan(
         report_prefix=report_prefix,
         model_timeout=resolve_model_timeout(overrides),
     )
+    if preflight is not None:
+        await preflight(resolved)
 
     # Co-locate the resolved config + garak log with the report/hitlog under report_dir. When the
     # orchestrator anchors report_dir to the run's iteration dir these become run-scoped; using a
@@ -243,14 +250,26 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         target_uri=str(config["target_uri"]) if config.get("target_uri") else None,
         target_port=int(config["target_port"]) if config.get("target_port") is not None else None,
     )
-    result = await run_agent_breaker_scan(
-        target_uri=target_uri,
-        config_path=str(config.get("config_path", DEFAULT_CONFIG_PATH)),
-        report_dir=str(report_dir),
-        report_prefix=str(config.get("report_prefix", DEFAULT_REPORT_PREFIX)),
-        overrides=overrides,
-        timeout_s=float(config["timeout_s"]) if config.get("timeout_s") is not None else None,
-    )
+    try:
+        result = await run_agent_breaker_scan(
+            target_uri=target_uri,
+            config_path=str(config.get("config_path", DEFAULT_CONFIG_PATH)),
+            report_dir=str(report_dir),
+            report_prefix=str(config.get("report_prefix", DEFAULT_REPORT_PREFIX)),
+            overrides=overrides,
+            timeout_s=float(config["timeout_s"]) if config.get("timeout_s") is not None else None,
+            preflight=check_model_endpoints,
+        )
+    except ModelUnavailableError as exc:
+        # Returned, not raised: the attack stage keeps only an exception's text, so a raise would reach the
+        # operator as a generic attacker failure with advice about attacker timeouts.
+        return AttackRecord(
+            agent_id=agent.agent_id,
+            agent_name=agent.name,
+            ok=False,
+            error=str(exc),
+            metadata={"failure_code": ATTACKER_LLM_UNAVAILABLE, "remediation": exc.remediation},
+        )
     hits = _coerce_hits(result.hits)
     hit_count = len(hits)
     # Treat a non-zero exit as ok if garak still produced hits — a mid-run crash
