@@ -1165,6 +1165,10 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
             events.append("up")
             return _ok("brought-up") if up_ok else OpenShellCommandResult(ok=False, command=[], output="build failed")
 
+        def ensure_forward(self) -> OpenShellCommandResult:
+            events.append("forward")
+            return _ok("forward active")
+
         def down(self) -> OpenShellCommandResult:
             events.append("down")
             return _ok("torn-down")
@@ -1209,7 +1213,7 @@ def test_synth_benign_reuse_skips_build_and_teardown(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _cfg: True)
     result = runner.invoke(app, ["synth-benign", "--reuse"])
     assert result.exit_code == 0
-    assert events == ["synth"]  # ready sandbox reused: no up, no down
+    assert events == ["forward", "synth"]  # ready sandbox reused: its forward checked, no up, no down
 
 
 def test_synth_benign_no_cleanup_leaves_sandbox_up(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.errors import VictimUnavailableError
+from agent_hardener.errors import VictimPortInUseError, VictimUnavailableError
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import MissionError
@@ -101,8 +101,20 @@ def test_reuse_skips_the_rebuild_when_the_same_agent_was_built_before(build_miss
 
     reused.run()
 
-    assert reused.lifecycle.calls == []
+    assert reused.lifecycle.calls == ["ensure_forward"]
     assert _REUSING in reused.lines
+
+
+def test_reuse_stops_when_another_run_holds_the_victim_port(build_mission: BuildMission) -> None:
+    build_mission(no_cleanup=True).run()
+    reused = build_mission(skip_initial_up=True, no_cleanup=True)
+    reused.lifecycle.forward_result = _failed("Error: Port 8000 is already forwarded to sandbox 'ah-other-1234567'.")
+
+    with pytest.raises(VictimPortInUseError, match="Port 8000 is already forwarded to sandbox 'ah-other-1234567'"):
+        reused.run()
+
+    assert reused.lifecycle.calls == ["ensure_forward"]
+    assert _REUSING not in reused.lines
 
 
 def test_reuse_rebuilds_and_says_why_when_a_different_agent_was_built_before(build_mission: BuildMission) -> None:
@@ -284,7 +296,7 @@ def test_reuse_adopts_the_pre_built_image_the_sandbox_was_created_from(build_mis
 
     reused.run()
 
-    assert reused.lifecycle.calls == []
+    assert reused.lifecycle.calls == ["ensure_forward"]
     assert reused.lifecycle.config.image == "reg/agent:1"
     assert "Reusing the pre-built victim image recorded for this sandbox: reg/agent:1" in reused.lines
     assert _REUSING in reused.lines

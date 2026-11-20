@@ -269,6 +269,30 @@ def test_up_failure_shows_the_warnings_and_the_tail_of_the_output(monkeypatch: p
     assert "✗ sandbox lifecycle command failed; see the output above" in result.output
 
 
+def test_up_names_the_taken_port_instead_of_blaming_docker(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeLifecycle:
+        def __init__(self, _cfg: object) -> None:
+            pass
+
+        def up(self) -> OpenShellCommandResult:
+            return _ok_result("Gateway Info\nError: Port 8000 is already in use by another process.", ok=False)
+
+    monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: SimpleNamespace(sandbox="sb"))
+    monkeypatch.setattr("agent_hardener.tools.openshell.prepare_relay_victim", lambda cfg: cfg)
+    monkeypatch.setattr("agent_hardener.tools.openshell.with_victim_image", lambda vc, *_a, **_kw: vc)
+    monkeypatch.setattr("agent_hardener.config.load_config", lambda _p: SimpleNamespace(victim_control="vc"))
+    monkeypatch.setattr("agent_hardener.openshell.lifecycle.OpenShellLifecycle", FakeLifecycle)
+
+    result = CliRunner().invoke(app, ["up"])
+
+    assert result.exit_code == 1
+    assert "✗ Port 8000 is already in use by another process, so the victim cannot be reached on it" in result.output
+    assert "lsof -i :8000" in result.output
+    assert "Check the Docker daemon" not in result.output
+
+
 @pytest.mark.parametrize(("ready", "line"), [(True, "✓ Reusing the Ready sandbox"), (False, "! No Ready sandbox")])
 def test_run_reuse_says_whether_the_sandbox_is_reused(monkeypatch: pytest.MonkeyPatch, ready: bool, line: str) -> None:
     session = SimpleNamespace(victim_control="vc", model_copy=lambda **_kw: session)

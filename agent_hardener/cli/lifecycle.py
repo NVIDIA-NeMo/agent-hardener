@@ -22,6 +22,7 @@ from agent_hardener.cli._app import (
 from agent_hardener.cli._errors import cli_error_boundary
 from agent_hardener.display.console import emit, failure_excerpt, ok, status_factory, warn
 from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
+from agent_hardener.openshell._forward import port_in_use_error
 
 if TYPE_CHECKING:
     from agent_hardener.openshell.config import OpenShellCommandResult
@@ -53,7 +54,9 @@ def _report(
     if not result.ok:
         if not show_output and lines:
             emit(failure_excerpt(result.output))
-        raise SandboxProvisioningError("sandbox lifecycle command failed; see the output above")
+        raise port_in_use_error(result.output) or SandboxProvisioningError(
+            "sandbox lifecycle command failed; see the output above"
+        )
     if done:
         ok(done, elapsed=elapsed, markup=False)
     raise typer.Exit(0)
