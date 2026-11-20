@@ -66,23 +66,31 @@ def test_a_fenced_reply_with_reasoning_reads_in_a_chain() -> None:
 
 def test_an_unreadable_reply_is_asked_for_again_with_the_error() -> None:
     requests: list[dict[str, Any]] = []
-    model = _model([("I think it is fine.", "length"), '{"ok": true, "reason": "fine"}'], requests)
+    model = _model(["I think it is fine.", '{"ok": true, "reason": "fine"}'], requests)
     result = asyncio.run(model.with_structured_output(Verdict).ainvoke("judge"))
     assert result == Verdict(ok=True, reason="fine")
     retry = requests[1]["messages"]
     assert retry[-2] == {"role": "assistant", "content": "I think it is fine."}
     assert "no JSON found" in retry[-1]["content"]
-    assert "cut off at the token limit" in retry[-1]["content"]
 
 
-def test_a_reply_cut_off_at_max_tokens_keeps_what_is_complete() -> None:
+def test_a_reply_cut_off_at_max_tokens_is_never_read_but_asked_for_again() -> None:
     class Rows(BaseModel):
         rows: list[Verdict]
 
-    reply = '{"rows": [{"ok": true, "reason": "a"}, {"ok": false, "reas'
-    assert _model([(reply, "length")], []).with_structured_output(Rows).invoke("go") == Rows(
-        rows=[Verdict(ok=True, reason="a")]
-    )
+    requests: list[dict[str, Any]] = []
+    cut = '{"rows": [{"ok": true, "reason": "a"}]}'  # complete-looking, but the model was not done
+    model = _model([(cut, "length"), '{"rows": []}'], requests)
+    assert model.with_structured_output(Rows).invoke("go") == Rows(rows=[])
+    assert "cut off at max_tokens" in requests[1]["messages"][-1]["content"]
+    assert "brief" in requests[1]["messages"][-1]["content"]
+
+
+@pytest.mark.parametrize("use_async", [False, True])
+def test_a_reply_cut_off_every_time_raises(use_async: bool) -> None:
+    runnable = _model([('{"ok": tr', "length"), ('{"ok": tr', "length")], []).with_structured_output(Verdict)
+    with pytest.raises(JsonReplyError, match="cut off at max_tokens"):
+        asyncio.run(runnable.ainvoke("judge")) if use_async else runnable.invoke("judge")
 
 
 def test_no_retries_means_one_call() -> None:

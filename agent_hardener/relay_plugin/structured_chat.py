@@ -11,6 +11,8 @@ schema on, but only some models honour it, so a model swap turns a correct answe
 :class:`RobustChatOpenAI` sends the same schema as a plain dict, keeps the raw reply, and reads it
 with :func:`~.json_reply.parse_json_reply`. A reply nothing reads is asked for once more with the
 error and the schema spelled out, and an endpoint that rejects the schema is asked without it.
+A reply cut off at ``max_tokens`` is never read, since its complete part is still an incomplete
+answer: it is asked for again, then raised.
 Every other ``with_structured_output`` call (dict schemas, ``function_calling``, ``include_raw``)
 is ChatOpenAI's own.
 
@@ -29,7 +31,7 @@ from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from .json_reply import JsonReplyError, parse_json_reply, reply_parts, response_format
+from .json_reply import JsonReplyError, parse_json_reply, reply_text, response_format
 
 if TYPE_CHECKING:
     from langchain_core.language_models import LanguageModelInput
@@ -117,7 +119,7 @@ async def _aask(model: ChatOpenAI, schema: type[BaseModel], messages: list[BaseM
 
 
 def _cut_off(exc: openai.LengthFinishReasonError) -> AIMessage:
-    """The reply the SDK refused because it hit ``max_tokens``: its complete part may still be read."""
+    """The reply the SDK refused because it hit ``max_tokens``, kept so the retry can quote it."""
     message = exc.completion.choices[0].message
     reasoning = (message.model_extra or {}).get("reasoning_content")
     return AIMessage(
@@ -138,8 +140,14 @@ def _without_schema(
 
 
 def _read(message: Any, schema: type[T]) -> T:
-    texts, objects = reply_parts(message)
-    return parse_json_reply(texts, schema, objects=objects)
+    text = reply_text(message)
+    if _cut_off_at_max_tokens(message):
+        raise JsonReplyError(schema, "cut off at max_tokens", text)
+    return parse_json_reply(text, schema)
+
+
+def _cut_off_at_max_tokens(message: Any) -> bool:
+    return (getattr(message, "response_metadata", None) or {}).get("finish_reason") == "length"
 
 
 def _retry(
@@ -152,20 +160,13 @@ def _retry(
     retries_left: int,
 ) -> list[BaseMessage]:
     """The conversation for the next attempt, or raise ``exc`` when the attempts are spent."""
-    truncated = (getattr(message, "response_metadata", None) or {}).get("finish_reason") == "length"
     if retries_left <= 0:
-        logger.warning(
-            "%s gave no readable %s%s: %s",
-            model.model_name,
-            schema.__name__,
-            " (cut off at max_tokens)" if truncated else "",
-            exc,
-        )
+        logger.warning("%s gave no readable %s: %s", model.model_name, schema.__name__, exc)
         raise exc
     logger.info("%s gave no readable %s (%s); asking again", model.model_name, schema.__name__, exc.reason)
     feedback = f"Your reply could not be read as the required JSON: {exc.reason}."
-    if truncated:
-        feedback += " It was cut off at the token limit, so keep every field brief."
+    if _cut_off_at_max_tokens(message):
+        feedback += " Keep every field brief so the whole object fits."
     reply = message if isinstance(message, AIMessage) else AIMessage(content=str(getattr(message, "content", "")))
     return [*request, reply, HumanMessage(content=f"{feedback}\n\n{_instruction(schema)}")]
 
