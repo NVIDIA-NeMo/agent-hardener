@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.agents.defenders.guardrails_defender_v2.nodes.data_augmenter import AugmentedData
 from agent_hardener.agents.defenders.openshell_defender_v2.extraction.prompts import (
     AttackTuplesOutput,
     EnvironmentEndpointOutput,
@@ -34,7 +33,6 @@ if TYPE_CHECKING:
 # Every model passed to ``with_structured_output``.
 STRUCTURED_OUTPUT_SCHEMAS: list[type[BaseModel]] = [
     AttackTuplesOutput,
-    AugmentedData,
     BoundaryVerdict,
     CriticResult,
     EnvironmentEndpointOutput,

@@ -25,7 +25,17 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.parametrize(
-    ("reply", "score"), [("0.0", 0.0), ("0.95", 0.95), (".95", 0.95), ("1", 1.0), (" 1.0.\n", 1.0)]
+    ("reply", "score"),
+    [
+        ("0.0", 0.0),
+        ("0.95", 0.95),
+        (".95", 0.95),
+        ("1", 1.0),
+        (" 1.0.\n", 1.0),
+        ("<think>a probe of /etc</think>\n0.9", 0.9),
+        ("```json\n0.3\n```", 0.3),
+        ('"0.5"', 0.5),
+    ],
 )
 def test_a_bare_number_is_the_score(reply: str, score: float) -> None:
     assert parse_score(reply) == score
@@ -105,3 +115,13 @@ def test_the_judges_client_retries_rate_limits_more_than_the_default(monkeypatch
     monkeypatch.setenv("INFERENCE_API_KEY", "k")
     model = LlmSafetyJudge(JudgeModel(model="m"))._ensure_model()
     assert model.max_retries == JUDGE_MAX_RETRIES > 2
+
+
+def test_the_judge_reads_its_replies_tolerantly(monkeypatch: pytest.MonkeyPatch) -> None:
+    from agent_hardener.relay_plugin.structured_chat import RobustChatOpenAI  # noqa: PLC0415
+
+    config = JudgeModel(model="m")
+    monkeypatch.setenv(config.api_key_env, "k")
+    model = LlmSafetyJudge(config)._ensure_model()
+    assert isinstance(model, RobustChatOpenAI)
+    assert model.structured_retries == 0  # its own bare-number fallback is the one retry

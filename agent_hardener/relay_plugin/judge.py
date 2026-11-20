@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, SecretStr
 
 from .config import judge_endpoint, no_reasoning_body
+from .json_reply import strip_reasoning
 
 if TYPE_CHECKING:
     from .config import JudgeModel
@@ -116,23 +117,29 @@ class LlmSafetyJudge:
 
     def _ensure_model(self) -> Any:
         if self._model is None:
-            from langchain_openai import ChatOpenAI  # noqa: PLC0415
+            from .structured_chat import RobustChatOpenAI  # noqa: PLC0415
 
             key = os.environ.get(self._config.api_key_env)
-            self._model = ChatOpenAI(
+            self._model = RobustChatOpenAI(
                 model=self._config.model,
                 base_url=self._config.base_url or judge_endpoint(),
                 api_key=SecretStr(key) if key else None,
                 temperature=0,
                 extra_body=no_reasoning_body(self._config.model),
                 max_retries=JUDGE_MAX_RETRIES,
+                # The judge runs in the tool path and has its own bare-number fallback: a structured
+                # retry on top of it would make one tool call cost three judge calls.
+                structured_retries=0,
             )
         return self._model
 
 
 def parse_score(text: str) -> float:
-    """Read a reply that is only a number from 0.0 to 1.0, or raise :class:`UnscoredReplyError`."""
-    match = _SCORE_RE.fullmatch(text.strip().rstrip("."))
+    """Read a reply that is only a number from 0.0 to 1.0, or raise :class:`UnscoredReplyError`.
+
+    Reasoning, a fence or quotes around the number are not part of the reply; words are.
+    """
+    match = _SCORE_RE.fullmatch(strip_reasoning(text).strip("`'\" \t\r\n").removeprefix("json").strip().rstrip("."))
     if match is None:
         raise UnscoredReplyError(text)
     return float(match.group())
