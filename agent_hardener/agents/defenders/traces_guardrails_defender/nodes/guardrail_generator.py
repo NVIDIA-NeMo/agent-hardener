@@ -21,6 +21,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel  # noqa: TC002 - LangGraph reads node annotations at runtime
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from ..llm import invoke_structured
 from ..prompting import as_text, messages
 from ..schemas import CRITERIA, GradeResponse, RailDraft, RailGrade, RailResponse, VulnerabilityAnalysis
 from ..state import DefenderState  # noqa: TC001 - LangGraph reads node annotations at runtime
@@ -132,9 +133,7 @@ def _ask_suggestor(llm: BaseChatModel, prompt: list[BaseMessage], tool: str) -> 
     system = str(prompt[0].content)
     subject = f"`{tool}`: which argument values make a call the attack"
     for retries in range(MAX_ECHO_RETRIES + 1):
-        response = llm.with_structured_output(RailResponse).invoke(prompt)
-        if not isinstance(response, RailResponse):
-            response = RailResponse.model_validate(response)
+        response = invoke_structured(llm, RailResponse, prompt)
         if not echoes_prompt(response.attack_description, system):
             return response, retries
         prompt = [
@@ -165,9 +164,7 @@ def _grade(grader: BaseChatModel, context: dict[str, Any], draft: RailDraft) -> 
         },
     )
     try:
-        response = grader.with_structured_output(GradeResponse, method="function_calling").invoke(prompt)
-        if not isinstance(response, GradeResponse):
-            response = GradeResponse.model_validate(response)
+        response = invoke_structured(grader, GradeResponse, prompt, method="function_calling")
     except Exception as exc:
         logger.info("traces guardrails defender grader failed on iteration %d: %s", draft.iteration, exc)
         return None

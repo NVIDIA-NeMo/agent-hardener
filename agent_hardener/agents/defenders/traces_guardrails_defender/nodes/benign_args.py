@@ -21,6 +21,7 @@ from langchain_core.language_models import BaseChatModel  # noqa: TC002 - LangGr
 
 from agent_hardener.models import DefenderInput  # noqa: TC001 - pydantic model used at runtime below
 
+from ..llm import invoke_structured
 from ..prompting import messages
 from ..schemas import BenignArgsResponse, BenignToolCall
 from ..state import DefenderState  # noqa: TC001 - LangGraph reads node annotations at runtime
@@ -83,12 +84,10 @@ def _synthesize(llm: BaseChatModel, tool_name: str, attack_args: Any, requests: 
     shape = {name: type(value).__name__ for name, value in attack_args.items()} if isinstance(attack_args, dict) else {}
     prompt = messages("benign_args", {"tool_name": tool_name, "arg_shape": json.dumps(shape), "requests": requests})
     try:
-        response = llm.with_structured_output(BenignArgsResponse).invoke(prompt)
+        response = invoke_structured(llm, BenignArgsResponse, prompt)
     except Exception:
         logger.info("traces guardrails defender could not write benign calls for %s", tool_name, exc_info=True)
         return []
-    if not isinstance(response, BenignArgsResponse):
-        response = BenignArgsResponse.model_validate(response)
     calls = []
     for call in response.calls:
         args = _parse(call.args_json)
