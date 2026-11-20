@@ -659,6 +659,17 @@ def test_teardown_saves_victim_logs_before_deleting_sandbox(tmp_path: Path) -> N
     assert saved.read_text(encoding="utf-8") == "=== app log ===\nTraceback: boom"
 
 
+def test_teardown_points_at_the_saved_victim_log(tmp_path: Path) -> None:
+    mission = _teardown_mission(tmp_path, _ok("=== app log ===\nTraceback: boom"), [])
+    announced: list[tuple[str, str]] = []
+    mission._announce = lambda line, *, level="info", **_: announced.append((line, level))
+
+    mission._teardown()
+
+    saved = tmp_path / "run-logs" / "test-run" / "victim-diagnostics.log"
+    assert (f"victim log: {saved}", "hint") in announced
+
+
 def test_teardown_still_deletes_sandbox_when_diagnostics_fail(tmp_path: Path) -> None:
     calls: list[str] = []
     mission = _teardown_mission(tmp_path, _ok(), calls)
