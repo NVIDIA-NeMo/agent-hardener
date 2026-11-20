@@ -19,13 +19,12 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from langchain_core.callbacks import UsageMetadataCallbackHandler
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 
 from agent_hardener.events import EventType
 from agent_hardener.loggers import emit_event
 
-from .graph import build_synth_graph, quiet_warnings
+from .graph import build_synth_graph, quiet_warnings, synth_checkpointer
 from .state import SynthState
 from .subgraphs import profile_writer
 
@@ -52,7 +51,7 @@ async def drive_synth(
     *on_node* (optional) is invoked with each node's name and its state update as it completes, for progress
     reporting.
     """
-    graph = build_synth_graph(checkpointer=MemorySaver())
+    graph = build_synth_graph(checkpointer=synth_checkpointer())
     usage = UsageMetadataCallbackHandler()
     config: RunnableConfig = {
         "configurable": {"thread_id": thread_id},

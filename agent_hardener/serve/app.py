@@ -23,7 +23,6 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
@@ -31,7 +30,7 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 from agent_hardener.agents.validators.smart_benign.driver import advance
-from agent_hardener.agents.validators.smart_benign.graph import build_synth_graph
+from agent_hardener.agents.validators.smart_benign.graph import build_synth_graph, synth_checkpointer
 from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
 from agent_hardener.agents.validators.smart_benign.progress import PhaseTracker
 from agent_hardener.agents.validators.smart_benign.state import SynthState
@@ -95,7 +94,7 @@ def _deserialize_suite(rows: list[dict[str, Any]]) -> list[GeneratedRequest]:
 def create_app() -> FastAPI:
     """Build the synth service. Holds one checkpointed graph + a thread_id -> session map for the process."""
     app = FastAPI(title="Agent Hardener Synth Service")
-    graph = build_synth_graph(checkpointer=MemorySaver())
+    graph = build_synth_graph(checkpointer=synth_checkpointer())
     sessions: dict[str, _Session] = {}
     # The NeMo plugin points this at the run Studio is watching, so each finished synth step shows up in its
     # recon checklist. Unset (a bare `agent-hardener serve`) → events go nowhere.
