@@ -6,8 +6,6 @@ name: System test
 on:
   push:
     branches: [main]
-  # The merge gate: branch protection requires "System test status". No path filter, or a PR that
-  # touches none of the paths never reports the check and can't merge.
   pull_request:
     branches: [main]
   schedule:
