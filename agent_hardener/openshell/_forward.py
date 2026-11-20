@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -19,6 +20,7 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from agent_hardener.errors import VictimPortInUseError
 from agent_hardener.openshell.command import _command_label
 from agent_hardener.openshell.config import OpenShellCommandResult, SubprocessCommandRunner
 from agent_hardener.openshell.support import _poll_until, combine_results, safe_path_token
@@ -28,6 +30,27 @@ if TYPE_CHECKING:
     from agent_hardener.openshell.config import CommandRunner, OpenShellConfig
 
 logger = logging.getLogger("agent_hardener.session")
+
+
+#: How OpenShell says a forward could not take its host port: another process holds it, or another
+#: sandbox's forward does.
+_PORT_TAKEN = re.compile(r"Port (?P<port>\d+) is already (?:in use by another process|forwarded to sandbox '[^']+')")
+
+
+def port_in_use_error(output: str) -> VictimPortInUseError | None:
+    """The classified error for a forward that failed because its host port was taken; None for any other failure."""
+    match = _PORT_TAKEN.search(output)
+    if match is None:
+        return None
+    port = match["port"]
+    return VictimPortInUseError(
+        f"{match[0]}, so the victim cannot be reached on it",
+        remediation=(
+            f"Free port {port} (find the process with `lsof -i :{port} -sTCP:LISTEN`; for another run's forward, "
+            f"`openshell forward list` names the sandbox to `openshell forward stop {port} <sandbox>`), "
+            "or give this agent another agent.port."
+        ),
+    )
 
 
 #: Where Linux exposes each process's command line. A module constant so tests can point it elsewhere.
@@ -119,6 +142,21 @@ class ForwardMixin:
             return combine_results([result, self.wait_for_forward_active()])
         return result
 
+    def ensure_forward(self) -> OpenShellCommandResult:
+        """Make sure the configured forward is this sandbox's, starting it when it is not listed.
+
+        A reused sandbox skips ``up``, so without this nothing checks who serves the victim's port: when
+        another run's forward holds it, the probes reach that run's victim and blame this one.
+        """
+        if not self.config.forward:
+            return OpenShellCommandResult(ok=True, command=[], output="")
+        forward_list = self._exec.run(["forward", "list", "--gateway", self.config.gateway])
+        if forward_list.ok and self._forward_is_active(forward_list.output):
+            return forward_list
+        started = self.start_forward()
+        # A failed listing is not fatal: starting the forward is what decides.
+        return combine_results([forward_list, started], ok=started.ok)
+
     def wait_for_forward_active(self) -> OpenShellCommandResult:
         """Wait until the configured forward is listed as active."""
         if not self.config.forward:
@@ -207,14 +245,22 @@ class ForwardMixin:
         return "forward start" in args and self.config.sandbox in args.split()
 
     def _forward_is_active(self, output: str) -> bool:
+        """Whether one line of ``openshell forward list`` shows this sandbox forwarding the configured port.
+
+        Per line: across the whole listing, this sandbox's forward of one port and another sandbox's forward
+        of the configured port would read as this sandbox holding it.
+        """
         if not self.config.forward:
             return False
-        if self.config.forward in output and self.config.sandbox in output:
-            return True
         bind, _, port = self.config.forward.rpartition(":")
-        if not bind or not port:
-            return False
-        return self.config.sandbox in output and bind in output and port in output
+        for line in output.splitlines():
+            if self.config.sandbox not in line:
+                continue
+            if self.config.forward in line:
+                return True
+            if bind and port and bind in line and port in line:
+                return True
+        return False
 
     def _start_managed_forward(self, args: list[str]) -> OpenShellCommandResult:
         command = [self.config.openshell_bin, *args]

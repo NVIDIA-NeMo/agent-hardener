@@ -51,6 +51,16 @@ class SandboxProvisioningError(AgentHardenerError):
     default_remediation = "Check the Docker daemon and the OpenShell gateway on the host, then retry."
 
 
+class VictimPortInUseError(SandboxProvisioningError):
+    """The victim's host port is held by another process or another sandbox's forward.
+
+    Fail here rather than probe the port: whatever holds it would answer for the victim, and its errors
+    would be reported as this victim's.
+    """
+
+    default_remediation = "Free the victim's host port, or give this agent another agent.port."
+
+
 class VictimBuildError(AgentHardenerError):
     """The victim image could not be staged or built (missing project dir or Dockerfile)."""
 

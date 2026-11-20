@@ -20,7 +20,9 @@ import yaml  # type: ignore[import-untyped]
 
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
-from agent_hardener.display.console import warn
+from agent_hardener.display.console import failure_excerpt, warn
+from agent_hardener.errors import SandboxProvisioningError
+from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.egress import (
     CodeEgressSource,
     DockerfileEnvEgressSource,
@@ -364,10 +366,12 @@ def managed_victim_sandbox(
     )
     prepared = prepare_relay_victim(openshell)
     lifecycle = OpenShellLifecycle(prepared)
-    if not reused:
-        result = lifecycle.up()
-        if not result.ok:
-            raise RuntimeError(result.output)
+    # A reused sandbox skips ``up``, which is what starts its forward: check that the port is still this
+    # sandbox's, or the Relay probe reaches whatever else holds it and reports that as this victim's failure.
+    result = lifecycle.ensure_forward() if reused else lifecycle.up()
+    if not result.ok:
+        what = "the reused sandbox's port forward failed" if reused else "the victim sandbox failed to start"
+        raise port_in_use_error(result.output) or SandboxProvisioningError(f"{what}:\n{failure_excerpt(result.output)}")
     try:
         drift = lifecycle.image_context_drift()
         if drift:
