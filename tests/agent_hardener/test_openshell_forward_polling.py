@@ -249,17 +249,54 @@ def test_stop_never_signals_a_pid_that_is_no_longer_our_forward(
     assert not _pid_file(lifecycle).exists()
 
 
-def test_process_command_line_reads_a_live_process_and_none_for_a_missing_one(
-    monkeypatch: pytest.MonkeyPatch,
+def test_stop_still_signals_a_forward_it_cannot_verify_and_says_so(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    assert "python" in (_forward.process_command_line(os.getpid()) or "").lower()
+    """Helix's task image has neither ``ps`` nor a usable answer: can't-tell must not mean "already gone"."""
+    sent: list[int] = []
+    monkeypatch.setattr(_forward.os, "killpg", lambda pid, _sig: sent.append(pid))
+    monkeypatch.setattr(_forward, "process_command_line", lambda _pid: _forward.UNVERIFIABLE)
+    lifecycle = _lifecycle(tmp_path)
+    _pid_file(lifecycle).write_text("321\n")
+
+    result = lifecycle.stop_managed_forward()
+
+    assert sent == [321]
+    assert (result.ok, result.output) == (True, "stopped managed forward process 321")
+    assert "cannot verify that pid 321" in caplog.text
+
+
+def test_process_command_line_reads_proc_cmdline(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_forward, "PROC_ROOT", tmp_path)
+    (tmp_path / "10").mkdir()
+    (tmp_path / "10" / "cmdline").write_bytes(b"openshell\0forward\0start\0" + _FORWARD.encode() + b"\0sb\0")
+    (tmp_path / "11").mkdir()
+    (tmp_path / "11" / "cmdline").write_bytes(b"")  # zombie or kernel thread: present, nothing to check
+    (tmp_path / "12" / "cmdline").mkdir(parents=True)  # unreadable
+
+    assert _forward.process_command_line(10) == f"openshell forward start {_FORWARD} sb"
+    assert _forward.process_command_line(13) is None
+    assert _forward.process_command_line(11) is _forward.UNVERIFIABLE
+    assert _forward.process_command_line(12) is _forward.UNVERIFIABLE
+    assert repr(_forward.UNVERIFIABLE) == "UNVERIFIABLE"
+
+
+def test_process_command_line_falls_back_to_ps_without_proc(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_forward, "PROC_ROOT", tmp_path / "no-proc")
+
+    assert "python" in str(_forward.process_command_line(os.getpid())).lower()
     assert _forward.process_command_line(2**22 + 1) is None
 
     def no_ps(*_args: Any, **_kwargs: Any) -> None:
         raise FileNotFoundError("ps")
 
     monkeypatch.setattr(_forward.subprocess, "run", no_ps)
-    assert _forward.process_command_line(os.getpid()) is None
+    assert _forward.process_command_line(os.getpid()) is _forward.UNVERIFIABLE
+
+
+def test_process_command_line_reads_this_machine(tmp_path: Path) -> None:
+    assert "python" in str(_forward.process_command_line(os.getpid())).lower()
+    assert _forward.process_command_line(2**22 + 1) is None
 
 
 @pytest.mark.usefixtures("forward_alive")
