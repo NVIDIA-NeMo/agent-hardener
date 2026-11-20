@@ -119,7 +119,8 @@ Every classified failure has a category (`agent_hardener/errors.py`); match the 
 | `sandbox` | Docker down, gateway not connected | `openshell-ops` |
 | `victim_unavailable` at build | wrong `project_dir`/Dockerfile, BYO image missing `--binary` | `connect-victim-agent` |
 | `victim_unavailable` mid-run | agent crashed, often after a malformed guardrail or policy was deployed; read the agent log | `openshell-ops`, then the defender whose output was deployed last |
-| `victim_not_instrumented` | agent lacks Relay middleware or never calls `nemo_relay.plugin.initialize()` | `nemo-relay` |
+| `victim_not_instrumented` | agent lacks Relay middleware or never starts Relay (`nemo_relay.plugin.activate()`) | `nemo-relay` |
+| Few or no guardrails written, attack traces have no prompt | a hand-built LangGraph model node bypasses Relay (no `nemo_relay.llm.execute`) | `nemo-relay` |
 | `attacker_failed` | garak timed out on a heavy agent | raise `garak.timeout_s`, lower `garak.max_attempts_per_tool`; `add-attacker` |
 | `benign_suite_failed` | no usable suite | run `agent-hardener synth-benign`, pass `--benign-suite` |
 | Run "passes" but nothing was blocked | policy never reached the sandbox, or guardrails never loaded | `openshell-ops` (check the sandbox was updated), `nemo-relay` |

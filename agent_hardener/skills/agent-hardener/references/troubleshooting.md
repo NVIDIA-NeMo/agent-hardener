@@ -15,8 +15,9 @@ its classified error there.
 | Model check fails before the build | Wrong `AGENT_HARDENER_MODEL`, URL, or key | Pick a model from the list the error prints. |
 | `<KEY> is set in the environment and differs from .env` | An exported value shadows the env file | `unset <KEY>` to use the file, or change the export. |
 | Attack model unchanged after setting `GARAK_*` | `garak-scan.yaml` exists and wins | Edit the model fields in `garak-scan.yaml`. |
-| "victim not instrumented" | Relay never started in the agent | Call `nemo_relay.plugin.initialize(...)` at startup — see relay-connection.md. |
-| Run fails saying Relay saw no tool calls | Tool calls bypass Relay | Route tools through Relay (`awrap_tool_call` / middleware). |
+| "victim not instrumented" | Relay never started in the agent | Start it with `nemo_relay.plugin.activate(PluginConfig())` at startup, held open — see relay-connection.md. |
+| Run fails saying Relay saw no tool calls | Tool calls bypass Relay | Route tools through Relay (middleware, or `create_tool_node` for a hand-built LangGraph graph). |
+| No guardrails written, or the agent keeps going after a refusal (hand-built LangGraph) | Model calls bypass Relay | Send the model node through `nemo_relay.llm.execute` — see relay-connection.md. |
 | Agent never starts in the sandbox | `start_command` relies on `PATH`, or the image lacks the `sandbox` user | Use full paths; follow the image contract. |
 | `mkdir: cannot create directory '/etc/nemo-relay'` | Directory not created in the image | `mkdir -p /etc/nemo-relay` and `chown` it to `sandbox` in the Dockerfile. |
 | Tool calls fail with connection errors | Host not allowed by the sandbox | Add it to `egress`, or a `backends` entry for local services. |

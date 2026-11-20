@@ -16,7 +16,7 @@ started and answering. Making its tool calls visible to Relay is the `nemo-relay
 - **In scope:** the `agent-hardener.yaml` manifest, `agent-hardener init` / `agent-hardener inspect`,
   the image requirements, start command, port, secrets, egress, host backends, `harness`, and
   bringing the sandbox up with `agent-hardener up`.
-- **Out of scope:** Relay middleware and `nemo_relay.plugin.initialize()` in the agent's code
+- **Out of scope:** Relay middleware and starting Relay (`nemo_relay.plugin.activate()`) in the agent's code
   (`nemo-relay`); gateway, provider and policy operations (`openshell-ops`); choosing models
   (`models-and-providers`); a run that starts but fails later (`run-and-debug`).
 

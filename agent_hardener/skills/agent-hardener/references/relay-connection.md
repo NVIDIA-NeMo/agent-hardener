@@ -3,80 +3,100 @@
 
 # Connecting an agent to NeMo Relay
 
-Agent Hardener needs three things from the agent, and checks the first two:
+Scope: exactly what Agent Hardener needs and verifies. For other frameworks and attachment modes, use NeMo
+Relay's own documentation; do not improvise wiring. NeMo Helix's `relay-attachment.md` reference teaches the
+same obligations, so keep the two in step.
 
-1. **Relay is started.** Call `nemo_relay.plugin.initialize(PluginConfig())` once at startup and keep the
-   returned handle alive for the process's life. Relay layers the guardrails Agent Hardener delivers
-   (`/etc/nemo-relay/plugins.toml`) over the empty base config. Without this call, delivered guardrails never
-   activate. The run's first probe fails with "victim not instrumented" if Relay emits nothing.
-2. **Every tool call passes through Relay.** Proven later, from real attack traffic. An agent whose LLM calls
-   are traced but whose tool calls bypass Relay cannot be guarded, and the run fails instead of reporting
-   weak defenders.
-3. **Every model call passes through Relay** (hand-built LangGraph graphs only; LangChain's `create_agent`
-   middleware already does it). Without it the trace of each attack has no prompt, so the traces guardrails
-   defender cannot match the attack to its trace and writes no guardrail from it. Nothing fails loudly: the
-   run just hardens less.
+## The obligations — all of them, not one
 
-Install `nemo-relay` with the extra for your framework (`nemo-relay[langgraph]` or `nemo-relay[langchain]`),
-at the version Agent Hardener's release notes name.
+1. **Start Relay and let it discover its config**, once, at startup:
 
-## LangGraph (hand-built graph)
+   ```python
+   import nemo_relay
+   from nemo_relay.plugin import PluginConfig
 
-```python
-import nemo_relay
-from nemo_relay.integrations.langgraph import NemoRelayCallbackHandler, NemoRelayMiddleware
-from nemo_relay.plugin import PluginConfig
-from langgraph.prebuilt import ToolNode
+   async with nemo_relay.plugin.activate(PluginConfig()):
+       ...  # serve requests inside the block (e.g. a FastAPI lifespan)
+   ```
 
-relay = NemoRelayMiddleware()
-graph.add_node("tools", ToolNode(TOOLS, awrap_tool_call=relay.awrap_tool_call))  # the interception line
+   The empty `PluginConfig()` means "discover": Relay layers `/etc/nemo-relay/plugins.toml` over it, and that
+   uploaded file is how Agent Hardener's guardrails *and* its trace sink reach the agent. Skip this call and
+   every guardrail is inert. Keep the block open for the process's life: a bare
+   `await nemo_relay.plugin.initialize(...)` whose result is discarded lets the plugin host shut down.
 
-# at server startup, for the life of the process:
-async with await nemo_relay.plugin.initialize(PluginConfig()):
-    ...
+2. **Put Relay in the tool path.** Per framework:
 
-# per request:
-with nemo_relay.scope.scope("my-agent", nemo_relay.ScopeType.Agent):
-    await graph.ainvoke(state, config={"callbacks": [NemoRelayCallbackHandler()]})
-```
+   | Framework | The interception line |
+   | --- | --- |
+   | LangChain `create_agent` | `create_agent(model=…, tools=…, middleware=[NemoRelayMiddleware()])` — `from nemo_relay.integrations.langchain import NemoRelayMiddleware` |
+   | Hand-built LangGraph graph | `graph.add_node("tools", create_tool_node(TOOLS))` — `from nemo_relay.integrations.langgraph import create_tool_node`; or, to keep your own `ToolNode`, `ToolNode(TOOLS, awrap_tool_call=NemoRelayMiddleware().awrap_tool_call)` |
+   | DeepAgents | `create_deep_agent(**add_nemo_relay_integration(kwargs))` — `from nemo_relay.integrations.deepagents import add_nemo_relay_integration` |
+   | Hermes | no code: set `harness: hermes` in the manifest and Agent Hardener adds the Relay wiring when it stages the image. Do not enable Hermes' old `observability/nemo_relay` plugin; it was removed and fails the build. |
 
-The model node sends each call through `nemo_relay.llm.execute` rather than calling the model directly:
+   Install the matching extra: `nemo-relay[langgraph]` or `nemo-relay[langchain]`, at the version Agent
+   Hardener's release notes name. `create_tool_node` takes the usual `ToolNode` options. A refused tool call
+   comes back as a tool message saying it was refused, so the agent answers instead of crashing.
 
-```python
-import nemo_relay
-from langchain_core.messages import SystemMessage, messages_from_dict, messages_to_dict
-from nemo_relay.integrations.langchain._serialization import LANGCHAIN_MODEL_RESPONSE_KEY, LangChainCodec
+3. **Put Relay in the model path** (hand-built LangGraph graph only; the `create_agent` middleware and the
+   other rows already do it). Send each model call through `nemo_relay.llm.execute` instead of calling the
+   model directly:
 
-async def model(state: MessagesState) -> dict[str, list]:
-    messages = [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
-    codec = LangChainCodec()
-    request = nemo_relay.LLMRequest({}, {"messages": messages_to_dict(messages), "model": MODEL})
+   ```python
+   import nemo_relay
+   from langchain_core.messages import SystemMessage, messages_from_dict, messages_to_dict
+   from nemo_relay.integrations.langchain._serialization import LANGCHAIN_MODEL_RESPONSE_KEY, LangChainCodec
 
-    async def call(request: nemo_relay.LLMRequest) -> Any:
-        reply = await llm.ainvoke(messages_from_dict(request.content["messages"]))
-        return {LANGCHAIN_MODEL_RESPONSE_KEY: {"messages": messages_to_dict([reply])}}
+   async def model(state: MessagesState) -> dict[str, list]:
+       messages = [SystemMessage(content=SYSTEM_PROMPT), *state["messages"]]
+       codec = LangChainCodec()
+       request = nemo_relay.LLMRequest({}, {"messages": messages_to_dict(messages), "model": MODEL})
 
-    result = await nemo_relay.llm.execute(MODEL, request, call, model_name=MODEL, codec=codec, response_codec=codec)
-    return {"messages": messages_from_dict(result[LANGCHAIN_MODEL_RESPONSE_KEY]["messages"])}
-```
+       async def call(request: nemo_relay.LLMRequest) -> Any:
+           reply = await llm.ainvoke(messages_from_dict(request.content["messages"]))
+           return {LANGCHAIN_MODEL_RESPONSE_KEY: {"messages": messages_to_dict([reply])}}
 
-A bare `await llm.ainvoke(...)` in the model node records no model call, and `NemoRelayCallbackHandler` does
-not record it either.
+       result = await nemo_relay.llm.execute(MODEL, request, call, model_name=MODEL, codec=codec, response_codec=codec)
+       return {"messages": messages_from_dict(result[LANGCHAIN_MODEL_RESPONSE_KEY]["messages"])}
+   ```
 
-A bare `ToolNode(TOOLS)` runs tools outside Relay. A refused tool call surfaces from `awrap_tool_call` as an
-exception; turn it into a tool message (`handle_tool_errors=`) so the agent answers rather than crashes.
+   A bare `await llm.ainvoke(...)` in the model node costs two things. The trace of each attack has no prompt
+   and no model steps, so the traces guardrails defender cannot match the attack to its trace and writes no
+   guardrail from it. And after a guardrail refuses a tool, Agent Hardener cannot end the turn: it does that
+   by answering the agent's next model call itself, which only works when that call goes through Relay.
+   Nothing fails loudly; the run just hardens less.
 
-## LangChain (`create_agent`)
+4. *(Attribution, recommended)* open one agent scope per request and pass Relay's callback handler, so a
+   turn's events nest under one root:
 
-LangChain agents take Relay as agent middleware:
+   ```python
+   with nemo_relay.scope.scope("my-agent", nemo_relay.ScopeType.Agent):
+       await graph.ainvoke(state, config={"callbacks": [NemoRelayCallbackHandler()]})
+   ```
 
-```python
-from nemo_relay.integrations.langchain import NemoRelayMiddleware
+## The trap: instrumented-looking but unguarded
 
-agent = create_agent(model, tools, middleware=[NemoRelayMiddleware()])
-```
+On a hand-built LangGraph graph, `NemoRelayCallbackHandler()` alone gives **visibility only**: graph scopes
+appear in the trace while tool calls run outside Relay, so no guardrail is ever consulted. The agent looks
+instrumented and every attack scores as unblocked while the defenses were never in the fight. The
+interception is the tools node, not the callback.
 
-Start Relay with `nemo_relay.plugin.initialize(...)` at startup exactly as above.
+The half-way version: the tools node is wired but the model node calls the model directly. Tool calls are
+guarded, but the callback handler records no model call either, so attacks cannot be matched to their traces
+and a refused attack keeps going. Obligation 3 closes it.
+
+## How Agent Hardener verifies the promise
+
+Two checks, at two moments; each failure names its cause:
+
+| Error text contains | It means | Fix |
+| --- | --- | --- |
+| "wrote no Relay telemetry … the file was never created" | Relay never started | obligation 1: `plugin.activate(PluginConfig())` at startup, held open |
+| "still empty after 30s; Relay is not attached, or its ATOF sink is disabled" | Relay started but emits nothing | the uploaded `plugins.toml` was not discovered: check `/etc/nemo-relay/` exists and is writable in the image |
+| "emitted no new Relay events in 30s (N older records present)" | this request went untraced | the serving path bypasses the instrumented agent object |
+| "Relay recorded no tool call at all" (after round 1) | tool calls bypass Relay — the trap above | obligation 2 |
+
+Obligation 3 has no check. On a hand-built graph, confirm it yourself: after a run, the trace stream should
+hold `llm` events beside the `tool` ones.
 
 ## The image contract
 
@@ -94,6 +114,6 @@ Then set in the manifest:
 
 ```yaml
 agent:
-  harness: langgraph               # or langchain
+  harness: langgraph               # or langchain, deepagents, hermes
   relay_integration_confirmed: true
 ```

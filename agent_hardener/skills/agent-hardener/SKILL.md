@@ -58,8 +58,10 @@ new version (`--target agents` installs it for Codex and Cursor too).
 ## Step 2: Make sure the agent is Relay-connected
 
 Agent Hardener reads tool calls from Relay's trace stream and delivers guardrails as Relay config. The agent
-must (a) call `nemo_relay.plugin.initialize(...)` at startup and (b) route every tool call through Relay.
-A run fails fast on an uninstrumented agent rather than report fake results. The wiring per framework is in
+must (a) start Relay with `nemo_relay.plugin.activate(PluginConfig())` at startup, held open, (b) route
+every tool call through Relay, and (c) on a hand-built LangGraph graph, route every model call through
+`nemo_relay.llm.execute` too. A run fails fast when (a) or (b) is missing rather than report fake results;
+nothing catches a missing (c), which quietly weakens the hardening. The wiring per framework is in
 [references/relay-connection.md](references/relay-connection.md); the image contract (a `sandbox` user,
 `iproute2`, writable `/etc/nemo-relay`) is there too.
 
