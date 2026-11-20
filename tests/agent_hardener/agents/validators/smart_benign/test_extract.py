@@ -69,7 +69,10 @@ def test_hypotheses_become_api_probe_tool_specs(
     monkeypatch: pytest.MonkeyPatch, fake_model: Callable[..., Any]
 ) -> None:
     output = ProberOutput(
-        tools=[_hypothesis("web_search", 0.4, example_inputs=["cats"]), _hypothesis("calc", 0.1)],
+        tools=[
+            _hypothesis("web_search", 0.4, example_inputs=["cats"], known_values=["ORD-1001"]),
+            _hypothesis("calc", 0.1),
+        ],
         system_role="research bot",
         out_of_scope=["medical advice"],
     )
@@ -82,6 +85,7 @@ def test_hypotheses_become_api_probe_tool_specs(
         ("calc", "api_probe", 0.1),
     ]
     assert _tools(delta)[0].example_inputs == ["cats"]
+    assert [t.known_values for t in _tools(delta)] == [["ORD-1001"], []]
     assert delta["system_role"] == "research bot"
     assert delta["out_of_scope"] == ["medical advice"]
     assert delta["source_note"] == "api_prober probed 1/5; extracted 2 tool(s)"

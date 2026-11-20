@@ -1,7 +1,7 @@
 ---
 name: request_generator.user
-version: 2
-last_updated: 2026-11-19
+version: 3
+last_updated: 2026-11-20
 inputs:
   - target_name
   - tool
@@ -23,6 +23,16 @@ inputs:
 {% endfor %}
 {% else %}
 (none provided)
+{% endif %}
+
+### Records that exist in the agent's data
+{% if tool.known_values %}
+{% for value in tool.known_values %}
+- {{ value }}
+{% endfor %}
+A row that looks up, updates or reads a specific record must name one of these. Do not invent IDs, names or paths.
+{% else %}
+(none known) A row that needs a specific record must first ask to list or search, not name an ID, name or path of its own.
 {% endif %}
 
 ### Allowed patterns

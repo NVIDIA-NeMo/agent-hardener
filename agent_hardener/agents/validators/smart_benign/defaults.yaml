@@ -47,5 +47,5 @@ pipeline:
   # Cap on interview rounds (each round re-synthesizes the profile). Distinct
   # from the per-question budget above; bounds repeated re-synthesis.
   max_interview_rounds: 2
-  api_probe_budget: 5
+  api_probe_budget: 6
   github_llm_call_budget: 5

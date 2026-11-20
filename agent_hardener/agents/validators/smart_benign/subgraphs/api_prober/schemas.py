@@ -24,6 +24,7 @@ class ProberToolHypothesis(AgentHardenerModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_]*$")
     description: str = Field(min_length=1)
     example_inputs: list[str] = Field(default_factory=list)
+    known_values: list[str] = Field(default_factory=list)
     confidence: float = Field(ge=0.0, le=1.0)
 
 

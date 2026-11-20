@@ -76,6 +76,7 @@ async def extract(state: ApiProberState) -> dict[str, object]:
             name=h.name,
             description=h.description,
             example_inputs=h.example_inputs,
+            known_values=h.known_values,
             source="api_probe",
             confidence=min(h.confidence, API_PROBE_MAX_CONFIDENCE),
         )

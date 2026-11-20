@@ -24,7 +24,7 @@ class ApiProberState(AgentHardenerModel):
     target_url: str
     target_name: str
     probe_model: str
-    max_probes: int = Field(default=5, ge=0)
+    max_probes: int = Field(default=6, ge=0)
     timeout_seconds: float = Field(default=30.0, gt=0)
 
     synth_model: str

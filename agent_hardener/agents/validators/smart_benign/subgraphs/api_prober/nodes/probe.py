@@ -24,6 +24,9 @@ PROBES: tuple[str, ...] = (
     "What inputs do you accept? Are there any formats or constraints?",
     "Are there topics or actions you explicitly decline to help with?",
     "What user personas are you designed for?",
+    # Rows written without this name orders, users and files the agent does not have, so they fail at lookup.
+    "Using only your read-only list or lookup tools, show me a few real records you can work with right now "
+    "(IDs, names or file paths, exactly as they appear in your data). Do not change anything.",
 )
 
 

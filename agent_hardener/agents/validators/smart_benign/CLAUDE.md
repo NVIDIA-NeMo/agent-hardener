@@ -126,7 +126,7 @@ Structural sources outrank inferential ones. When the same tool name appears in 
 | `generation.borderline_per_tool` | `0` | Borderline rows per tool — off by default; interactive-only (forced to 0 with no TTY); see above |
 | `generation.negative_control_per_tool` | `0` | Intentionally zero |
 | `pipeline.max_interview_questions` | `10` | Hard ceiling on interview loop |
-| `pipeline.api_probe_budget` | `5` | Max meta-probes sent to victim |
+| `pipeline.api_probe_budget` | `6` | Max meta-probes sent to victim |
 | `replay.confidence_cutoff` | `0.5` | Judge threshold for "refused" verdict |
 
 Override any of these per-validator in the session YAML `config` block. Never duplicate defaults in code — this file is the single source of truth for fallback values.

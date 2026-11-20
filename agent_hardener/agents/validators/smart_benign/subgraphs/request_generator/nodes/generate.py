@@ -85,6 +85,7 @@ def _prompt_vars(tool: ToolSpec, state: RequestGeneratorState) -> dict[str, Any]
             "name": tool.name,
             "description": tool.description,
             "example_inputs": tool.example_inputs,
+            "known_values": tool.known_values,
             "allowed_patterns": tool.allowed_patterns,
             "blocked_patterns": tool.blocked_patterns,
             "boundary_answers": tool.boundary_answers,

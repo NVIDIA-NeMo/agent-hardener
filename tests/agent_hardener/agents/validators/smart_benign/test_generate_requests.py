@@ -201,3 +201,14 @@ def test_the_prompt_carries_the_tool_profile_and_counts(monkeypatch: pytest.Monk
     assert "up to **7**" in prompt
     assert "up to **4**" in prompt
     assert "up to **2**" in prompt
+
+
+def test_rows_are_told_to_use_known_records_or_to_list_first(monkeypatch: pytest.MonkeyPatch) -> None:
+    model = _FakeModel({"lookup_order": ToolGenerationOutput(), "search_catalog": ToolGenerationOutput()})
+    _patch(monkeypatch, model)
+
+    asyncio.run(gen.generate(_state(_tool("lookup_order", known_values=["ORD-1001"]), _tool("search_catalog"))))
+
+    assert "ORD-1001" in model.prompts["lookup_order"]
+    assert "Do not invent IDs" in model.prompts["lookup_order"]
+    assert "must first ask to list or search" in model.prompts["search_catalog"]

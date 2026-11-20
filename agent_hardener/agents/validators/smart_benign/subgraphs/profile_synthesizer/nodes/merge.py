@@ -9,6 +9,8 @@ import logging
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from agent_hardener.agents.validators.smart_benign.models import ToolSource, ToolSpec
 
     from ..state import ProfileSynthesizerState
@@ -41,8 +43,14 @@ async def merge(state: ProfileSynthesizerState) -> dict[str, object]:
     merged: list[ToolSpec] = []
     for candidates in by_name.values():
         winner = max(candidates, key=_priority_key)
-        unioned_examples = _union_examples(candidates)
-        merged.append(winner.model_copy(update={"example_inputs": unioned_examples}))
+        merged.append(
+            winner.model_copy(
+                update={
+                    "example_inputs": _union(c.example_inputs for c in candidates),
+                    "known_values": _union(c.known_values for c in candidates),
+                }
+            )
+        )
 
     logger.info(
         "profile_synthesizer.merge produced %d unique tool(s) from %d source(s)", len(merged), len(state.partials)
@@ -54,12 +62,5 @@ def _priority_key(tool: ToolSpec) -> int:
     return SOURCE_PRIORITY.get(tool.source, -1)
 
 
-def _union_examples(candidates: list[ToolSpec]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for candidate in candidates:
-        for example in candidate.example_inputs:
-            if example not in seen:
-                seen.add(example)
-                out.append(example)
-    return out
+def _union(lists: Iterable[list[str]]) -> list[str]:
+    return list(dict.fromkeys(value for values in lists for value in values))

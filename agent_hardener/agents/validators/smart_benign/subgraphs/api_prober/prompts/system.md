@@ -1,7 +1,7 @@
 ---
 name: api_prober.system
-version: 2
-last_updated: 2026-11-19
+version: 3
+last_updated: 2026-11-20
 model_constraints:
   min_context_tokens: 4096
   max_output_tokens: 2048
@@ -29,6 +29,10 @@ Return a `ProberOutput` JSON object with these fields:
   - `description`: one sentence describing what the tool does
   - `example_inputs`: 1-3 short example user inputs that would legitimately
     invoke this tool, if inferable; otherwise an empty list.
+  - `known_values`: identifiers this tool takes (order or ticket IDs, user
+    names, emails, file paths, table names) that the transcript shows exist in
+    the system's data, verbatim. Only values the system itself returned or
+    listed; never placeholders or values from the questions. Empty list if none.
   - `confidence`: float in [0, 0.5]. Use 0.5 only when the system explicitly
     named a capability. Use lower values when the capability is implied.
 - `out_of_scope`: a list of things the system explicitly said it cannot or will

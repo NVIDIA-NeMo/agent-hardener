@@ -98,3 +98,12 @@ def test_a_tool_listed_twice_by_one_source_still_merges_to_one() -> None:
     (tool,) = _merged({"nl": [_tool("bash", "nl", "a"), _tool("bash", "nl", "b")]})
 
     assert tool.example_inputs == ["a", "b"]
+
+
+def test_known_values_are_unioned_across_sources() -> None:
+    probe = _tool("lookup_order", "api_probe").model_copy(update={"known_values": ["1001", "1002"]})
+    nl = _tool("lookup_order", "nl").model_copy(update={"known_values": ["1002", "1003"]})
+
+    (tool,) = _merged({"api_probe": [probe], "nl": [nl]})
+
+    assert tool.known_values == ["1001", "1002", "1003"]
