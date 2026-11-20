@@ -16,12 +16,13 @@ Relay is wired the way a hand-built graph requires, in two places:
 - The tools node is ``ToolNode(TOOLS, awrap_tool_call=relay.awrap_tool_call)``. That wrapper is *the*
   interception point — without it tool calls run outside Relay, no guardrail can refuse them, and Agent
   Hardener's tool-path preflight fails the run.
-- The model node sends each LLM call through ``nemo_relay.llm.execute``. Without it the LLM call never
-  passes through Relay: an attack's trace carries no prompt, so the traces guardrails defender cannot
-  match the attack to its trace, and after a refusal the guardrail plugin cannot end the turn.
+- The model node sends each LLM call through ``nemo_relay.llm.execute``. Without it the LLM call
+  never reaches Relay: no LLM span is recorded, so the attack's trace has no prompt and no model
+  steps, and the traces guardrails defender cannot match the attack to it or write a rail from it.
+  After a refusal the guardrail plugin cannot end the turn either.
 
-The callback handler in ``server.py`` adds graph/scope telemetry on top, but it is observability only
-and cannot refuse anything.
+The callback handler in ``server.py`` adds graph/scope telemetry on top, but it is observability
+only: it records no LLM call and cannot refuse anything.
 
 Served over HTTP by ``server.py``; this module is just the graph and its tools.
 """

@@ -60,10 +60,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     ``PluginConfig()`` is the empty base config: Relay layers the *discovered* ``plugins.toml``
     (``/etc/nemo-relay/plugins.toml``) over it. Agent Hardener uploads each round's guardrails there
     before restarting the victim, and nothing activates them — nor the ATOF sink the run's preflight
-    insists on — without this call.
+    insists on — without this call. The activation owns the plugin host, so it stays open for the
+    app's whole lifetime.
     """
-    # activate() keeps the plugin host open for the block, i.e. the process's life; Relay tears the
-    # host down when the activation ends.
     async with nemo_relay.plugin.activate(PluginConfig()):
         yield
 
@@ -80,8 +79,9 @@ def create_app() -> FastAPI:
     @app.post("/v1/chat/completions")
     async def chat_completions(body: ChatRequest) -> dict[str, Any]:
         # One Relay agent scope per request, with the LangGraph callback handler on the invoke:
-        # the handler records the graph/LLM runs, and the tools node (see agent.create_tool_node)
-        # records the tool calls. Everything the request does hangs off this scope.
+        # the handler records the graph's runs, the model node (nemo_relay.llm.execute) records the
+        # LLM calls, and the tools node (awrap_tool_call) records the tool calls. Everything the
+        # request does hangs off this scope.
         with nemo_relay.scope.scope("langgraph-victim", nemo_relay.ScopeType.Agent):
             try:
                 result = await agent.ainvoke(
