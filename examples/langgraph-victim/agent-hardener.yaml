@@ -21,6 +21,14 @@ agent:
   # scopes the sandbox's egress rules.
   binaries: ["/usr/local/bin/python*"]
   port: 8000
+  # The agent's own model. agent.py reads INFERENCE_MODEL and INFERENCE_BASE_URL, and only this block
+  # reaches the sandbox: your shell's variables do not, and of --env-file only the names under `secrets`
+  # are delivered (as credentials). Left unset, the agent calls nvidia/nemotron-3.5-lightning-30b-a3b on
+  # https://integrate.api.nvidia.com/v1 with INFERENCE_API_KEY, so a key for any other endpoint fails every
+  # request with a 401.
+  # env:
+  #   INFERENCE_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b
+  #   INFERENCE_BASE_URL: https://integrate.api.nvidia.com/v1
   # A HOST path, not a container one: the victim always writes ATOF to the fixed sandbox path
   # (agent_hardener.relay_plugin.victim.SANDBOX_ARTIFACTS_DIR), and this is only where Agent Hardener lands
   # the copy it pulls out. Keep it relative — it resolves under the cwd. An absolute

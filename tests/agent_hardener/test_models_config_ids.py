@@ -133,6 +133,18 @@ def test_parse_config_accepts_absolute_storage_without_rewriting(tmp_path: Path)
     assert config.storage.root_dir == tmp_path
 
 
+def test_relative_storage_root_is_anchored_at_the_cwd_the_config_was_loaded_from(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    config = parse_config_data(
+        {"storage": {"root_dir": ".agent-hardener"}, "target": {"name": "target"}, "victim": {"name": "victim"}},
+        base_dir="examples",
+    )
+
+    assert config.storage.root_dir == tmp_path / "examples" / ".agent-hardener"
+
+
 def test_json_config_loading_and_validation_errors(tmp_path: Path) -> None:
     config_path = tmp_path / "config.json"
     config_path.write_text(

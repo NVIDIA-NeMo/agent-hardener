@@ -714,17 +714,21 @@ class Mission:
             self._run_log.debug("failed to write %s", filename, exc_info=True)
 
     def _save_victim_logs(self) -> None:
-        """Keep the victim's in-sandbox logs before the sandbox is deleted. Best-effort.
+        """Keep the victim's in-sandbox logs before the sandbox is deleted, and say where. Best-effort.
 
         A victim that starts healthy and then fails its requests leaves its traceback only there.
         """
         try:
             run_dir = RunLayout(self.ctx.session_config.storage.root_dir, self._run_id).run_dir
             output = self._lifecycle.collect_victim_diagnostics().output
-            if output:
-                (run_dir / "victim-diagnostics.log").write_text(output, encoding="utf-8")
+            if not output:
+                return
+            saved = run_dir / "victim-diagnostics.log"
+            saved.write_text(output, encoding="utf-8")
         except Exception:
             self._run_log.debug("failed to save victim logs", exc_info=True)
+            return
+        self._announce(f"victim log: {saved}", level="hint")
 
     def _teardown(self) -> None:
         """Tear the sandbox + backends down, unless --no-cleanup left them running.

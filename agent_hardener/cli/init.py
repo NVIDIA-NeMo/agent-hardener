@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""The ``init`` command: scaffold an ``agent-hardener.yaml`` manifest (auto-detecting the NAT project)."""
+"""The ``init`` command: scaffold an ``agent-hardener.yaml`` manifest (auto-detecting your agent project)."""
 
 from __future__ import annotations
 
@@ -39,7 +39,7 @@ def _check_byo_flags(dockerfile: str | None, binary: list[str]) -> None:
 
 @app.command()
 def init(
-    project_dir: Path | None = typer.Option(None, "--project-dir", help="Path to your NAT project."),
+    project_dir: Path | None = typer.Option(None, "--project-dir", help="Path to your agent project."),
     name: str | None = typer.Option(None, "--name", help="Agent name."),
     dockerfile: str | None = typer.Option(
         None,

@@ -29,7 +29,7 @@ from agent_hardener.models import (
     SessionConfig,
     TracesConfig,
 )
-from agent_hardener.openshell.naming import sandbox_name
+from agent_hardener.openshell.naming import provider_name, sandbox_name
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 
 # Policy + repair templates packaged under agent_hardener/templates/ (parent == the agent_hardener package
@@ -389,7 +389,7 @@ def expand(
                 "gateway": "auto-defender",
                 "sandbox": sandbox_name(agent.name),
                 "policy_path": str(policy_path),
-                "provider": "agent-hardener-secrets",
+                "provider": provider_name(agent.name),
                 "provider_type": "generic",
                 "provider_env_file": agent.secrets_file,
                 "provider_credentials": list(agent.secrets),

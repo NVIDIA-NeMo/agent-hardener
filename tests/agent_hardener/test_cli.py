@@ -17,7 +17,7 @@ from agent_hardener.cli import app
 from agent_hardener.config import load_config
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
 from agent_hardener.manifest import build_backend, build_manifest, render_manifest_yaml
-from agent_hardener.models import SessionConfig, VictimControlConfig
+from agent_hardener.models import AgentConfig, SessionConfig, VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.project import (
     append_env,
@@ -28,6 +28,7 @@ from agent_hardener.project import (
     find_project_root,
     missing_secrets,
 )
+from agent_hardener.runtime.runner import SMART_BENIGN_IMPL_PREFIX
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -199,6 +200,25 @@ def test_run_benign_suite_missing_fails(tmp_path: Path, monkeypatch: pytest.Monk
 
     assert result.exit_code == 1
     assert "Benign suite not found" in result.output
+
+
+def test_run_without_a_benign_suite_says_how_to_make_one(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    session = _replay_session_config(tmp_path).model_copy(
+        update={
+            "benign_validators": [
+                AgentConfig(name="benign", role="validator", implementation=f"{SMART_BENIGN_IMPL_PREFIX}.validator:run")
+            ]
+        }
+    )
+    captured = _patch_run_command(monkeypatch, session)
+
+    result = runner.invoke(app, ["run", "--config", "my.yaml", "--env-file", "my.env"])
+
+    assert result.exit_code == 1
+    assert captured == []
+    assert "none was given" in result.output
+    assert "agent-hardener synth-benign --config my.yaml --env-file my.env" in result.output
+    assert "agent-hardener run --config my.yaml --env-file my.env --benign-suite <requests.csv>" in result.output
 
 
 def test_run_rejects_removed_synth_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1272,6 +1292,8 @@ def _fake_run_session_config() -> SimpleNamespace:
         garak=None,
         victim_control="vc",
         target=SimpleNamespace(base_url="http://127.0.0.1:8000/v1/chat/completions"),
+        benign_suite_path=None,
+        benign_validators=[],
     )
 
 

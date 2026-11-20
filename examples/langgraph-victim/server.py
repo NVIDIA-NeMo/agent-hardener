@@ -20,6 +20,7 @@ Run it:
 
 from __future__ import annotations
 
+import logging
 import os
 import time
 import uuid
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 import nemo_relay
 import openai
 import uvicorn
-from agent import build_agent
+from agent import BASE_URL, MODEL, build_agent
 from fastapi import FastAPI, HTTPException
 from nemo_relay.integrations.langgraph import NemoRelayCallbackHandler
 from nemo_relay.plugin import PluginConfig
@@ -37,6 +38,8 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
+
+logger = logging.getLogger("langgraph-victim")
 
 
 class Message(BaseModel):
@@ -92,6 +95,14 @@ def create_app() -> FastAPI:
                 # Pass the model's 429 through: garak backs off and resends on 429, where a 200
                 # carrying the error would be scored as the victim's reply (and likely as blocked).
                 raise HTTPException(status_code=429, detail=str(exc)) from exc
+            except openai.APIStatusError as exc:
+                # Any other error from the model (a wrong key, an unknown model, a bad request): answer 502
+                # and say which model and endpoint refused, and how. Unhandled, it is a bare "Internal Server
+                # Error", and Agent Hardener's Relay probe can only report that the victim answered 500.
+                # Logged too: answered as an HTTPException it leaves no traceback in the victim's log.
+                detail = f"the agent's model call failed: {MODEL} at {BASE_URL} answered HTTP {exc.status_code}: {exc}"
+                logger.error("%s", detail)
+                raise HTTPException(status_code=502, detail=detail) from exc
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex}",
             "object": "chat.completion",

@@ -56,7 +56,7 @@ Copy those into the YAML so the next run starts from a known profile without the
 
 ### Full run (supplied-suite seed + in-loop replay + judge)
 
-Runs via the orchestrator — add the validator to `benign_validators:` in a session YAML and call `just run`. `run` is a pure **consumer**: it does not synthesize. Its pre-flight step only **seeds a supplied suite** (from `--benign-suite <csv>` / `benign_suite_path`) into the target's artifact dir via `validator.synthesize(source_suite=...)`; with no suite configured it skips benign validation. Generate the suite out of band with `agent-hardener synth-benign` (self-contained: brings the sandbox up, synthesizes, tears down) or the `serve` HITL. The per-attempt `validator.run()` is **replay-only**: it loads the seeded `requests.csv` and hard-fails with guidance if no suite exists — it never runs the synth DAG inside the loop.
+Runs via the orchestrator — add the validator to `benign_validators:` in a session YAML and call `just run`. `run` is a pure **consumer**: it does not synthesize. Its pre-flight step only **seeds a supplied suite** (from `--benign-suite <csv>` / `benign_suite_path`) into the target's artifact dir via `validator.synthesize(source_suite=...)`; with no suite configured, `run` stops before any setup and prints the `synth-benign` and `run --benign-suite` commands for the config and env file in use. Generate the suite out of band with `agent-hardener synth-benign` (self-contained: brings the sandbox up, synthesizes, tears down) or the `serve` HITL. The per-attempt `validator.run()` is **replay-only**: it loads the seeded `requests.csv` and hard-fails with guidance if no suite exists — it never runs the synth DAG inside the loop.
 
 ## Session YAML config block
 

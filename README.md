@@ -2,7 +2,7 @@
 
 Agent Hardener orchestrates a security hardening loop for agentic applications. It loads attack evidence or runs attackers, routes findings to defenders, applies policy and workflow patches to a victim environment, replays the original attacks, runs benign validation, and writes a full session report.
 
-The current main demo protects a NAT research agent running inside an OpenShell sandbox. It uses:
+Agent Hardener protects a NeMo Relay-connected agent running inside an OpenShell sandbox. It uses:
 
 - Garak-style attack evidence or live Garak attackers.
 - An OpenShell policy defender that creates candidate network policy updates.
@@ -63,16 +63,16 @@ To work on Agent Hardener itself rather than consume it, skip this section and f
 
 ## Quickstart
 
-### Run Agent Hardener on your own NAT agent
+### Run Agent Hardener on your own agent
 
-The easy path. Describe your NAT agent in a thin `agent-hardener.yaml` manifest, then run. Agent Hardener
+The easy path. Describe your Relay-connected agent in a thin `agent-hardener.yaml` manifest, then run. Agent Hardener
 builds your agent into an OpenShell sandbox, starts any host backends, runs the hardening loop
-(the garak attacker spawns the `garak` CLI directly), and cleans up. Only the NAT agent runs inside
+(the garak attacker spawns the `garak` CLI directly), and cleans up. Only your agent runs inside
 the sandbox; backends/DBs stay on the host.
 
 ```bash
 just setup                        # one-time: Docker/OpenShell checks, credentials, deps
-uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detects your NAT project),
+uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detects your agent project),
                                   #   garak-scan.yaml, and .env.example
                                   #   prompts for port (default 8000); pass --port <N> to skip the prompt
 # ...fill in .env with your keys...
@@ -86,16 +86,21 @@ uv run agent-hardener run --benign-suite <path/to/requests.csv>   # build, harde
 `synth-benign` (or the `serve` HITL) to produce it. Without `--benign-suite`, `run` still attacks,
 defends, and validates the attacks; it just skips the benign false-positive check.
 
-A manifest is ~10 lines (see `examples/agent-hardener.yaml`):
+A manifest for an agents-lab checkout next to it looks like this (`examples/agent-hardener.yaml` is the annotated version):
 
 ```yaml
 agent:
-  name: finance
-  project_dir: ../agents-lab
-  workflow: agents_lab/agents/finance/workflow.yaml
+  name: finance-langgraph
+  project_dir: ../agents-lab                 # relative to this manifest's directory
+  dockerfile: deploy/finance_langgraph/Dockerfile
+  start_command: /usr/local/bin/python -m agents_lab.runtime.serve
+  binaries: ["/usr/local/bin/python*"]
   port: 8000
   secrets: [INFERENCE_API_KEY]
-  env:
+  env:                                       # image ENV does not reach the sandbox
+    AGENT_SCENARIO: finance
+    AGENT_HARNESS: langgraph
+    AGENTS_LAB_ROOT: /app
     FINANCE_BACKEND_URL: http://host.docker.internal:8086
 backends:
   - name: finance
@@ -108,11 +113,11 @@ backends:
   #   allowed_ips: [10.96.0.0/12]       # private ranges OpenShell would otherwise block
 ```
 
-The minimum a user must supply: `agent.project_dir` + `agent.workflow`, and `agent.secrets` (env-var
-names pulled from `.env`). Add `dockerfile` + `binaries` to build the victim from your own image
-instead of a generic one — that is independent of `workflow`, which you keep either way: the image is
-how the environment is built, the workflow is what gets served and hardened. Everything else — gateway,
-sandbox, policy, the attacker/defender/validator suite — is defaulted (override via an `overrides:`
+The minimum a user must supply: `agent.project_dir`, `agent.dockerfile` (your image), `agent.start_command`
+(how it launches in the sandbox), `agent.binaries` (globs of the processes allowed to egress), and
+`agent.secrets` (env-var names pulled from `.env`). Agent Hardener hardens the agent you ship, so it does
+not build one for you; the agent must be connected to NeMo Relay (see `examples/agent-hardener.yaml`).
+Everything else — gateway, sandbox, policy, the attacker/defender/validator suite — is defaulted (override via an `overrides:`
 block or a full session config). Useful commands: `uv run agent-hardener run --rounds N`, `--no-cleanup`,
 `uv run agent-hardener synth-benign` (generate/refresh the benign suite), `uv run agent-hardener up|down|status`.
 
@@ -138,14 +143,15 @@ agent_hardener/
     attackers/agent_breaker/         Garak agent_breaker attacker + config builder
     defenders/                       OpenShell policy and guardrails defenders
     validators/                      Attack replay and benign validators
-    victims/                         NAT/OpenShell victim helpers and workflow
+    victims/                         OpenShell victim helpers
   openshell/                         OpenShell lifecycle and policy repair code
-  templates/nat-victim/              Packaged assets: NAT-victim Dockerfile + default/permissive
-                                     OpenShell policies + repair profile
+  templates/relay-victim/            Packaged assets: default/permissive OpenShell policies,
+                                     seed Relay plugins.toml + repair profile
   tools/                             CLI helpers and run summaries
 
 examples/
-  vulnerable_demo_e2e.yaml           Main runnable OpenShell/Garak demo config
+  agent-hardener.yaml                Annotated manifest for your own agent
+  langgraph-victim/                  Worked LangGraph victim image
 
 tests/
   agent_hardener/                        Unit, integration, pipeline E2E, smoke tests
@@ -231,7 +237,7 @@ just install
 
 `just install` runs `uv sync` (installs agent-hardener's dependencies), provisions the dedicated garak venv (via `agent-hardener setup`), then installs pre-commit hooks. Run it before the main wrapper so `.venv/bin/python3` exists. The wrapper should be run from the repository root. Advanced users can override the interpreter with `PROJECT_PYTHON=/path/to/python`.
 
-garak is **not** an agent-hardener dependency: it pins `litellm -> httpx>=0.28` plus `torch`, which conflict with `nvidia-nat`'s `httpx~=0.27`. agent-hardener never imports garak — it spawns the garak CLI from a separate venv at `~/.agent-hardener/garak-venv`, provisioned by `agent-hardener setup` (`just garak-venv` is a thin wrapper around it). Override the interpreter with `AGENT_HARDENER_GARAK_PYTHON=/path/to/python`. This is what keeps agent-hardener itself pip-installable with no dependency override.
+garak is **not** an agent-hardener dependency: it pins `litellm -> httpx>=0.28` plus `torch`, which conflict with this project's dependencies. agent-hardener never imports garak — it spawns the garak CLI from a separate venv at `~/.agent-hardener/garak-venv`, provisioned by `agent-hardener setup` (`just garak-venv` is a thin wrapper around it). Override the interpreter with `AGENT_HARDENER_GARAK_PYTHON=/path/to/python`. This is what keeps agent-hardener itself pip-installable with no dependency override.
 
 To work with a custom garak fork instead of the PyPI release, overlay it as an editable install into that venv:
 
@@ -268,7 +274,7 @@ Agent Hardener has three model groups, each with a built-in default you can over
 | Attack | garak red-team + detector | `nvidia/nemotron-3-ultra-550b-a55b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
 | Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-ultra-550b-a55b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
 | Safety | the guardrail judge that runs inside the victim | the analysis model | the guardrails defender's `safety_llm` (model); `AGENT_HARDENER_SAFETY_BASE_URL` / `AGENT_HARDENER_SAFETY_API_KEY` (endpoint and key, else the analysis ones) |
-| Agent | the victim's own LLM | your NAT workflow | the `llms:` block in your workflow |
+| Agent | the victim's own LLM | your agent's code | configured inside your agent |
 
 The **analysis** lever is a single pair of env vars that retargets every default-model caller (both
 defenders and the benign validator) at once:
@@ -293,21 +299,6 @@ export, `unset` it to use the file.
 Before a run, `agent-hardener run` preflights any model you overrode (`AGENT_HARDENER_MODEL` or
 `GARAK_RED_TEAM_MODEL_NAME`) against its endpoint and fails fast — listing the models the credentials
 can reach — if the name, URL, or key is wrong, so a typo costs seconds instead of a full sandbox build.
-
-Load the file into your shell when running NAT directly:
-
-```bash
-set -a
-source .env
-set +a
-```
-
-If running NAT outside the OpenShell sandbox, set tracing defaults when Phoenix/OTel are not running:
-
-```bash
-export OTEL_TRACE_ENDPOINT=${OTEL_TRACE_ENDPOINT:-http://127.0.0.1:4318}
-export PHOENIX_TRACE_ENDPOINT=${PHOENIX_TRACE_ENDPOINT:-http://127.0.0.1:6006}
-```
 
 ## OpenShell Gateway Config
 
@@ -435,11 +426,10 @@ Before running the real OpenShell/Garak cycle, confirm:
 
 - Docker daemon is reachable: `docker info`
 - OpenShell CLI and gateway are available: `openshell status --gateway auto-defender`
-- The gateway name in `victim_control.config.gateway` is registered and connected
-- `.env` exists with real `INFERENCE_API_KEY`, `NIM_API_KEY`, `VLLM_API_KEY`, `GITHUB_TOKEN`, and `GITHUB_REPOSITORY` values
+- The `auto-defender` gateway is registered and connected
+- `.env` exists with real values for every name listed under `agent.secrets` in your manifest
 - The `garak` CLI is installed (`uv run garak --list-probes | grep agent_breaker`)
-- Port `8000` is free (the victim agent)
-- Optional observability ports `4318` and `6006` are free when Phoenix/OTel are enabled
+- The victim's port (`agent.port`, default `8000`) is free
 
 ## Run The Main OpenShell/Garak Cycle
 
@@ -447,7 +437,7 @@ The main operator command is:
 
 ```bash
 uv run agent-hardener run \
-  --config examples/vulnerable_demo_e2e.yaml \
+  --config agent-hardener.yaml \
   --env-file .env \
   --no-cleanup
 ```
@@ -455,11 +445,11 @@ uv run agent-hardener run \
 What this does:
 
 1. Loads `.env`.
-2. Prepares a loop-specific config under `.agent-hardener/run-logs/.../loop-01/`.
-3. Renders the per-loop garak config; the agent_breaker attacker spawns the `garak` CLI when it runs.
+2. Prepares a per-round directory under `.agent-hardener/run-logs/<run-id>/round_<N>/`.
+3. Renders the per-round garak config; the agent_breaker attacker spawns the `garak` CLI when it runs.
 4. Runs the OpenShell policy defender and guardrails defender in parallel.
 5. Applies the candidate policy with `openshell policy set`.
-6. Uploads the candidate workflow into the sandbox.
+6. Uploads the candidate Relay `plugins.toml` (the guardrails) into the sandbox.
 7. Restarts the victim agent and waits for health.
 8. Replays attack hits and, when a benign suite is supplied via `--benign-suite`, the benign requests.
 9. Writes artifacts and a final summary.
@@ -467,7 +457,7 @@ What this does:
 Useful run controls:
 
 ```text
---rounds N         Carry generated policy/workflow forward across N hardening rounds.
+--rounds N         Carry generated policy and guardrails forward across N hardening rounds.
 --replay           Skip live attackers; replay hits from the latest run instead. Their recorded attack
                    traces are loaded; attacks with none are sent to the agent once to record them.
 --with-traces PATH With --replay: load the attack traces from PATH instead.
@@ -480,105 +470,46 @@ Useful run controls:
 Results are written under:
 
 ```text
-.agent-hardener/run-logs/<timestamp>-<mission-id>/
+.agent-hardener/run-logs/<run-id>/
 ```
 
-The most important session artifacts are:
+The most important artifacts are:
 
 ```text
-attacks.json          Loaded or generated attack records
-defenders.json        Defender decisions and patch metadata
-victim-control.json   OpenShell apply/upload/restart results
-validators.json       Attack and benign validation results
-report.json           Complete machine-readable session report
-session.log           Human-readable session log
-events.jsonl          Structured event log
+round_<N>/attacks.json        Attack records for the round
+round_<N>/attack_traces.json  What the victim did for each attack, read from Relay
+round_<N>/report.json         The round's full machine-readable report (attacks, defenders, victim-control, validators)
+round_<N>/round.log           Human-readable round log
+round_<N>/events.jsonl        Structured event log for the round
+mitigations.json              The run's before/after policy and guardrails
+validation.json              Final per-item attack and benign validation results
+events.jsonl                  Structured event log for the whole run
 ```
 
 ## Check That A Run Really Updated The Sandbox
 
-After a successful run, inspect `victim-control.json`:
+After a successful run, inspect the deploy result in the round report:
 
 ```bash
-jq ".metadata.results[] | {patch_type, ok, status, command}" \
-  .agent-hardener/run-logs/<run>/loop-01/missions/<mission>/session-0001/victim-control.json
+jq ".iterations[] | {ok: .victim_control.ok, summary: .victim_control.summary, error: .victim_control.error}" \
+  .agent-hardener/run-logs/<run-id>/round_1/report.json
 ```
 
-Healthy policy update signals:
+`ok` must be `true` for every iteration. `mitigations.json` in the run directory shows the policy and
+guardrails the run ended with.
 
-```text
-openshell_policy_candidate       ok=true
-openshell_policy_verification    ok=true, status=active_policy_matches_candidate
-```
-
-Healthy workflow update signals:
-
-```text
-victim_workflow_candidate        ok=true
-openshell_workflow_upload        ok=true
-openshell_victim_restart         ok=true
-```
-
-Inspect the live sandbox directly:
+Inspect the live sandbox directly. Find its name with `openshell sandbox list --gateway auto-defender`
+(it is `ah-<agent-name>-<digest>`), then check the active policy and the guardrails the victim loaded:
 
 ```bash
-openshell sandbox exec \
-  --gateway auto-defender \
-  --name agents-lab-vulnerable-demo \
-  --no-tty -- sh -lc "
-    ls -l /tmp/research_agent_workflow.yaml /tmp/research_agent_workflow.rendered.yaml
-    grep -n custom_guardrail /tmp/research_agent_workflow.yaml | head
-  "
+openshell sandbox get <sandbox> --gateway auto-defender --policy-only
+openshell sandbox exec --gateway auto-defender --name <sandbox> --no-tty -- cat /etc/nemo-relay/plugins.toml
 ```
 
-Check the active OpenShell policy:
-
-```bash
-openshell sandbox get agents-lab-vulnerable-demo \
-  --gateway auto-defender \
-  --policy-only
-```
-
-Check victim health:
+Check victim health (use `agent.port` from your manifest):
 
 ```bash
 curl -i http://127.0.0.1:8000/health
-```
-
-## Run NAT Directly
-
-Run the research agent once:
-
-```bash
-uv run nat run \
-  --config_file agent_hardener/agents/victims/research_agent_workflow.yaml \
-  --input "what is the time now"
-```
-
-Serve the workflow locally:
-
-```bash
-uv run nat serve \
-  --config_file agent_hardener/agents/victims/research_agent_workflow.yaml \
-  --host 127.0.0.1 \
-  --port 8000 \
-  --disable_legacy_routes true
-```
-
-Then check:
-
-```bash
-curl -i http://127.0.0.1:8000/health
-```
-
-Inside the OpenShell sandbox, the victim runs roughly:
-
-```bash
-/app/agents-lab/.venv/bin/nat serve \
-  --config_file /tmp/research_agent_workflow.rendered.yaml \
-  --host 0.0.0.0 \
-  --port 8000 \
-  --disable_legacy_routes true
 ```
 
 ## OpenShell Helpers
@@ -586,36 +517,42 @@ Inside the OpenShell sandbox, the victim runs roughly:
 The OpenShell tool wrapper can manage the configured sandbox directly:
 
 ```bash
-uv run python -m agent_hardener.tools.openshell ensure-provider --config examples/vulnerable_demo_e2e.yaml --env-file .env
-uv run python -m agent_hardener.tools.openshell up              --config examples/vulnerable_demo_e2e.yaml --env-file .env
-uv run python -m agent_hardener.tools.openshell status          --config examples/vulnerable_demo_e2e.yaml --env-file .env
-uv run python -m agent_hardener.tools.openshell restart         --config examples/vulnerable_demo_e2e.yaml --env-file .env
-uv run python -m agent_hardener.tools.openshell down            --config examples/vulnerable_demo_e2e.yaml --env-file .env
+uv run python -m agent_hardener.tools.openshell ensure-provider --config agent-hardener.yaml
+uv run python -m agent_hardener.tools.openshell up              --config agent-hardener.yaml
+uv run python -m agent_hardener.tools.openshell status          --config agent-hardener.yaml
+uv run python -m agent_hardener.tools.openshell restart         --config agent-hardener.yaml
+uv run python -m agent_hardener.tools.openshell down            --config agent-hardener.yaml
 ```
 
 For a fresh service host:
 
 ```bash
-./scripts/bootstrap-openshell-victim.sh --smoke-chat
+./scripts/bootstrap-openshell-victim.sh --config agent-hardener.yaml --smoke-chat
 ```
 
 or:
 
 ```bash
-just openshell-bootstrap --smoke-chat
+just openshell-bootstrap --config agent-hardener.yaml --smoke-chat
 ```
 
-## Preloaded Versus Live Attacks
+`just openshell-reset --config agent-hardener.yaml` recreates that manifest's sandbox and provider from scratch.
+It leaves every other sandbox on the gateway alone.
 
-`examples/vulnerable_demo_e2e.yaml` currently enables the live Garak attacker. This is the right path when you need fresh attack generation (the attacker runs the `garak` CLI).
+## Replaying Saved Attacks Versus Live Attacks
 
-For faster defender iteration with saved evidence, edit the config:
+By default `run` uses the live garak attacker, which generates fresh attacks (it runs the `garak` CLI and calls
+the configured red-team/detector models).
 
-1. Uncomment or add the `preloaded_attacks` entries.
-2. Set `attackers: []` so live attackers do not rerun.
-3. Run with `--use-config-attackers`.
+For faster defender iteration with saved evidence, replay a previous run's hits instead:
 
-Preloaded attacks are faster and more deterministic. Live attacks are slower and run the `garak` CLI (which calls the configured red-team/detector models), but they exercise the real attacker path.
+```bash
+uv run agent-hardener run --replay                      # the latest run's hitlog
+uv run agent-hardener run --replay path/to/hitlog.jsonl # a specific hitlog
+```
+
+Replay skips the attacker. It is faster and more deterministic; live attacks are slower but exercise the real
+attacker path.
 
 ## Cleanup
 
@@ -654,8 +591,7 @@ For OpenShell changes, also run the main cycle once and confirm:
 
 ```text
 report.success = true
-victim-control ok = true
-openshell_policy_verification status = active_policy_matches_candidate
+victim-control ok = true (in round_<N>/report.json)
 attack validation = blocked all original hits
 benign validation = all requests complied
 ```

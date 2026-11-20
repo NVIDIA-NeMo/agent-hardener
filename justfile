@@ -74,7 +74,7 @@ install-ci:
 # Provision the dedicated garak venv (~/.agent-hardener/garak-venv) the agent_breaker attacker
 # spawns. Thin wrapper around `agent-hardener setup`, which owns the garak version pin and venv
 # location (single source of truth). garak is intentionally NOT an agent-hardener dependency (it
-# pins litellm -> httpx>=0.28 + torch, which conflict with nvidia-nat), so it lives in its own
+# pins litellm -> httpx>=0.28 + torch, which conflict with this project's dependencies), so it lives in its own
 # venv. Idempotent; pass extra args (e.g. --force) through.
 garak-venv *args:
     uv run agent-hardener setup {{ args }}
@@ -126,28 +126,22 @@ obs-status:
         echo "Trace file: not created yet"
     fi
 
-# Bootstrap and expose the OpenShell agents-lab victim on a Linux host
+# Bootstrap and expose the OpenShell victim described by a manifest (--config) on a Linux host
 [unix]
 openshell-bootstrap *args:
     ./scripts/bootstrap-openshell-victim.sh {{args}}
 
-# Reset the OpenShell gateway from scratch and re-bootstrap the victim
+# Recreate the manifest's victim sandbox and provider from scratch (other sandboxes on the gateway are kept)
 [unix]
-openshell-reset env_file=".env" *args:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    set -a
-    . "{{env_file}}"
-    set +a
-    openshell sandbox delete --all --gateway auto-defender || true
-    ./scripts/bootstrap-openshell-victim.sh --env-file "{{env_file}}" {{args}}
+openshell-reset *args:
+    ./scripts/bootstrap-openshell-victim.sh {{args}}
 
 
-# Scaffold an agent-hardener.yaml manifest for your NAT agent
+# Scaffold an agent-hardener.yaml manifest for your agent
 init *args:
     uv run agent-hardener init {{args}}
 
-# Run Agent Hardener against your NAT agent (uses examples/agent-hardener.yaml by default)
+# Run Agent Hardener against your agent (uses examples/agent-hardener.yaml by default)
 [unix]
 run *args:
     uv run agent-hardener run {{args}}
