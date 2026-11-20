@@ -13,7 +13,7 @@ from create to delete.
 
 ## Scope
 
-- **In scope:** gateway registration, the Docker driver, the `agent-hardener-secrets` provider and
+- **In scope:** gateway registration, the Docker driver, the per-agent secrets provider and
   key rotation, sandbox naming, `up`/`down`/`status`, policy and egress injection, checking
   hardening reached the live sandbox, cleanup.
 - **Out of scope:** making an agent image start (`connect-victim-agent`), Relay plugin config
@@ -39,7 +39,7 @@ Fixed values, set in `agent_hardener/manifest.py`:
 |---|---|
 | Gateway | `auto-defender` at `https://127.0.0.1:17670` |
 | OpenShell version targeted | `v0.1.4` |
-| Provider | `agent-hardener-secrets`, type `generic` |
+| Provider | `<sandbox name>-secrets`, one per agent, type `generic` |
 | Sandbox name | `ah-<slug>-<7-char digest>`, at most 19 characters |
 
 ## Step 0: Preflight
@@ -71,10 +71,12 @@ installer command.
 
 Read `ensure_provider` in `agent_hardener/openshell/lifecycle.py` before changing anything here.
 
-- On a sandbox's first `up`, the provider `agent-hardener-secrets` is created from the manifest's
+- On a sandbox's first `up`, its provider `<sandbox name>-secrets` is created from the manifest's
   `secrets_file`. Only the names listed under `secrets` are used; if that list is empty, every key
   in the file is. A generated credentials-only profile named after the provider backs it.
-- **After that, the provider is reused as-is.** Every agent shares it. Later runs only sync the
+- **After that, the provider is reused as-is.** Each agent has its own, so concurrent runs of different
+  agents don't overwrite each other's keys. Manifests made before this change used one shared
+  `agent-hardener-secrets` provider, which may still be on the gateway. Later runs only sync the
   safety judge's key (`AGENT_HARDENER_SAFETY_API_KEY`, through `provider update --credential`).
   **A changed or newly added victim secret in `.env` does not reach an existing provider.**
 - Inside the sandbox, an env var holds a versioned placeholder that the gateway swaps for the real
@@ -85,7 +87,7 @@ To rotate a victim key on this branch:
 
 ```bash
 uv run agent-hardener down --config agent-hardener.yaml           # every sandbox using the provider
-openshell provider delete agent-hardener-secrets --gateway auto-defender
+openshell provider delete <sandbox name>-secrets --gateway auto-defender
 uv run agent-hardener up --config agent-hardener.yaml --env-file .env   # recreated from current .env
 ```
 

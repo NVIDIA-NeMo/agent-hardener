@@ -27,3 +27,12 @@ def sandbox_name(agent_name: str) -> str:
     slug = _UNSAFE.sub("-", agent_name.lower()).strip("-")[:_SLUG_LEN].rstrip("-")
     digest = hashlib.sha256(agent_name.encode("utf-8")).hexdigest()[:_DIGEST_LEN]
     return f"{_PREFIX}{slug}-{digest}" if slug else f"{_PREFIX}{digest}"
+
+
+def provider_name(agent_name: str) -> str:
+    """The OpenShell secrets provider for *agent_name*: one per agent, never shared between manifests.
+
+    A shared provider let concurrent runs with different keys overwrite each other's credentials (and
+    the generic profile named after it), so a sandbox could start with another run's key.
+    """
+    return f"{sandbox_name(agent_name)}-secrets"

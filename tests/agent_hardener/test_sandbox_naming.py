@@ -9,7 +9,7 @@ import re
 
 import pytest
 
-from agent_hardener.openshell.naming import MAX_SANDBOX_NAME_LEN, sandbox_name
+from agent_hardener.openshell.naming import MAX_SANDBOX_NAME_LEN, provider_name, sandbox_name
 
 _LEGAL = re.compile(r"^[a-z][a-z0-9-]*[a-z0-9]$")
 
@@ -46,3 +46,9 @@ def test_long_names_sharing_a_prefix_stay_isolated() -> None:
 
 def test_readable_head_of_the_agent_name_survives() -> None:
     assert sandbox_name("finance").startswith("ah-finance-")
+
+
+def test_each_agent_gets_its_own_provider() -> None:
+    # Concurrent runs with different keys shared one provider and overwrote each other's credentials.
+    assert provider_name("finance") == f"{sandbox_name('finance')}-secrets"
+    assert provider_name("finance") != provider_name("finance-langgraph")

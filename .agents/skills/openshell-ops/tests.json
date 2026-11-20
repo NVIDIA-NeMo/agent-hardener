@@ -8,7 +8,7 @@
     },
     {
       "type": "explicit",
-      "prompt": "Follow the openshell-ops skill to rotate the API key in the agent-hardener-secrets provider.",
+      "prompt": "Follow the openshell-ops skill to rotate the API key in the finance agent's secrets provider.",
       "expected_skill": "openshell-ops"
     },
     {
