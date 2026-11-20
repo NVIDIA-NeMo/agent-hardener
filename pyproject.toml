@@ -40,7 +40,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agent-hardener = "agent_hardener.cli:app"
+agent-hardener = "agent_hardener.cli:main"
 
 [dependency-groups]
 dev = [

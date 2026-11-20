@@ -73,7 +73,7 @@ def test_synth_wizard_completes_with_a_suite(tmp_path: Path, monkeypatch: pytest
 
     assert code == 0
     summary = capsys.readouterr().out
-    assert "Requests:      2" in summary
+    assert "✓ Benign suite: 2 request(s) for victim" in summary
     assert "victim" in summary
 
 
@@ -85,4 +85,4 @@ def test_synth_wizard_reports_nonzero_on_synth_errors(
     code = _run(monkeypatch, tmp_path, final)
 
     assert code == 1  # exit code propagates synth errors
-    assert "Errors:        1" in capsys.readouterr().out
+    assert "✗ Benign suite: 0 request(s) for victim, 1 error(s)" in capsys.readouterr().out

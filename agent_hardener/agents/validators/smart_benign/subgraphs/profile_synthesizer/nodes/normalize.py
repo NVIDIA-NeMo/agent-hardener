@@ -89,7 +89,7 @@ async def normalize(state: ProfileSynthesizerState) -> dict[str, object]:
         rate_limit = rate_limit_error_from_exception(exc, source="smart_benign:profile_synthesizer")
         if rate_limit is not None:
             raise rate_limit from exc
-        logger.exception("profile_synthesizer.normalize failed")
+        logger.info("profile_synthesizer.normalize failed", exc_info=True)
         return {
             "profile": VictimCapabilityProfile(
                 target_name=state.target_name,

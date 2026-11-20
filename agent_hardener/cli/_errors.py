@@ -12,13 +12,24 @@ interactive operator) instead of leaking a raw traceback.
 from __future__ import annotations
 
 import contextlib
+import logging
 from collections.abc import Iterator
 
 import typer
-from rich.markup import escape
 
-from agent_hardener.display.console import fail, info
+from agent_hardener.display.console import fail, hint, is_debug
 from agent_hardener.errors import AgentHardenerError, emit_run_error
+from agent_hardener.loggers import FILE_ONLY
+
+logger = logging.getLogger("agent_hardener.cli")
+
+
+def _log_failure(message: str) -> None:
+    """Write the active exception's traceback to the log file; to the console too only with ``--debug``.
+
+    The console already shows the clean ``✗`` line, so by default the traceback is file-only.
+    """
+    logger.error(message, exc_info=True, extra={} if is_debug() else FILE_ONLY)
 
 
 @contextlib.contextmanager
@@ -29,21 +40,22 @@ def cli_error_boundary() -> Iterator[None]:
     ``fail()`` cases) and pass through untouched. An :class:`AgentHardenerError` is dumped via
     :func:`emit_run_error`, its message + remediation are printed, and the command exits 1. Any other
     exception is dumped as ``unexpected`` (its traceback goes to the error file, not the console) and
-    the command exits 1 — no raw traceback reaches the operator.
+    the command exits 1 — no raw traceback reaches the operator. Both cases log the traceback to the
+    command's log file, whose path the CLI prints as the last line.
     """
     try:
         yield
     except (typer.Exit, typer.Abort):
         raise
     except AgentHardenerError as exc:
+        _log_failure(f"{exc.category} error: {exc}")
         emit_run_error(exc)
-        # Escaped: a message quotes data (failure codes in brackets, garak log lines), which rich would
-        # otherwise read as style tags and silently drop.
-        fail(escape(str(exc)))
+        fail(str(exc), markup=False)
         if exc.remediation:
-            info(f"  → {escape(exc.remediation)}")
+            hint(exc.remediation, markup=False)
         raise typer.Exit(1) from exc
     except Exception as exc:
+        _log_failure(f"unexpected error: {exc}")
         emit_run_error(exc)
-        fail(f"Unexpected error: {escape(str(exc))}")
+        fail(f"Unexpected error: {type(exc).__name__}: {exc}", markup=False)
         raise typer.Exit(1) from exc

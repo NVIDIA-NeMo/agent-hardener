@@ -26,7 +26,7 @@ from ..schemas import CRITERIA, GradeResponse, RailDraft, RailGrade, RailRespons
 from ..state import DefenderState  # noqa: TC001 - LangGraph reads node annotations at runtime
 from .benign_args import benign_requests
 
-logger = logging.getLogger("agent_hardener.session")
+logger = logging.getLogger(__name__)
 
 #: Suggestor-grader rounds per attack.
 MAX_ITERATIONS = 3
@@ -169,7 +169,7 @@ def _grade(grader: BaseChatModel, context: dict[str, Any], draft: RailDraft) -> 
         if not isinstance(response, GradeResponse):
             response = GradeResponse.model_validate(response)
     except Exception as exc:
-        logger.warning("traces guardrails defender grader failed on iteration %d: %s", draft.iteration, exc)
+        logger.info("traces guardrails defender grader failed on iteration %d: %s", draft.iteration, exc)
         return None
     criteria = {name: getattr(response, name) for name in CRITERIA}
     score = round(2 * sum(criteria.values()) / len(criteria), 1)

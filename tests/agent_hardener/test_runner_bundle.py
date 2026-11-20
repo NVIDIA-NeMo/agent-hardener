@@ -146,7 +146,7 @@ def test_bundle_ships_the_guardrails_and_the_hardened_policy(
     assert (call["agent"], call["run_id"]) == ("agent", "run-1")
     assert call["policy"] == (active_state / policy_name if policy_name else None)
     assert call["image"] is None
-    assert f"  → hardened image bundle: {harness.run_dir / 'hardened-image'}" in harness.lines
+    assert f"hardened image bundle: {harness.run_dir / 'hardened-image'}" in harness.lines
 
 
 @pytest.mark.usefixtures("relay_probe")

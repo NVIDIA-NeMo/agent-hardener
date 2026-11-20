@@ -48,7 +48,7 @@ async def write(state: ProfileWriterState) -> dict[str, object]:
             path.write_text(state.pre_interview_profile.model_dump_json(indent=2), encoding="utf-8")
             written.append(path)
     except OSError as exc:
-        logger.exception("profile_writer file I/O failed")
+        logger.info("profile_writer file I/O failed", exc_info=True)
         return {
             "written_files": written,
             "errors": [f"profile_writer: {exc}"],

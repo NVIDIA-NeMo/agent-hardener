@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 import pytest
 from rich.console import Console
 
-from agent_hardener.display import progress
+from agent_hardener.display import console, progress
 from agent_hardener.loggers import JsonlEventLogger
 
 if TYPE_CHECKING:
@@ -26,6 +26,7 @@ def _reporter(
     buf = io.StringIO()
     con = Console(file=buf, force_terminal=True, width=90)
     monkeypatch.setattr(progress, "get_console", lambda: con)
+    monkeypatch.setattr(console, "get_console", lambda: con)  # the ✓/✗ line helpers print here too
     monkeypatch.setattr(progress, "is_rich", lambda: True)  # treat the forced-terminal console as styled
     return progress.ConsoleRenderer(verbose=verbose), buf
 
@@ -106,7 +107,7 @@ def test_unknown_and_internal_events_ignored(monkeypatch: pytest.MonkeyPatch) ->
     reporter, buf = _reporter(monkeypatch)
     reporter("round_started", {"round_id": "s"})  # no handler
     reporter("phase_started", {"phase": "victim", "count": 1})  # internal phase -> no banner
-    reporter("phase_completed", {"phase": "defenders", "count": 2, "ok": True})  # only validators completion prints
+    reporter("phase_completed", {"phase": "victim", "count": 1, "ok": True})  # internal phase -> no headline
     assert buf.getvalue() == ""
 
 
@@ -149,21 +150,17 @@ def test_event_logger_observer_error_does_not_propagate(tmp_path: Path) -> None:
     logger.close()
 
 
-def test_session_logger_console_level_gated_by_quiet(tmp_path: Path) -> None:
+def test_round_logger_has_no_console_handler(tmp_path: Path) -> None:
+    """The round logger only writes round.log; the console sees its records through the CLI's console handler."""
     import logging  # noqa: PLC0415
 
     from agent_hardener.loggers import build_round_logger  # noqa: PLC0415
 
-    def levels(*, quiet: bool) -> dict[str, int]:
-        logger = build_round_logger("s", tmp_path, quiet=quiet)
-        return {type(h).__name__: h.level for h in logger.handlers}
-
-    quiet = levels(quiet=True)
-    loud = levels(quiet=False)
-    assert quiet["StreamHandler"] == logging.WARNING  # console hushed when quiet
-    assert loud["StreamHandler"] == logging.INFO  # full INFO to console when verbose
-    assert quiet["FileHandler"] == logging.INFO  # the .agent-hardener/round.log file is never hushed
-    assert loud["FileHandler"] == logging.INFO
+    logger = build_round_logger("s", tmp_path)
+    assert [(type(h).__name__, h.level) for h in logger.handlers] == [("FileHandler", logging.INFO)]
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+        handler.close()
 
 
 class _FakeStatus:
@@ -193,7 +190,9 @@ def test_status_spinner_updates_on_synth_phase_and_pauses(monkeypatch: pytest.Mo
 
     out = io.StringIO()
     monkeypatch.setattr(progress, "is_rich", lambda: True)
-    monkeypatch.setattr(progress, "get_console", lambda: Console(file=out, width=200))
+    con = Console(file=out, width=200)
+    monkeypatch.setattr(progress, "get_console", lambda: con)
+    monkeypatch.setattr(console, "get_console", lambda: con)  # the ✓ line prints through console.ok
     monkeypatch.setattr(progress, "_Spinner", _spinner)
 
     renderer = progress.ConsoleRenderer()
@@ -216,7 +215,7 @@ def test_status_spinner_updates_on_synth_phase_and_pauses(monkeypatch: pytest.Mo
     assert status.events == ["start", "stop"]
     renderer("interview_completed", {})
     renderer("status_completed", {"label": "Synthesizing benign suite"})
-    assert out.getvalue() == "✓ checked the profile for gaps — 2 gaps unresolved (9s)\n"
+    assert out.getvalue() == "✓ checked the profile for gaps — 2 gaps unresolved (9.2s)\n"
     assert status.updates == ["Synthesizing benign suite — composing interview questions…"]
     # Resumed after the interview, and stopped on completion.
     assert status.events == ["start", "stop", "start", "stop"]
@@ -224,8 +223,10 @@ def test_status_spinner_updates_on_synth_phase_and_pauses(monkeypatch: pytest.Mo
 
 def test_synth_phase_prints_unwrapped_off_tty(monkeypatch: pytest.MonkeyPatch) -> None:
     out = io.StringIO()
+    con = Console(file=out, width=40)
     monkeypatch.setattr(progress, "is_rich", lambda: False)
-    monkeypatch.setattr(progress, "get_console", lambda: Console(file=out, width=40))
+    monkeypatch.setattr(progress, "get_console", lambda: con)
+    monkeypatch.setattr(console, "get_console", lambda: con)
 
     renderer = progress.ConsoleRenderer()
     renderer(
@@ -235,7 +236,7 @@ def test_synth_phase_prints_unwrapped_off_tty(monkeypatch: pytest.MonkeyPatch) -
     renderer("synth_phase", {"phase": "interview_ask", "label": "recorded the interview answers", "seconds": None})
 
     assert out.getvalue().splitlines() == [
-        "✓ filtered and deduplicated requests — 58 → 42 kept (2m 05s)",  # one line though wider than 40 columns
+        "✓ filtered and deduplicated requests — 58 → 42 kept (2m05s)",  # one line though wider than 40 columns
         "✓ recorded the interview answers",
     ]
 
@@ -250,11 +251,6 @@ def test_the_spinner_clock_survives_a_long_label(monkeypatch: pytest.MonkeyPatch
     spinner.stop()
 
     assert "0:00:00" in out.getvalue()
-
-
-@pytest.mark.parametrize(("seconds", "text"), [(4.4, "4s"), (59.6, "1m 00s"), (125, "2m 05s")])
-def test_durations_switch_to_minutes_past_a_minute(seconds: float, text: str) -> None:
-    assert progress.format_duration(seconds) == text
 
 
 def test_status_events_noop_off_tty(monkeypatch: pytest.MonkeyPatch) -> None:

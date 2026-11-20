@@ -21,7 +21,7 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
-_REUSING = "reusing sandbox (agent fingerprint matches)"
+_REUSING = "Reusing the running sandbox (agent fingerprint matches)"
 _REBUILDING = "fingerprint mismatch or unknown"
 
 
@@ -55,7 +55,7 @@ def test_without_backends_nothing_is_started(build_mission: BuildMission) -> Non
 
     harness.run()
 
-    assert "backend setup: starting backends" not in harness.lines
+    assert "Starting backends" not in harness.statuses
 
 
 @pytest.mark.usefixtures("relay_probe")
@@ -64,8 +64,8 @@ def test_backends_are_announced_and_their_build_output_goes_to_the_run_log(build
 
     harness.run()
 
-    assert "backend setup: starting backends" in harness.lines
-    assert "backends ready" in harness.lines
+    assert "Starting backends" in harness.statuses
+    assert "Backends ready" in harness.lines
     assert "compose output" in harness.run_log
 
 
@@ -91,7 +91,7 @@ def test_a_fresh_start_builds_the_sandbox_once(build_mission: BuildMission) -> N
 
     assert harness.lifecycle.calls == ["down", "up"]
     assert harness.statuses == ["Building and starting sandbox"]
-    assert "sandbox ready" in harness.lines
+    assert "Sandbox ready" in harness.lines
     assert "built" in harness.run_log
 
 
@@ -112,7 +112,7 @@ def test_reuse_rebuilds_and_says_why_when_a_different_agent_was_built_before(bui
     rebuilt.run()
 
     assert rebuilt.lifecycle.calls == ["down", "up"]
-    assert _REBUILDING in rebuilt.lines[0]
+    assert any(_REBUILDING in line for line in rebuilt.lines)
     assert _REUSING not in rebuilt.lines
     # The rebuild records the new agent, so the next reuse is accepted.
     again = build_mission(start_command="run-new", skip_initial_up=True, no_cleanup=True)
@@ -129,7 +129,7 @@ def test_reuse_rebuilds_and_says_why_when_the_provider_keys_changed(build_missio
 
     assert stale.lifecycle.calls == ["down", "up"]
     assert (
-        "provider p credentials changed: INFERENCE_API_KEY — refreshing the provider and rebuilding the sandbox"
+        "provider p credentials changed: INFERENCE_API_KEY; refreshing the provider and rebuilding the sandbox"
         in stale.lines
     )
     assert _REUSING not in stale.lines
@@ -141,7 +141,7 @@ def test_a_victim_image_built_from_another_context_is_warned_about(build_mission
 
     harness.run()
 
-    assert "warning: victim image reg/agent:1 was built from a different staged context" in harness.lines
+    assert "victim image reg/agent:1 was built from a different staged context" in harness.lines
 
 
 def test_reuse_with_no_record_of_a_previous_build_rebuilds(build_mission: BuildMission) -> None:
@@ -149,7 +149,7 @@ def test_reuse_with_no_record_of_a_previous_build_rebuilds(build_mission: BuildM
 
     harness.run()
 
-    assert _REBUILDING in harness.lines[0]
+    assert any(_REBUILDING in line for line in harness.lines)
     assert harness.lifecycle.calls == ["down", "up"]
 
 
@@ -165,7 +165,22 @@ def test_a_sandbox_that_fails_to_start_surfaces_its_output_and_is_never_trusted_
     assert "docker build failed" in failed.lines
     retried = build_mission(skip_initial_up=True, no_cleanup=True)
     retried.run()
-    assert _REBUILDING in retried.lines[0]
+    assert any(_REBUILDING in line for line in retried.lines)
+
+
+def test_a_long_failed_build_shows_only_its_tail_and_keeps_all_of_it_in_the_run_log(
+    build_mission: BuildMission,
+) -> None:
+    failed = build_mission(no_cleanup=True)
+    failed.lifecycle.up_result = _failed("\n".join(f"layer {i}" for i in range(40)))
+
+    with pytest.raises(MissionError):
+        failed.run()
+
+    (shown,) = [line for line in failed.lines if "layer 39" in line]
+    assert shown.splitlines()[0] == "… 25 other line(s) in the log"
+    assert "layer 24" not in shown
+    assert "layer 0" in failed.run_log
 
 
 def test_health_is_awaited_with_the_configured_timeout(build_mission: BuildMission) -> None:
@@ -174,8 +189,8 @@ def test_health_is_awaited_with_the_configured_timeout(build_mission: BuildMissi
     harness.run()
 
     assert harness.health_waits == [("http://victim/health", 5.0)]
-    assert "victim health ready" in harness.lines
-    assert "Waiting for victim health" in harness.statuses
+    assert "Victim healthy" in harness.lines
+    assert "Waiting for the victim to become healthy" in harness.statuses
 
 
 def test_a_victim_that_never_turns_healthy_is_reported_as_unavailable(
@@ -191,7 +206,7 @@ def test_a_victim_that_never_turns_healthy_is_reported_as_unavailable(
     with pytest.raises(VictimUnavailableError, match=r"did not become healthy at http://victim/health within 5\.0s"):
         harness.run()
 
-    assert "victim health ready" not in harness.lines
+    assert "Victim healthy" not in harness.lines
 
 
 # --- relay instrumentation -------------------------------------------------------------------------------
@@ -258,7 +273,8 @@ def test_the_relay_probe_hits_the_victim_and_syncs_the_atof_log_from_the_sandbox
     ]
     assert harness.lifecycle.fetched == [(f"{runner.SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", host_atof)]
     assert "Checking Relay instrumentation" in harness.statuses
-    assert "relay instrumentation confirmed (4 event(s))" in harness.lines
+    assert "Relay instrumentation confirmed" in harness.lines
+    assert "4 Relay event(s) observed from the probe" in harness.lines
     assert any("dirty scope stack" in line for line in harness.lines) is quarantined
 
 
@@ -270,7 +286,7 @@ def test_reuse_adopts_the_pre_built_image_the_sandbox_was_created_from(build_mis
 
     assert reused.lifecycle.calls == []
     assert reused.lifecycle.config.image == "reg/agent:1"
-    assert "reusing the pre-built victim image recorded for this sandbox: reg/agent:1" in reused.lines
+    assert "Reusing the pre-built victim image recorded for this sandbox: reg/agent:1" in reused.lines
     assert _REUSING in reused.lines
 
 

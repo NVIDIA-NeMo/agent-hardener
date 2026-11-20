@@ -3,9 +3,12 @@
 
 # Troubleshooting
 
-Start from `.agent-hardener/run-logs/<run id>/agent-hardener.log`; OpenShell's own output is under
-`.agent-hardener/openshell-logs/`. If the caller set `AGENT_HARDENER_ERROR_FILE`, a failed command also writes
-its classified error there.
+Start from the command's complete log: every command ends with `→ log: <path>`
+(`.agent-hardener/logs/<command>-<UTC time>.log`, or `AGENT_HARDENER_LOG_FILE` when set), and that file holds
+every record, tracebacks included. Or rerun with `--debug` to see the same records on the console as they
+happen. A run's build and infra output is also in `.agent-hardener/run-logs/<run id>/agent-hardener.log`, and
+OpenShell's own output is under `.agent-hardener/openshell-logs/`. If the caller set `AGENT_HARDENER_ERROR_FILE`,
+a failed command also writes its classified error there.
 
 | Symptom | Cause | Fix |
 | --- | --- | --- |

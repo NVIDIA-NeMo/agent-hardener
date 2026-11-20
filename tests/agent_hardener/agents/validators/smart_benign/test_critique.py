@@ -114,7 +114,7 @@ def test_rows_the_critic_forgot_are_kept(
     requests = [_request("a", "one"), _request("a", "two")]
     _patch(monkeypatch, fake_model(CriticResult(decisions=[_decision(1)])))
 
-    with caplog.at_level(logging.WARNING, logger=cr.logger.name):
+    with caplog.at_level(logging.INFO, logger=cr.logger.name):
         delta = asyncio.run(cr.critique(_state(requests)))
 
     assert _payloads(delta) == ["one", "two"]
@@ -127,7 +127,7 @@ def test_the_last_decision_for_an_index_wins(
     result = CriticResult(decisions=[_decision(1, "drop"), _decision(1, "keep")])
     _patch(monkeypatch, fake_model(result))
 
-    with caplog.at_level(logging.WARNING, logger=cr.logger.name):
+    with caplog.at_level(logging.INFO, logger=cr.logger.name):
         delta = asyncio.run(cr.critique(_state([_request("a", "one")])))
 
     assert _payloads(delta) == ["one"]
@@ -143,7 +143,7 @@ def test_a_rewrite_without_a_payload_keeps_the_original(
 ) -> None:
     _patch(monkeypatch, fake_model(CriticResult(decisions=[_decision(1, "rewrite", new_payload)])))
 
-    with caplog.at_level(logging.WARNING, logger=cr.logger.name):
+    with caplog.at_level(logging.INFO, logger=cr.logger.name):
         delta = asyncio.run(cr.critique(_state([_request("a", "original")])))
 
     assert _payloads(delta) == ["original"]

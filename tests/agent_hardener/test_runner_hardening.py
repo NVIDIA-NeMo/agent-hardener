@@ -46,7 +46,7 @@ def test_tool_path_verification_is_skipped_for_a_plain_http_target(build_mission
 
     harness.run()
 
-    assert not any("tool calls reach Relay" in line for line in harness.lines)
+    assert not any("Tool calls reach Relay" in line for line in harness.lines)
     assert harness.lifecycle.fetched == []
 
 
@@ -72,7 +72,7 @@ def test_tool_path_verification_reads_the_synced_log_and_names_the_tools(
     harness.run()
 
     assert checked == [["record-from-events.atof.jsonl"] if atof_exists else []]
-    assert "tool calls reach Relay (bash, read_file)" in harness.lines
+    assert "Tool calls reach Relay (bash, read_file)" in harness.lines
     assert harness.lifecycle.fetched[-1] == (f"{runner.SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", atof)
 
 

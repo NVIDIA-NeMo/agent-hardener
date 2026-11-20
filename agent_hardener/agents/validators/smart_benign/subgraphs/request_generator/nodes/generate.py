@@ -44,7 +44,7 @@ async def generate(state: RequestGeneratorState) -> dict[str, object]:
         except RateLimitError:
             raise
         except Exception as exc:
-            logger.exception("request_generator failed for tool %r", tool.name)
+            logger.info("request_generator failed for tool %r", tool.name, exc_info=True)
             return [], [f"request_generator[{tool.name}]: {exc}"]
         return _dedupe_within_tool(_to_requests(tool, output)), []
 
