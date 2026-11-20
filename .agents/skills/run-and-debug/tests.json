@@ -1,0 +1,13 @@
+{
+  "skill": "run-and-debug",
+  "tests": [
+    {"type": "explicit", "prompt": "Use run-and-debug to start a war-game on my dev machine.", "expected_skill": "run-and-debug"},
+    {"type": "explicit", "prompt": "Follow the run-and-debug skill to figure out why my run failed.", "expected_skill": "run-and-debug"},
+    {"type": "implicit", "prompt": "Where does Agent Hardener write the run log and the final report?", "expected_skill": "run-and-debug"},
+    {"type": "implicit", "prompt": "How do I run agent hardener locally from a fresh checkout and which tests should I run?", "expected_skill": "run-and-debug"},
+    {"type": "implicit", "prompt": "Rerun the last attacks without the attacker so I can debug the defenders quickly.", "expected_skill": "run-and-debug"},
+    {"type": "contextual", "prompt": "The run exited with category attacker_failed after two hours on an agent with 14 tools. What do I do?", "expected_skill": "run-and-debug"},
+    {"type": "negative-control", "prompt": "Add a new defender that blocks calls to the delete_user tool.", "expected_skill_not": "run-and-debug"},
+    {"type": "negative-control", "prompt": "Write a trace provider that reads attack traces from a JSONL file.", "expected_skill_not": "run-and-debug"}
+  ]
+}

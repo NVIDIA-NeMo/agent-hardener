@@ -1,0 +1,14 @@
+{
+  "skill": "add-defender",
+  "tests": [
+    {"type": "explicit", "prompt": "Use the add-defender skill to add a defender that writes a regex guardrail.", "expected_skill": "add-defender"},
+    {"type": "explicit", "prompt": "Follow add-defender to register my new defender in the default manifest.", "expected_skill": "add-defender"},
+    {"type": "implicit", "prompt": "I want to add a new defender that hardens the sandbox policy against data exfiltration.", "expected_skill": "add-defender"},
+    {"type": "implicit", "prompt": "Write a new mitigation node for the OpenShell policy defender.", "expected_skill": "add-defender"},
+    {"type": "implicit", "prompt": "How does a defender's output get merged and deployed to the victim?", "expected_skill": "add-defender"},
+    {"type": "contextual", "prompt": "The guardrails defender keeps missing attacks that abuse the file-read tool. Add another defender that writes a rail for that tool from the attack prompt.", "expected_skill": "add-defender"},
+    {"type": "negative-control", "prompt": "Add a new attacker that replays a list of jailbreak prompts.", "expected_skill_not": "add-defender"},
+    {"type": "negative-control", "prompt": "The OpenShell gateway won't start and the sandbox is stuck; how do I reset it?", "expected_skill_not": "add-defender"},
+    {"type": "negative-control", "prompt": "Add a trace provider that reads traces from a JSONL file.", "expected_skill_not": "add-defender"}
+  ]
+}
