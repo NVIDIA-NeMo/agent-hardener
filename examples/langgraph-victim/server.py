@@ -62,8 +62,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     before restarting the victim, and nothing activates them — nor the ATOF sink the run's preflight
     insists on — without this call.
     """
-    # Relay >=0.9 tears the plugin host down when the activation handle is dropped.
-    async with await nemo_relay.plugin.initialize(PluginConfig()):
+    # activate() keeps the plugin host open for the block, i.e. the process's life; Relay tears the
+    # host down when the activation ends.
+    async with nemo_relay.plugin.activate(PluginConfig()):
         yield
 
 
