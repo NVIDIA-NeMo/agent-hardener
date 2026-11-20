@@ -286,27 +286,26 @@ def _latched_llm(blocked_message: str) -> Callable[..., Any]:
 
 
 def _latched_llm_stream(blocked_message: str) -> Callable[..., Any]:
-    """The streaming twin of :func:`_latched_llm`."""
+    """The streaming twin of :func:`_latched_llm`.
 
-    def intercept(name: str, request: Any, context: Any, next_call: Any) -> Any:
+    An allowed call returns Relay's own stream rather than re-yielding it from an async generator:
+    under concurrent Hermes streaming on CPython 3.14, ``async for`` over the native stream segfaults
+    in exception unwind at end of stream.
+    """
+
+    async def intercept(name: str, request: Any, context: Any, next_call: Any) -> Any:
         del name, context
         key = _request_key()
         if not _BLOCKED.is_blocked(key):
-            return _passthrough_stream(request, next_call)
+            return await next_call(request)
         chunks = blocked_stream_chunks(request, blocked_message)
         if chunks is None:
             logger.warning("agent-hardener did not recognise the harness stream shape; allowing the model call")
-            return _passthrough_stream(request, next_call)
+            return await next_call(request)
         _BLOCKED.discard(key)
         return _replay_stream(chunks)
 
     return intercept
-
-
-async def _passthrough_stream(request: Any, next_call: Any) -> Any:
-    """Hand the provider's own chunks straight through. ``next_call`` resolves to the iterator."""
-    async for chunk in await next_call(request):
-        yield chunk
 
 
 async def _replay_stream(chunks: list[dict[str, Any]]) -> Any:

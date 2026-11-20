@@ -205,6 +205,32 @@ def test_env_file_values_never_override_the_existing_environment(
     assert tool.os.environ["AH_TEST_EXISTING"] == "from-shell"
 
 
+def test_env_file_warns_by_key_when_an_export_differs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("AH_TEST_DIFF=file-secret\nAH_TEST_SAME=same\n")
+    monkeypatch.setenv("AH_TEST_DIFF", "shell-secret")
+    monkeypatch.setenv("AH_TEST_SAME", "same")
+    warnings: list[str] = []
+    monkeypatch.setattr(tool, "warn", warnings.append)
+
+    tool.load_local_env(env_file)
+
+    assert tool.os.environ["AH_TEST_DIFF"] == "shell-secret"
+    assert len(warnings) == 1
+    assert "AH_TEST_DIFF" in warnings[0]
+    assert "secret" not in warnings[0]
+
+
+def test_env_file_fills_a_variable_exported_empty(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("AH_TEST_EMPTY=from-file\n")
+    monkeypatch.setenv("AH_TEST_EMPTY", "")
+
+    tool.load_local_env(env_file)
+
+    assert tool.os.environ["AH_TEST_EMPTY"] == "from-file"
+
+
 @pytest.mark.parametrize(
     ("base_url", "expected"),
     [
@@ -271,8 +297,9 @@ class _Fetcher:
 
     last: _Fetcher
 
-    def fetch_file(self, remote: str, local: Path) -> None:
+    def fetch_file(self, remote: str, local: Path) -> bool:
         self.fetched.append((remote, local))
+        return True
 
 
 def _prepared(atof_path: Path | None, cwd: Path | None) -> OpenShellConfig:
@@ -326,7 +353,13 @@ class _Sandbox:
     """Fake lifecycle + collaborators for managed_victim_sandbox; records the order things happen in."""
 
     def __init__(
-        self, monkeypatch: pytest.MonkeyPatch, *, ready: bool = False, up_ok: bool = True, same_image: bool = True
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        *,
+        ready: bool = False,
+        up_ok: bool = True,
+        same_image: bool = True,
+        stale_credentials: str | None = None,
     ) -> None:
         self.events: list[str] = []
         self.verify_error: Exception | None = None
@@ -347,6 +380,10 @@ class _Sandbox:
 
             def down(self) -> None:
                 outer.events.append(f"down:{self.config}")
+
+            def credentials_drift(self) -> str | None:
+                outer.events.append(f"credentials?:{self.config}")
+                return stale_credentials
 
             def image_context_drift(self) -> str | None:
                 if isinstance(outer.drift, Exception):
@@ -409,7 +446,17 @@ def test_a_ready_sandbox_is_reused_and_left_running(monkeypatch: pytest.MonkeyPa
     with sandbox.enter(reuse=True, no_cleanup=False):
         pass
 
-    assert sandbox.events == ["ready?:base", "image?:base", "verify:prepared-base:None"]
+    assert sandbox.events == ["ready?:base", "image?:base", "credentials?:base", "verify:prepared-base:None"]
+
+
+def test_reuse_replaces_a_ready_sandbox_holding_stale_provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _Sandbox(monkeypatch, ready=True, stale_credentials="provider p credentials changed: INFERENCE_API_KEY")
+
+    with sandbox.enter(reuse=True, no_cleanup=False):
+        pass
+
+    assert sandbox.events[:4] == ["ready?:base", "image?:base", "credentials?:base", "up:prepared-base"]
+    assert sandbox.events[-1] == "down:base"
 
 
 def test_reuse_replaces_a_ready_sandbox_created_from_another_image(monkeypatch: pytest.MonkeyPatch) -> None:

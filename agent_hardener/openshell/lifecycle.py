@@ -34,6 +34,13 @@ from agent_hardener.openshell.config import (
     OpenShellConfig,
     SubprocessCommandRunner,
 )
+from agent_hardener.openshell.credentials import (
+    CredentialRecord,
+    read_credential_record,
+    read_revision,
+    write_credential_record,
+    write_revision,
+)
 from agent_hardener.openshell.relay_victim import CONTEXT_DIGEST_FILE, IMAGE_CONTEXT_DIGEST_PATH, SHIM_DIR
 from agent_hardener.openshell.support import (
     combine_results,
@@ -44,7 +51,12 @@ from agent_hardener.openshell.support import (
     read_env_file,
 )
 from agent_hardener.relay_plugin.config import judge_credentials
-from agent_hardener.swarm_tracker.layout import read_victim_image, write_victim_image
+from agent_hardener.swarm_tracker.layout import (
+    provider_credentials_path,
+    read_victim_image,
+    sandbox_provider_revision_path,
+    write_victim_image,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,7 +117,8 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         """Create the sandbox when a build context or a pre-built image is configured.
 
         An existing sandbox is kept, unless it was created from a different pre-built image than the one now
-        configured: then it is replaced, since nothing else would ever switch it.
+        configured, or its provider credentials are stale (see :meth:`credentials_drift`): then it is
+        replaced, since nothing else would ever switch it.
         """
         effective_policy_path = policy_path or self.config.policy_path
         results = self._ensure_gateway_started()
@@ -117,8 +130,12 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if self.config.build_context is None and self.config.image is None:
             return combine_results(results, ok=results[-1].ok)
 
-        if sandbox_status.ok and not self.runs_configured_image():
-            logger.info("sandbox setup: replacing sandbox=%s, created from another image", self.config.sandbox)
+        replace_because = None
+        if sandbox_status.ok:
+            replace_because = "created from another image" if not self.runs_configured_image() else None
+            replace_because = replace_because or self.credentials_drift()
+        if replace_because:
+            logger.warning("sandbox setup: replacing sandbox=%s, %s", self.config.sandbox, replace_because)
             results.append(self.down())
             if not results[-1].ok:
                 return combine_results(results)
@@ -201,6 +218,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if results[-1].ok:
             results.append(self.wait_for_sandbox_ready())
         if results[-1].ok:
+            write_revision(self._sandbox_revision_path(), self._provider_revision())
             results.extend(self._upload_seed_files())
         return results
 
@@ -308,8 +326,8 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             )
         ]
         if results[-1].ok:
-            results.append(self._sync_judge_credentials())
-            return combine_results(results)
+            results.append(self._refresh_credentials())
+            return combine_results(results, ok=results[-1].ok)
         if is_transient_transport_failure(results[-1].output):
             return combine_results(results)
         return self._create_provider(results)
@@ -355,7 +373,99 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             # OpenShell rejects --from-existing combined with --credential. Preserve profile
             # discovery first, then add the judge without replacing the discovered victim key.
             results.append(self._sync_judge_credentials())
+        if results[-1].ok:
+            write_credential_record(self._provider_record_path(), CredentialRecord.of(credentials))
         return combine_results(results, ok=results[-1].ok)
+
+    def credentials_drift(self) -> str | None:
+        """Why the sandbox's provider credentials are stale, or None when they are current.
+
+        Stale when the configured values differ from those the provider was last given (or that was never
+        recorded), or when the sandbox was created before the provider's last update: OpenShell hands a
+        sandbox placeholders tied to the provider revision it started under, and those keep resolving to
+        the old values. None as well when refreshing is turned off, or the credentials cannot be read
+        (creating the provider reports that).
+        """
+        if not self.config.provider or not self.config.refresh_provider_credentials:
+            return None
+        credentials, error = self._provider_credentials()
+        if error is not None:
+            return None
+        stale = self._describe_stale(self._changed_credentials(credentials))
+        if stale:
+            return stale
+        if read_revision(self._sandbox_revision_path()) != self._provider_revision():
+            return f"sandbox {self.config.sandbox} was created before provider {self.config.provider} was last updated"
+        return None
+
+    def _changed_credentials(self, credentials: dict[str, str]) -> list[str] | None:
+        """Names whose value differs from the one the provider was last given; None when that was never recorded."""
+        record = read_credential_record(self._provider_record_path())
+        return None if record is None else record.changed(credentials)
+
+    def _describe_stale(self, changed: list[str] | None) -> str | None:
+        if changed is None:
+            return f"no record of the credentials provider {self.config.provider} holds"
+        return f"provider {self.config.provider} credentials changed: {', '.join(changed)}" if changed else None
+
+    def _refresh_credentials(self) -> OpenShellCommandResult:
+        """Give an existing provider the configured values that differ from the ones it was last given.
+
+        The provider outlives runs, so without this a rotated key never reaches it. It is updated in place:
+        OpenShell refuses to delete a provider while any sandbox is attached, and one provider may serve
+        several sandboxes. Only the changed keys are sent (all of them when nothing was recorded), so a
+        newly added judge key leaves the victim's credential alone. Every key is passed by name from a
+        child-only environment, keeping values off argv.
+        """
+        credentials, error = self._provider_credentials()
+        if error is not None:
+            logger.warning(
+                "provider check: cannot compare credentials of provider=%s: %s", self.config.provider, error.output
+            )
+            return OpenShellCommandResult(ok=True, command=[], output=f"warning: {error.output}")
+        changed = self._changed_credentials(credentials)
+        stale = self._describe_stale(changed)
+        if stale is None:
+            return OpenShellCommandResult(ok=True, command=[], output="")
+        if not self.config.refresh_provider_credentials:
+            message = f"warning: {stale}; not refreshed (refresh_provider_credentials is off)"
+            logger.warning("provider check: %s", message)
+            return OpenShellCommandResult(ok=True, command=[], output=message)
+
+        logger.warning("provider check: refreshing provider=%s, %s", self.config.provider, stale)
+        results = [OpenShellCommandResult(ok=True, command=[], output=f"refreshing provider: {stale}")]
+        names = [name for name in credentials if changed is None or name in changed]
+        if names or not credentials:
+            if self.config.provider_type == GENERIC_PROVIDER_TYPE:
+                # Only the names being sent, like the judge sync: unrelated entries already in the profile stay.
+                results.append(
+                    self._ensure_generic_profile(list(dict.fromkeys([*self.config.provider_credentials, *names])))
+                )
+                if not results[-1].ok:
+                    return combine_results(results, ok=False)
+            args = ["provider", "update", str(self.config.provider), "--gateway", self.config.gateway]
+            for name in names:
+                args.extend(["--credential", name])
+            if not credentials:
+                args.append("--from-existing")
+            env = {**os.environ, **{name: credentials[name] for name in names}} if names else None
+            results.append(self._exec.run(args, env=env))
+        if results[-1].ok:
+            write_credential_record(self._provider_record_path(), CredentialRecord.of(credentials))
+        return combine_results(results, ok=results[-1].ok)
+
+    def _provider_record_path(self) -> Path:
+        return provider_credentials_path(self._builds_cwd(), self.config.gateway, str(self.config.provider))
+
+    def _sandbox_revision_path(self) -> Path:
+        return sandbox_provider_revision_path(self._builds_cwd(), self.config.sandbox)
+
+    def _provider_revision(self) -> str | None:
+        """The revision of the provider's credentials as last written, or None without a provider or record."""
+        if not self.config.provider:
+            return None
+        record = read_credential_record(self._provider_record_path())
+        return record.revision if record else None
 
     def _check_judge_profile(self) -> OpenShellCommandResult:
         """Reject custom profiles that cannot carry the separate judge credential before mutation."""
@@ -379,25 +489,20 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         return exported
 
     def _sync_judge_credentials(self) -> OpenShellCommandResult:
-        """Add the safety judge's key to a provider an earlier run created without it.
+        """Add the safety judge's key to a provider just created by discovery (``--from-existing``).
 
-        The provider outlives runs, so without this the key only lands on the very first one. The key
-        is passed by name: OpenShell reads it from a child-only environment, keeping it off argv and
-        preserving the victim's independent inference credential when the judge inherits analysis.
+        OpenShell rejects ``--from-existing`` together with ``--credential``, so the judge goes in with a
+        second call. Its profile was checked to carry the key (:meth:`_check_judge_profile`). Passed by
+        name from a child-only environment, keeping it off argv and leaving the discovered victim key
+        alone. Every later run keeps it current through :meth:`_refresh_credentials`.
         """
         judge = judge_credentials()
         if not judge:
             return OpenShellCommandResult(ok=True, command=[], output="")
-        results: list[OpenShellCommandResult] = []
-        if self.config.provider_type == GENERIC_PROVIDER_TYPE:
-            results.append(self._ensure_generic_profile([*self.config.provider_credentials, *judge]))
-            if not results[-1].ok:
-                return combine_results(results)
         args = ["provider", "update", str(self.config.provider), "--gateway", self.config.gateway]
         for name in judge:
             args.extend(["--credential", name])
-        results.append(self._exec.run(args, env={**os.environ, **judge}))
-        return combine_results(results)
+        return self._exec.run(args, env={**os.environ, **judge})
 
     def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
         """The ``NAME -> value`` credentials: ``provider_env_file``'s, plus the safety judge's own key."""

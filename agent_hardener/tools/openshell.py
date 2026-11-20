@@ -102,12 +102,22 @@ def configure_local_docker_host() -> None:
 
 
 def load_local_env(path: Path | str | None) -> None:
-    """Load dotenv values into this process without printing secrets."""
+    """Load dotenv values into this process without printing secrets.
+
+    The file only fills variables that are unset or empty: a value already in the environment (a shell
+    ``export``, CI) wins, because ``--env-file`` defaults to ``.env`` and is loaded on every command, so a
+    stray file must not override a deliberate export. When the two differ, a warning names the key (never
+    the value, which may be a secret) so an ignored file entry is not silent.
+    """
     env_path = Path(path) if path else None
     if env_path is None or not env_path.exists():
         return
     for key, value in read_env_file(env_path).items():
-        os.environ.setdefault(key, value)
+        current = os.environ.get(key)
+        if not current:
+            os.environ[key] = value
+        elif current != value:
+            warn(f"{key} is set in the environment and differs from {env_path}; using the environment value.")
 
 
 def target_health_url(base_url: str | None) -> str | None:
@@ -345,7 +355,13 @@ def managed_victim_sandbox(
     docker build plus the whole benign interview first.
     """
     openshell = openshell_config(config)
-    reused = reuse and sandbox_is_ready(openshell) and OpenShellLifecycle(openshell).runs_configured_image()
+    current = OpenShellLifecycle(openshell)
+    reused = (
+        reuse
+        and sandbox_is_ready(openshell)
+        and current.runs_configured_image()
+        and current.credentials_drift() is None
+    )
     prepared = prepare_relay_victim(openshell)
     lifecycle = OpenShellLifecycle(prepared)
     if not reused:

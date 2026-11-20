@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 import tomli_w
 
-from agent_hardener.llm import DEFAULT_MODEL
+from agent_hardener.llm import default_model
 from agent_hardener.models import DefenderOutput
 from agent_hardener.relay_plugin.config import (
     DEFAULT_GUARDRAIL_THRESHOLD,
@@ -86,7 +86,7 @@ def append_guardrail(
     """Add one ``custom_guardrail_N`` entry guarding ``tool`` and return its name and the rendered file.
 
     ``judge_model`` (the defender's ``safety_llm``) is the in-victim judge, written only when the file has
-    no judge model yet; ``None`` means :data:`agent_hardener.llm.DEFAULT_MODEL`.
+    no judge model yet; ``None`` means :func:`agent_hardener.llm.default_model`.
     """
     with _PLUGINS_LOCK:
         document = _load(target)
@@ -135,7 +135,7 @@ def _judge_model(model: str | None) -> dict[str, Any]:
         "provider": "nvidia",
         "api_key_env": judge_api_key_env(),
         # The sandbox allow-list and the judge both read judge_endpoint(), so they cannot disagree.
-        "model": model or DEFAULT_MODEL,
+        "model": model or default_model(),
         "base_url": judge_endpoint(),
     }
 

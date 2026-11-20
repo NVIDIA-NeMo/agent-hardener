@@ -120,6 +120,21 @@ def test_reuse_rebuilds_and_says_why_when_a_different_agent_was_built_before(bui
     assert _REUSING in again.lines
 
 
+def test_reuse_rebuilds_and_says_why_when_the_provider_keys_changed(build_mission: BuildMission) -> None:
+    build_mission(no_cleanup=True).run()
+    stale = build_mission(skip_initial_up=True, no_cleanup=True)
+    stale.lifecycle.stale_credentials = "provider p credentials changed: INFERENCE_API_KEY"
+
+    stale.run()
+
+    assert stale.lifecycle.calls == ["down", "up"]
+    assert (
+        "provider p credentials changed: INFERENCE_API_KEY — refreshing the provider and rebuilding the sandbox"
+        in stale.lines
+    )
+    assert _REUSING not in stale.lines
+
+
 def test_a_victim_image_built_from_another_context_is_warned_about(build_mission: BuildMission) -> None:
     harness = build_mission(no_cleanup=True)
     harness.lifecycle.drift = "victim image reg/agent:1 was built from a different staged context"

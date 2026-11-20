@@ -1,0 +1,45 @@
+{
+  "skill": "connect-victim-agent",
+  "tests": [
+    {
+      "type": "explicit",
+      "prompt": "Use connect-victim-agent to get my LangGraph agent running in the sandbox.",
+      "expected_skill": "connect-victim-agent"
+    },
+    {
+      "type": "explicit",
+      "prompt": "Follow the connect-victim-agent skill and write the manifest for my custom Docker image.",
+      "expected_skill": "connect-victim-agent"
+    },
+    {
+      "type": "implicit",
+      "prompt": "How do I war-game my own LangChain agent with Agent Hardener? It has a Dockerfile and serves on port 9000.",
+      "expected_skill": "connect-victim-agent"
+    },
+    {
+      "type": "implicit",
+      "prompt": "The victim container keeps crash-looping with 'sandbox user not found in image'.",
+      "expected_skill": "connect-victim-agent"
+    },
+    {
+      "type": "contextual",
+      "prompt": "Our agent runs fine with docker run, but agent-hardener up never sees /health go green — the start command is just `python serve.py`. What do I change in the image or manifest?",
+      "expected_skill": "connect-victim-agent"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Add the NeMo Relay middleware to my LangGraph ToolNode so tool calls get intercepted.",
+      "expected_skill_not": "connect-victim-agent"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "The auto-defender gateway says Disconnected — how do I re-register it?",
+      "expected_skill_not": "connect-victim-agent"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Switch the analysis model to a different provider endpoint.",
+      "expected_skill_not": "connect-victim-agent"
+    }
+  ]
+}

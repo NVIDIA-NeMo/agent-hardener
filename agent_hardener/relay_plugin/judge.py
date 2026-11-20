@@ -38,6 +38,12 @@ JUDGE_SYSTEM_PROMPT = (
 # A whole reply that is a number in [0, 1], never a digit found inside prose.
 _SCORE_RE = re.compile(r"0(?:\.\d+)?|1(?:\.0+)?|\.\d+")
 
+#: How often the judge retries a failed model call (a 429 rate limit, a 5xx, a timeout). The OpenAI
+#: client backs off between tries; its default of 2 gives a burst of tool calls only a few seconds to clear
+#: a per-minute rate limit. This plugin runs inside the victim's sandbox without the rest of Agent Hardener,
+#: so it relies on the client's own retry rather than :mod:`agent_hardener.rate_limits`.
+JUDGE_MAX_RETRIES = 6
+
 
 class JudgeScore(BaseModel):
     """The judge's whole answer. A JSON-schema reply, so a word in place of the number cannot decode."""
@@ -119,6 +125,7 @@ class LlmSafetyJudge:
                 api_key=SecretStr(key) if key else None,
                 temperature=0,
                 extra_body=no_reasoning_body(self._config.model),
+                max_retries=JUDGE_MAX_RETRIES,
             )
         return self._model
 

@@ -6,8 +6,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import signal
 import tempfile
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +21,7 @@ import pytest
 from agent_hardener.errors import BenignSuiteError
 from agent_hardener.models import TargetInput, TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.runtime import runner as runner_module
 from agent_hardener.runtime.runner import Mission, MissionError, run_mission
 
 if TYPE_CHECKING:
@@ -231,6 +235,9 @@ def test_run_mission_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -258,6 +265,9 @@ def test_run_mission_always_writes_full_report_to_log(monkeypatch: pytest.Monkey
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -320,6 +330,9 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr("agent_hardener.runtime.runner.Orchestrator", CapturingOrchestrator)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -363,6 +376,9 @@ def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.Mo
     downs: list[str] = []
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -393,6 +409,9 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -426,6 +445,9 @@ def test_run_mission_emits_status_events(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr("agent_hardener.runtime.runner.wait_for_health", lambda _u, _t: None)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -464,6 +486,9 @@ def test_run_mission_tees_detail_to_log_and_surfaces_errors(monkeypatch: pytest.
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -495,6 +520,9 @@ def test_run_mission_failure_output_surfaced_to_highlights(monkeypatch: pytest.M
     _patch_orchestrator(monkeypatch)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -537,6 +565,9 @@ def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.Monkey
     monkeypatch.setattr("agent_hardener.runtime.runner.Orchestrator", CapturingOrchestrator)
 
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -568,6 +599,9 @@ def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.Monkey
 
 def _teardown_mission(tmp_path: Path, diagnostics: OpenShellCommandResult, calls: list[str]) -> Mission:
     class FakeLifecycle:
+        def credentials_drift(self) -> str | None:
+            return None
+
         def image_context_drift(self) -> None:
             return None
 
@@ -642,3 +676,51 @@ def test_teardown_without_backends_only_stops_the_sandbox(build_mission: BuildMi
 
     assert harness.lifecycle.calls == ["down", "up", "down"]
     assert harness.backends.downed == []
+
+
+# --- termination -------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("signum", runner_module.TERMINATION_SIGNALS, ids=lambda sig: signal.Signals(sig).name)
+def test_a_terminated_run_still_tears_down_and_a_repeated_signal_cannot_abort_it(
+    build_mission: BuildMission, signum: int
+) -> None:
+    """A closed terminal or ``kill`` used to skip teardown, leaving the sandbox and its port forward up."""
+    previous = signal.getsignal(signum)
+    harness = build_mission()
+    signalled: list[bool] = []
+
+    def terminate(_kwargs: object) -> None:
+        signalled.append(True)
+        os.kill(os.getpid(), signum)
+
+    harness.orchestrator_hook = terminate
+    down = harness.lifecycle.down
+
+    def down_while_signalled_again() -> OpenShellCommandResult:
+        if signalled:  # teardown, not the bring-up's own down
+            os.kill(os.getpid(), signum)
+        return down()
+
+    harness.lifecycle.down = down_while_signalled_again  # type: ignore[method-assign]
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run()
+
+    assert harness.lifecycle.calls == ["down", "up", "down"]
+    assert signal.getsignal(signum) == previous
+
+
+def test_termination_handling_is_a_noop_off_the_main_thread() -> None:
+    seen: list[object] = []
+
+    def in_thread() -> None:
+        with runner_module.teardown_on_termination():
+            seen.append(signal.getsignal(signal.SIGTERM))
+
+    before = signal.getsignal(signal.SIGTERM)
+    worker = threading.Thread(target=in_thread)
+    worker.start()
+    worker.join()
+
+    assert seen == [before]

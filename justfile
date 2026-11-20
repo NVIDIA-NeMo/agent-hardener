@@ -221,6 +221,10 @@ test-pipeline-e2e:
 test-openshell-smoke-e2e:
     AGENT_HARDENER_RUN_OPEN_SHELL_SMOKE=1 uv run pytest tests/agent_hardener/test_openshell_smoke_e2e.py -q -o addopts=''
 
+# Check each skill's tests.json prompts load the right skill in a live Claude Code (calls a model; not CI)
+skill-routing *args:
+    uv run python scripts/skill_routing.py {{args}}
+
 # Run pytest tests with JUnit XML report
 test-junit:
     uv run pytest --junitxml=report.xml tests

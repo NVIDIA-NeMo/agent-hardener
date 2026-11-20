@@ -17,11 +17,13 @@ buildable image rather than evidence.
 from __future__ import annotations
 
 import shutil
+from pathlib import PurePath
 from typing import TYPE_CHECKING
 
 from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, SHIM_DIR
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 #: Where the bundle's Dockerfile bakes the guardrails. Matches the path Relay discovers as system
@@ -142,7 +144,7 @@ def write_hardened_bundle(
     if image is None:
         if build_root is None:
             raise ValueError("a hardened bundle needs a staged build context or a pre-built image")
-        shutil.copytree(build_root, destination, ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+        shutil.copytree(build_root, destination, ignore=_build_context_ignore(build_root), symlinks=True)
         _strip_sandbox_shim(destination / SHIM_DIR / "sitecustomize.py")
         source = _STAGED_SOURCE
     else:
@@ -181,3 +183,33 @@ def _strip_sandbox_shim(sitecustomize: Path) -> None:
     marker = text.find(_SANDBOX_SHIM_MARKER)
     if marker != -1:
         sitecustomize.write_text(text[:marker].rstrip() + "\n", encoding="utf-8")
+
+
+_BYTECODE = shutil.ignore_patterns("__pycache__", "*.pyc")
+
+
+def _build_context_ignore(build_root: Path) -> Callable[[str, list[str]], set[str]]:
+    """A ``copytree`` filter that keeps exactly what ``docker build`` would send from ``build_root``.
+
+    The bundle is the image the run built, so it carries what the build context carried. Copying the whole
+    staged tree instead ships every file the project's ``.dockerignore`` keeps out of the image: one project's
+    125 MB results folder landed in every run directory and filled the disk over a single campaign.
+    """
+    # Imported here, not at module level: the runner imports this module, and only the bundle needs docker.
+    from docker.utils.build import exclude_paths  # noqa: PLC0415
+
+    dockerignore = build_root / ".dockerignore"
+    lines = dockerignore.read_text(encoding="utf-8").splitlines() if dockerignore.is_file() else []
+    patterns = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    # Docker's own matcher, which always keeps the Dockerfile, as docker build always sends it.
+    kept = {PurePath(path) for path in exclude_paths(str(build_root), patterns)}
+    # A file re-included under an excluded directory comes back without its directory; copytree needs both.
+    kept |= {parent for path in kept for parent in path.parents}
+    kept_paths = {path.as_posix() for path in kept}
+
+    def ignore(directory: str, names: list[str]) -> set[str]:
+        relative = PurePath(directory).relative_to(build_root)
+        dropped = {name for name in names if (relative / name).as_posix() not in kept_paths}
+        return dropped | set(_BYTECODE(directory, names))
+
+    return ignore

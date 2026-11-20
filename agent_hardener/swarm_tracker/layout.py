@@ -22,6 +22,7 @@ _VICTIM_STATE = "victim-state"
 _INIT = "init"
 _AGENT_HARDENER = ".agent-hardener"
 _SANDBOXES = "sandboxes"
+_PROVIDERS = "providers"
 _BENIGN_PROFILES = "benign_profiles"
 
 
@@ -143,6 +144,16 @@ def agent_fingerprint_path(cwd: Path, sandbox: str) -> Path:
 def victim_image_path(cwd: Path, sandbox: str) -> Path:
     """Sidecar recording the pre-built image ``sandbox`` was last created from (GLOBAL scope; not created here)."""
     return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "victim_image.txt"
+
+
+def provider_credentials_path(cwd: Path, gateway: str, provider: str) -> Path:
+    """Sidecar recording salted digests of the credentials ``provider`` holds (GLOBAL scope; not created here)."""
+    return cwd / _AGENT_HARDENER / _PROVIDERS / gateway / provider / "credentials.json"
+
+
+def sandbox_provider_revision_path(cwd: Path, sandbox: str) -> Path:
+    """Sidecar recording which provider revision ``sandbox`` was created with (GLOBAL scope; not created here)."""
+    return cwd / _AGENT_HARDENER / _SANDBOXES / sandbox / "provider_revision.txt"
 
 
 def read_victim_image(cwd: Path, sandbox: str) -> str | None:

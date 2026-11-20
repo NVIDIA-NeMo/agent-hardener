@@ -16,6 +16,6 @@ The import order fixes the order commands appear in ``--help``.
 from __future__ import annotations
 
 from agent_hardener.cli._app import app
-from agent_hardener.cli import run, synth_benign, serve, lifecycle, setup, init, inspect
+from agent_hardener.cli import run, synth_benign, serve, lifecycle, setup, init, inspect, skills
 
-__all__ = ["app", "init", "inspect", "lifecycle", "run", "serve", "setup", "synth_benign"]
+__all__ = ["app", "init", "inspect", "lifecycle", "run", "serve", "setup", "skills", "synth_benign"]

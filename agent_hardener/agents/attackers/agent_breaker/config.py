@@ -46,17 +46,28 @@ DEFAULT_SKIP_CODES: list[int] = []
 _SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
 #: Match garak's AgentBreakerResult default so its structured verdict is not truncated.
 _MODEL_MAX_TOKENS = 8192
+#: Every AgentBreaker prompt (discovery parse, tool analysis, exploit, verify) asks for a raw JSON object,
+#: and the attack payloads it embeds are full of quotes and backslashes the model fails to escape. Left
+#: free-form, a tool analysis that does not parse leaves garak with nothing to attack and it exits 0
+#: having sent no attack. JSON mode makes the endpoint return valid JSON instead.
+_JSON_RESPONSE_FORMAT = {"type": "json_object"}
+_FALSE_STRINGS = frozenset({"0", "false", "no", "off"})
 
 
-def _model_config(uri: str, model_name: str, timeout: int) -> dict[str, Any]:
+def _model_config(uri: str, model_name: str, timeout: int, *, json_mode: bool = True) -> dict[str, Any]:
     config: dict[str, Any] = {
         "uri": uri,
         "max_tokens": _MODEL_MAX_TOKENS,
         "timeout": timeout,
         "suppressed_params": list(_SUPPRESSED_PARAMS),
     }
+    extra_params: dict[str, Any] = {}
+    if json_mode:
+        extra_params["response_format"] = dict(_JSON_RESPONSE_FORMAT)
     if (body := no_reasoning_body(model_name)) is not None:
-        config["extra_params"] = {"extra_body": body}
+        extra_params["extra_body"] = body
+    if extra_params:
+        config["extra_params"] = extra_params
     return config
 
 
@@ -72,6 +83,7 @@ OVERRIDE_KEYS = (
     "generations",
     "request_timeout",
     "model_timeout",
+    "json_mode",
 )
 
 
@@ -82,6 +94,15 @@ def _resolve(key: str, default: Any, overrides: dict[str, Any]) -> Any:
         return value
     env_value = os.environ.get(f"GARAK_{key.upper()}")
     return env_value if env_value else default
+
+
+def resolve_json_mode(overrides: dict[str, Any] | None = None) -> bool:
+    """Whether garak's models are asked for JSON mode; on unless ``json_mode``/``GARAK_JSON_MODE`` turns it off.
+
+    The escape hatch is for an endpoint that rejects ``response_format``.
+    """
+    value = _resolve("json_mode", True, overrides or {})
+    return str(value).strip().lower() not in _FALSE_STRINGS
 
 
 def resolve_model_timeout(overrides: dict[str, Any] | None = None) -> int | None:
@@ -121,6 +142,7 @@ def build_agent_breaker_config(
     detector_model = _resolve("detector_model_name", DEFAULT_DETECTOR_MODEL_NAME, overrides)
     generations = int(_resolve("generations", DEFAULT_GENERATIONS, overrides))
     model_timeout = resolve_model_timeout(overrides) or DEFAULT_MODEL_TIMEOUT_SECONDS
+    json_mode = resolve_json_mode(overrides)
     return {
         "run": {"generations": generations},
         "plugins": {
@@ -162,6 +184,7 @@ def build_agent_breaker_config(
                             _resolve("red_team_model_uri", DEFAULT_MODEL_URI, overrides),
                             red_team_model,
                             model_timeout,
+                            json_mode=json_mode,
                         ),
                     }
                 }
@@ -175,6 +198,7 @@ def build_agent_breaker_config(
                             _resolve("detector_model_uri", DEFAULT_MODEL_URI, overrides),
                             detector_model,
                             model_timeout,
+                            json_mode=json_mode,
                         ),
                     }
                 }
