@@ -86,18 +86,21 @@ uv run agent-hardener run --benign-suite <path/to/requests.csv>   # build, harde
 `synth-benign` (or the `serve` HITL) to produce it. Without `--benign-suite`, `run` still attacks,
 defends, and validates the attacks; it just skips the benign false-positive check.
 
-A manifest is ~10 lines (see `examples/agent-hardener.yaml`):
+A manifest for an agents-lab checkout next to it looks like this (`examples/agent-hardener.yaml` is the annotated version):
 
 ```yaml
 agent:
-  name: finance
-  project_dir: ../agents-lab
-  dockerfile: deploy/finance/Dockerfile
-  start_command: /app/.venv/bin/python -m finance.serve
-  binaries: ["/app/.venv/bin/**"]
+  name: finance-langgraph
+  project_dir: ../agents-lab                 # relative to this manifest's directory
+  dockerfile: deploy/finance_langgraph/Dockerfile
+  start_command: /usr/local/bin/python -m agents_lab.runtime.serve
+  binaries: ["/usr/local/bin/python*"]
   port: 8000
   secrets: [INFERENCE_API_KEY]
-  env:
+  env:                                       # image ENV does not reach the sandbox
+    AGENT_SCENARIO: finance
+    AGENT_HARNESS: langgraph
+    AGENTS_LAB_ROOT: /app
     FINANCE_BACKEND_URL: http://host.docker.internal:8086
 backends:
   - name: finance

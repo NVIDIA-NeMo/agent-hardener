@@ -131,7 +131,9 @@ class SessionConfig(AgentHardenerModel):
     def resolve_storage_root(cls, value: StorageConfig, info: ValidationInfo) -> StorageConfig:
         base_dir = info.context.get("base_dir") if info.context else None
         if base_dir is not None and not value.root_dir.is_absolute():
-            return value.model_copy(update={"root_dir": Path(base_dir) / value.root_dir})
+            # Absolute: OpenShell subprocesses run with cwd set to the config's directory, so a root left
+            # relative to the shell's cwd (``examples/.agent-hardener``) resolves twice and is not found.
+            return value.model_copy(update={"root_dir": Path(base_dir).absolute() / value.root_dir})
         return value
 
     @field_validator("preloaded_attacks")
