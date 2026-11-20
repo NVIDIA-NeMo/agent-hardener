@@ -21,12 +21,16 @@ bounds repeated re-synthesis; on the closing pass the boundary fan-out no-ops (`
 
 from __future__ import annotations
 
+import typing
 import warnings
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
+from pydantic import BaseModel
 
 from .state import SynthState
 from .subgraphs import (
@@ -62,6 +66,32 @@ def quiet_warnings() -> Iterator[None]:
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
         yield
+
+
+def _state_models(model: type[BaseModel] = SynthState) -> set[type[BaseModel]]:
+    """Every pydantic model a ``SynthState`` can hold, itself included, found through its field annotations."""
+    found: set[type[BaseModel]] = set()
+    pending: list[Any] = [model]
+    while pending:
+        tp = pending.pop()
+        if isinstance(tp, type) and issubclass(tp, BaseModel):
+            if tp in found:
+                continue
+            found.add(tp)
+            pending.extend(field.annotation for field in tp.model_fields.values())
+        else:
+            pending.extend(typing.get_args(tp))  # list[X], X | None, Annotated[X, ...], dict[str, X], ...
+    return found
+
+
+def synth_checkpointer() -> MemorySaver:
+    """The in-memory checkpointer that lets the synth graph pause at the interview and resume.
+
+    Its serializer is told which of our models a checkpoint may rebuild, on top of LangGraph's built-in safe
+    types. Without that list LangGraph warns on every resume, and says a future version will refuse them.
+    """
+    models = sorted(_state_models(), key=lambda m: f"{m.__module__}.{m.__qualname__}")
+    return MemorySaver(serde=JsonPlusSerializer(allowed_msgpack_modules=models))
 
 
 def _wrap(agent: Any, state_type: Any, entry: Callable, exit_: Callable) -> Callable:

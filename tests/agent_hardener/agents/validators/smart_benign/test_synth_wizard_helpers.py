@@ -123,6 +123,7 @@ class _Run:
     async def astream(self, state: Any, config: Any, stream_mode: Any) -> Any:
         self.started.append(state)
         self.lf_configs.append(config)
+        yield ("updates", {"request_generator": {"requests": self.final.requests}})
         yield ("values", self.final)
 
     def __call__(self, **kwargs: Any) -> int:
@@ -167,6 +168,18 @@ def test_answer_mode_is_derived_from_flags_and_tty(
 
     assert run.started[0].interactive is interactive
     assert f"Answers:       {label}" in capsys.readouterr().out
+
+
+def test_synthesis_progress_is_printed_before_the_summary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    run = _Run(monkeypatch, tmp_path, _final(requests=[_request(), _request("pwd")]), _validator("smart"))
+
+    run(no_interactive=True)
+
+    out = capsys.readouterr().out
+    assert out.index("generated the benign request suite — 2 requests") < out.index("Benign suite synthesized in")
+    assert out.index("Benign suite synthesized in") < out.index("Target:")
 
 
 def test_the_artifact_dir_is_under_the_storage_root_by_target_name(

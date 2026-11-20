@@ -17,12 +17,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import time
 import warnings
 from typing import TYPE_CHECKING
 
 from agent_hardener.config import load_config
+from agent_hardener.display.console import ok
+from agent_hardener.display.progress import build_console_renderer, format_duration
+from agent_hardener.events import EventType
+from agent_hardener.loggers import EventBus, emit_event, using_event_sink
 
 from .driver import drive_synth
+from .progress import PhaseTracker
 from .state import SynthState
 from .tracing import TracingContext, make_langfuse_callbacks
 from .validator import build_synth_inputs
@@ -74,7 +80,7 @@ def run_synth_wizard(
     state = SynthState.from_inputs(inputs, interactive=interactive, artifact_dir=artifact_dir)
     tracing = make_langfuse_callbacks(target_name=session.target.name)
     lf_config: dict[str, object] = {"callbacks": tracing.callbacks} if tracing.callbacks else {}
-    final = asyncio.run(_run_synth(state, lf_config, answer_provider))
+    final = _synthesize_with_progress(state, lf_config, answer_provider)
 
     if yes:
         answers_mode = "auto-accepted defaults"
@@ -90,8 +96,28 @@ def run_synth_wizard(
     return 0 if not final.errors else 1
 
 
-async def _run_synth(state: SynthState, lf_config: dict[str, object], answer_provider: AnswerProvider) -> SynthState:
-    return await drive_synth(state, answer_provider=answer_provider, lf_config=lf_config)
+def _synthesize_with_progress(
+    state: SynthState, lf_config: dict[str, object], answer_provider: AnswerProvider
+) -> SynthState:
+    """Run synth with the console renderer showing each finished step, so a long synthesis never looks stuck.
+
+    The steps reach the console as ``synth_phase`` events, the same ones Studio lists, through an event bus so
+    a rendering failure can never abort synthesis.
+    """
+    tracker = PhaseTracker(state)
+    bus = EventBus()
+    bus.subscribe(build_console_renderer(verbose=False))
+    started = time.monotonic()
+    with using_event_sink(bus.emit):
+        emit_event(EventType.STATUS_STARTED, {"label": "Synthesizing benign suite", "detail": tracker.first_step()})
+        try:
+            final = asyncio.run(
+                drive_synth(state, answer_provider=answer_provider, lf_config=lf_config, on_node=tracker.on_node)
+            )
+        finally:
+            emit_event(EventType.STATUS_COMPLETED, {})
+    ok(f"Benign suite synthesized in {format_duration(time.monotonic() - started)}")
+    return final
 
 
 def _upload_to_langfuse_dataset(requests: list[GeneratedRequest], target_name: str, tracing: TracingContext) -> None:

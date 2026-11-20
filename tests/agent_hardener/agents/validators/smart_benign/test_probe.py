@@ -171,3 +171,12 @@ def test_exit_adapter_keeps_the_raw_exchanges_and_probe_errors() -> None:
 
 def test_exit_adapter_adds_no_details_when_nothing_was_probed() -> None:
     assert "source_details" not in exit_adapter(_state())
+
+
+def test_a_failed_probe_is_logged_as_its_first_line() -> None:
+    error = RuntimeError(
+        "Server error '500 Internal Server Error'\nFor more information check: https://example.test/500"
+    )
+
+    assert pb._one_line(error) == "Server error '500 Internal Server Error'"
+    assert pb._one_line(TimeoutError()) == "TimeoutError"
