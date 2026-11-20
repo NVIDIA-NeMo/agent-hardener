@@ -12,10 +12,10 @@ on:
   workflow_dispatch:
     inputs:
       helix_ref:
-        description: nemo-helix git ref to test against
+        description: nemo-helix git ref to test against (empty uses the HELIX_REF repo variable, else main)
         required: false
         type: string
-        default: main
+        default: ""
 
 permissions:
   contents: read
@@ -73,7 +73,9 @@ jobs:
       - name: Set up NeMo Helix
         uses: ./agent-hardener/.github/actions/setup-helix
         with:
-          ref: ${{ inputs.helix_ref || 'main' }}
+          # The HELIX_REF repository variable points scheduled and push runs at a nemo-helix ref
+          # other than main (a fork's PR needs refs/pull/<n>/head); unset it to go back to main.
+          ref: ${{ inputs.helix_ref || vars.HELIX_REF || 'main' }}
           path: nemo-helix
           uv_version: ${{ env.UV_VERSION }}
       - name: Run war-game
