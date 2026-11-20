@@ -38,7 +38,23 @@ def test_a_shared_red_team_and_detector_model_is_probed_once(monkeypatch: pytest
     assert len(probes) == 1
     assert probes[0]["api_key"] == "nim-key"
     assert probes[0]["timeout"] == 600
-    assert probes[0]["extra_body"] == {"chat_template_kwargs": {"enable_thinking": False}}
+    assert probes[0]["extra_body"] == {
+        "response_format": {"type": "json_object"},
+        "chat_template_kwargs": {"enable_thinking": False},
+    }
+
+
+def test_the_probe_sends_json_mode_only_when_garak_will(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A probe without ``response_format`` passes an endpoint that then rejects every call in the scan."""
+    probes = _record_probes(monkeypatch, model_check.Validation(ok=True))
+    config = build_agent_breaker_config(
+        target_uri="http://v",
+        report_dir="d",
+        report_prefix="p",
+        overrides={"json_mode": False, "red_team_model_name": "gpt-oss", "detector_model_name": "gpt-oss"},
+    )
+    asyncio.run(preflight.check_model_endpoints(config))
+    assert probes[0]["extra_body"] is None
 
 
 def test_an_unanswering_model_names_its_role(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -16,6 +16,7 @@ Agent Hardener does not require either, so the attacked tool stays inferred from
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -131,3 +132,65 @@ def iter_records(path: Path) -> Iterator[dict[str, Any]]:
                 continue
             if isinstance(record, dict) and is_atof_record(record):
                 yield record
+
+
+#: A ReAct agent names its tool in plain text instead of a structured call.
+_REACT_ACTION = re.compile(r"^\s*Action:\s*`?([A-Za-z_][\w.-]*)", re.MULTILINE)
+
+
+def model_scope_ends(records: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The end records of the victim's model calls."""
+    return [
+        record
+        for record in records
+        if record.get("kind") == "scope" and record.get("scope_category") == "end" and record.get("category") == "llm"
+    ]
+
+
+def requested_tools(records: Iterable[dict[str, Any]]) -> list[str]:
+    """The tools the victim's model asked to call, one entry per request, from its recorded responses.
+
+    Independent of whether the call then ran through Relay, which is the point: a request with no matching
+    ``tool`` scope is a tool call Relay did not see. Reads structured ``tool_calls`` wherever the
+    framework nests them, and a ReAct ``Action: <tool>`` line for agents that pick tools in text.
+    """
+    names: list[str] = []
+    for record in model_scope_ends(records):
+        # LangChain keeps one call under several keys (``tool_calls``, ``additional_kwargs``, ...), each
+        # with the same id; keyed by id, it counts once.
+        structured = dict(_structured_tool_calls(record.get("data")))
+        names.extend(structured.values() or _react_tool_names(record.get("data")))
+    return names
+
+
+def _structured_tool_calls(value: Any) -> Iterator[tuple[str, str]]:
+    """``(call id, tool name)`` for every structured tool call nested in ``value``."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == "tool_calls" and isinstance(item, list):
+                yield from (call for entry in item if (call := _call(entry)) is not None)
+            else:
+                yield from _structured_tool_calls(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from _structured_tool_calls(item)
+
+
+def _call(entry: Any) -> tuple[str, str] | None:
+    if not isinstance(entry, dict):
+        return None
+    function = entry.get("function")
+    name = function.get("name") if isinstance(function, dict) else entry.get("name")
+    if not isinstance(name, str) or not name:
+        return None
+    return str(entry.get("id") or name), name
+
+
+def _react_tool_names(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _REACT_ACTION.findall(value)
+    if isinstance(value, dict):
+        return [name for item in value.values() for name in _react_tool_names(item)]
+    if isinstance(value, list):
+        return [name for item in value for name in _react_tool_names(item)]
+    return []

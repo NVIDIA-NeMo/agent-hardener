@@ -79,6 +79,20 @@ def _model_calls(config: dict[str, Any]) -> list[_ModelCall]:
             model=str(model),
             uri=str(uri),
             timeout=float(model_config.get("timeout") or DEFAULT_MODEL_TIMEOUT_SECONDS),
-            extra_body=(model_config.get("extra_params") or {}).get("extra_body"),
+            extra_body=_request_fields(model_config.get("extra_params")),
         )
     return list(calls.values())
+
+
+def _request_fields(extra_params: Any) -> dict[str, Any] | None:
+    """The request-body fields garak's ``extra_params`` add, flattened the way the OpenAI client sends them.
+
+    ``extra_body`` is merged into the body; every other key (``response_format`` in JSON mode) is a body field
+    of its own. Probing with all of them is what makes the check exercise the request garak will send: an
+    endpoint that rejects JSON mode fails here, with its own message, instead of on every call in the scan.
+    """
+    if not isinstance(extra_params, dict):
+        return None
+    fields = {key: value for key, value in extra_params.items() if key != "extra_body"}
+    fields.update(extra_params.get("extra_body") or {})
+    return fields or None
