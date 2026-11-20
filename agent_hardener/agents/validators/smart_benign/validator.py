@@ -25,15 +25,13 @@ from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import agent_concurrency
 from agent_hardener.env import INFERENCE_API_KEY, inference_api_key
-from agent_hardener.events import EventType
-from agent_hardener.loggers import emit_event
 from agent_hardener.models import AgentConfig, AgentRunInput, ValidatorReport
 
 from .config import defaults
 from .driver import drive_synth
 from .graph import quiet_warnings
 from .models import GeneratedRequest
-from .progress import PHASE_LABELS
+from .progress import PhaseTracker
 from .replay_judge import ReplayJudgeConfig, format_finding, run_all, stats_key
 from .replay_judge import traces as trace_section
 from .state import SynthInputs, SynthState
@@ -239,10 +237,8 @@ async def _run_synth_dag(
 ) -> SynthState:
     """Run the compiled synth graph and return the validated final state.
 
-    Streams per-node updates so a human-readable recon progress line is logged as each DAG node
-    completes — so an operator watching the run sees the recon advancing rather than a silent
-    prompt. Progress goes through the module logger, so it reaches the run-log bus (and any
-    subscriber) like every other ``agent_hardener`` log line.
+    Each finished DAG node becomes a ``synth_phase`` event (see :class:`PhaseTracker`), so an operator
+    watching the run, in the console or in Studio, sees the recon advancing rather than a silent prompt.
     """
     state = SynthState.from_inputs(
         inputs,
@@ -254,16 +250,9 @@ async def _run_synth_dag(
     tracing = make_langfuse_callbacks(round_id=round_id, target_name=target_name)
     lf_config: dict[str, Any] = {"callbacks": tracing.callbacks} if tracing.callbacks else {}
 
-    def _on_node(node_name: str, _update: dict[str, Any]) -> None:
-        if node_name in PHASE_LABELS:
-            label = f"recon: {PHASE_LABELS[node_name]}"
-            logger.info(label)  # text → agent-hardener.log
-            emit_event(
-                EventType.SYNTH_PHASE, {"phase": node_name, "label": label}
-            )  # structured event → run bus (spinner/UI)
-
     # Interactive runs answer the interview via the injected provider; non-interactive ones never interrupt.
-    return await drive_synth(state, answer_provider=answer_provider, lf_config=lf_config, on_node=_on_node)
+    tracker = PhaseTracker(state)
+    return await drive_synth(state, answer_provider=answer_provider, lf_config=lf_config, on_node=tracker.on_node)
 
 
 def _cache_hit(artifact_dir: Path, inputs: SynthInputs) -> bool:

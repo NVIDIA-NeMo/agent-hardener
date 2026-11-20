@@ -1,29 +1,27 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Live progress for the synth DAG, so a minutes-long ``synth-benign`` run never looks stuck.
+"""Synth progress as ``synth_phase`` events, so a minutes-long synthesis never looks stuck.
 
-Each finished node prints a ``✓`` line with what it produced and how long it took; on a styled terminal a
-spinner below them names the node running now and counts the elapsed time. The spinner is paused while the
-interview owns the terminal. Off a TTY (CI, piped) only the ``✓`` lines print.
+Every path that runs the synth graph (the ``synth-benign`` CLI, the ``run`` pre-flight, the HTTP service
+behind Studio) feeds its per-node updates to a :class:`PhaseTracker`. Each finished node becomes one
+``synth_phase`` event saying what it produced and how long it took, plus what runs next. Rendering is the
+subscriber's job: the console renderer prints a line and moves its spinner, and Studio lists a recon step.
 """
 
 from __future__ import annotations
 
+import logging
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from agent_hardener.display.console import get_console, is_rich, step
+from agent_hardener.events import EventType
+from agent_hardener.loggers import emit_event
 
 from .graph import _ingestion_sources, _route_after_gap_detector
 from .state import SynthState
 
-if TYPE_CHECKING:
-    from types import TracebackType
-
-    from rich.progress import Progress, TaskID
-
-    from .driver import AnswerProvider
+logger = logging.getLogger(__name__)
 
 #: What each synth-DAG node did, keyed by the node names registered in ``graph.py``.
 PHASE_LABELS: dict[str, str] = {
@@ -39,11 +37,8 @@ PHASE_LABELS: dict[str, str] = {
     "profile_writer": "wrote profile.json + requests.csv",
 }
 
-# What a node is doing while it runs: the spinner shows this for the node that runs next.
+# What a node is doing while it runs, reported as the ``next`` of the node before it.
 _RUNNING: dict[str, str] = {
-    "nl_parser": "parsing the description",
-    "github_analyzer": "analyzing the GitHub repository",
-    "api_prober": "probing the victim endpoint",
     "profile_synthesizer": "merging the victim capability profile",
     "gap_detector": "checking the profile for gaps",
     "interview_compose": "composing interview questions",
@@ -53,27 +48,21 @@ _RUNNING: dict[str, str] = {
     "profile_writer": "writing profile.json + requests.csv",
 }
 
-# Ingestion node → its key in ``SynthState.partials``.
+# The node that always follows each one; the ingestion nodes and the gap detector are routed instead.
+_FOLLOWS = {
+    "profile_synthesizer": "gap_detector",
+    "interview_compose": "interview_ask",
+    "request_generator": "critic",
+    "critic": "profile_writer",
+}
+
+# Ingestion node → its key in ``SynthState.partials``, and its short name while it runs alongside the others.
 _PARTIAL_KEYS = {"nl_parser": "nl", "github_analyzer": "github", "api_prober": "api_probe"}
-
-# Short names for the ingestion sources, which run in parallel and so share one spinner line.
 _SOURCES = {"nl_parser": "the description", "github_analyzer": "GitHub repo", "api_prober": "victim endpoint"}
-
-_TITLE = "Synthesizing benign suite"
 
 
 def _plural(n: int, word: str) -> str:
     return f"{n} {word}{'' if n == 1 else 's'}"
-
-
-def _duration(seconds: float) -> str:
-    whole = round(seconds)
-    return f"{whole}s" if whole < 60 else f"{whole // 60}m {whole % 60:02d}s"
-
-
-def ok(message: str) -> None:
-    """Print a finished-step line; never wrapped, so a piped log (80 columns by default) keeps one line per step."""
-    get_console().print(f"✓ {message}", style="green" if is_rich() else None, highlight=False, soft_wrap=True)
 
 
 def _merge(state: SynthState, update: dict[str, Any]) -> SynthState:
@@ -86,52 +75,30 @@ def _merge(state: SynthState, update: dict[str, Any]) -> SynthState:
     return state.model_copy(update=merged)
 
 
-class SynthProgress:
-    """Context manager that renders synth progress from ``drive_synth``'s ``on_node`` callback.
+class PhaseTracker:
+    """Turn ``drive_synth``'s per-node updates into ``synth_phase`` events.
 
-    Tracks a mirror of the graph state so each ``✓`` line can say what the node produced (tools, gaps,
-    requests kept by the critic) and the spinner can name the node the graph routes to next.
+    Keeps a mirror of the graph state so each event can say what the node produced (tools, gaps, requests
+    the critic kept) and which node the graph routes to next. Payload::
+
+        {"phase": "critic", "label": "filtered and deduplicated requests", "detail": "58 → 42 kept",
+         "seconds": 41.2, "next": "writing profile.json + requests.csv"}
+
+    ``detail`` is ``""`` when the node has nothing to count; ``seconds`` is ``None`` for the interview, whose
+    time is mostly the operator's.
     """
 
     def __init__(self, state: SynthState) -> None:
         self._state = state
         self._ingesting = {s for s in _ingestion_sources(state) if s in _PARTIAL_KEYS}
-        self._started = self._last = 0.0
-        self._progress: Progress | None = None
-        self._task: TaskID | None = None
-
-    def __enter__(self) -> SynthProgress:
-        """Start the clock and the spinner (or print a plain start line off a styled terminal)."""
         self._started = self._last = time.monotonic()
-        running = self._pending_ingestion() or _RUNNING["profile_synthesizer"]
-        if is_rich():
-            from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn  # noqa: PLC0415
 
-            self._progress = Progress(
-                SpinnerColumn(),
-                TimeElapsedColumn(),  # before the text, so a narrow terminal truncates the text, never the clock
-                TextColumn("{task.description}"),
-                console=get_console(),
-                transient=True,
-            )
-            self._task = self._progress.add_task(f"{_TITLE} — {running}…", total=None)
-            self._progress.start()
-        else:
-            step(f"{_TITLE}…")
-        return self
-
-    def __exit__(
-        self, exc_type: type[BaseException] | None, _exc: BaseException | None, _tb: TracebackType | None
-    ) -> None:
-        """Stop the spinner; print the total time only when synthesis finished without raising."""
-        if self._progress is not None:
-            self._progress.stop()
-            self._progress = None
-        if exc_type is None:
-            ok(f"Benign suite synthesized in {_duration(time.monotonic() - self._started)}")
+    def first_step(self) -> str:
+        """What the graph does first, before any node has finished."""
+        return self._pending_ingestion() or _RUNNING["profile_synthesizer"]
 
     def on_node(self, name: str, update: dict[str, Any]) -> None:
-        """Print the finished node's line and point the spinner at what runs next."""
+        """Emit the finished node's ``synth_phase`` event; nodes without a label are ignored."""
         if name not in PHASE_LABELS:
             return
         now = time.monotonic()
@@ -142,26 +109,17 @@ class SynthProgress:
         self._state = _merge(before, update)
         self._ingesting.discard(name)
 
-        counts = self._counts(name, update, before)
-        timing = "" if name == "interview_ask" else f" ({_duration(took)})"  # mostly the operator's think time
-        ok(f"{PHASE_LABELS[name]}{f' — {counts}' if counts else ''}{timing}")
-        self._set_running(self._next(name))
+        payload = {
+            "phase": name,
+            "label": PHASE_LABELS[name],
+            "detail": self._detail(name, update, before),
+            "seconds": None if name == "interview_ask" else round(took, 1),
+            "next": self._next(name),
+        }
+        logger.info("recon: %s%s", payload["label"], f" — {payload['detail']}" if payload["detail"] else "")
+        emit_event(EventType.SYNTH_PHASE, payload)
 
-    def pausing(self, provider: AnswerProvider) -> AnswerProvider:
-        """Wrap an answer provider so the spinner releases the terminal while it runs."""
-
-        async def paused(questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-            if self._progress is not None:
-                self._progress.stop()
-            try:
-                return await provider(questions)
-            finally:
-                if self._progress is not None:
-                    self._progress.start()
-
-        return paused
-
-    def _counts(self, name: str, update: dict[str, Any], before: SynthState) -> str:
+    def _detail(self, name: str, update: dict[str, Any], before: SynthState) -> str:
         parts: list[str] = []
         after = self._state
         if name in _PARTIAL_KEYS:
@@ -192,24 +150,14 @@ class SynthProgress:
 
     def _next(self, name: str) -> str:
         if name in _PARTIAL_KEYS:
-            return self._pending_ingestion() or _RUNNING["profile_synthesizer"]
+            return self.first_step()
         if name == "gap_detector":
             return _RUNNING[_route_after_gap_detector(self._state)]
         if name == "interview_ask":
             return "re-merging the profile with the answers"
-        following = {
-            "profile_synthesizer": "gap_detector",
-            "interview_compose": "interview_ask",
-            "request_generator": "critic",
-            "critic": "profile_writer",
-        }.get(name)
-        return _RUNNING[following] if following else "finishing"
+        return _RUNNING[_FOLLOWS[name]] if name in _FOLLOWS else "finishing"
 
     def _pending_ingestion(self) -> str:
         """The ingestion nodes still running, in pipeline order (empty once they have all finished)."""
         pending = [_SOURCES[n] for n in _PARTIAL_KEYS if n in self._ingesting]
         return f"reading {', '.join(pending)}" if pending else ""
-
-    def _set_running(self, running: str) -> None:
-        if self._progress is not None and self._task is not None:
-            self._progress.update(self._task, description=f"{_TITLE} — {running}…")
