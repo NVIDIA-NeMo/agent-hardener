@@ -70,7 +70,7 @@ async def analyze_boundaries(state: GapDetectorState) -> dict[str, object]:
         except RateLimitError:
             raise
         except Exception:
-            logger.exception("analyze_boundaries failed for tool %r", tool.name)
+            logger.info("analyze_boundaries failed for tool %r", tool.name, exc_info=True)
             return None
         if verdict.needs_clarification and verdict.question.strip():
             return f"{boundary_key(tool.name)} {verdict.question.strip()}"

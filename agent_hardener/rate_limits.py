@@ -16,6 +16,7 @@ import email.utils
 import logging
 import os
 import random
+import threading
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -34,6 +35,24 @@ RATE_LIMIT_MAX_WAIT_ENV = "AGENT_HARDENER_RATE_LIMIT_MAX_WAIT_S"
 #: ``Retry-After``) clears within a minute, so the cap keeps a retry inside the next window.
 _BACKOFF_BASE_SECONDS = 2.0
 _BACKOFF_CAP_SECONDS = 60.0
+# A wait can last up to ``rate_limit_max_wait()`` (10 min by default), so its start is a console warning — or
+# the run looks stuck. At most one per host per interval: parallel calls throttled together share one line.
+_WAIT_WARNING_INTERVAL_SECONDS = 60.0
+_last_wait_warning: dict[str, float] = {}
+_wait_warning_lock = threading.Lock()
+
+
+def _warn_wait_started(host: str, status: int, max_wait: float) -> None:
+    """Say once (per host per interval) that calls to ``host`` are waiting out a rate limit."""
+    now = time.monotonic()
+    with _wait_warning_lock:
+        last = _last_wait_warning.get(host)
+        if last is not None and now - last < _WAIT_WARNING_INTERVAL_SECONDS:
+            return
+        _last_wait_warning[host] = now
+    logger.warning(
+        "%s is rate limiting requests (HTTP %s); waiting up to %.0fs before retrying", host, status, max_wait
+    )
 
 
 class RateLimitError(RuntimeError):
@@ -186,7 +205,9 @@ class _RetryPolicy:
                 waited,
             )
             return None
-        logger.warning(
+        if waited == 0:
+            _warn_wait_started(request.url.host, response.status_code, self.max_wait)
+        logger.info(
             "%s rate limited the request (HTTP %s); retry %d in %.1fs (waited %.0fs of %.0fs)",
             request.url.host,
             response.status_code,

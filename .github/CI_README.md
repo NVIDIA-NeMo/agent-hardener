@@ -6,7 +6,10 @@
 ## `workflows/system-test.yaml`
 
 Runs on every push to `main`, nightly at 00:17 UTC, and on manual dispatch (with an optional
-`helix_ref` to test against a different NeMo Helix ref). It runs one full war-game per NeMo Helix
+`helix_ref` to test against a different NeMo Helix ref). Scheduled and push runs test NeMo Helix
+`main` unless the `HELIX_REF` repository variable names another ref (a fork's PR is
+`refs/pull/<n>/head`): `gh variable set HELIX_REF --body <ref>`, and `gh variable delete HELIX_REF`
+to go back. It runs one full war-game per NeMo Helix
 example agent, through the Helix CLI:
 
 `nemo agent-hardener setup` → `init` → `synth-benign --no-interactive` → `run`

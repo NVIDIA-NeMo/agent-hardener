@@ -135,7 +135,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             replace_because = "created from another image" if not self.runs_configured_image() else None
             replace_because = replace_because or self.credentials_drift()
         if replace_because:
-            logger.warning("sandbox setup: replacing sandbox=%s, %s", self.config.sandbox, replace_because)
+            logger.info("sandbox setup: replacing sandbox=%s, %s", self.config.sandbox, replace_because)
             results.append(self.down())
             if not results[-1].ok:
                 return combine_results(results)
@@ -419,7 +419,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         """
         credentials, error = self._provider_credentials()
         if error is not None:
-            logger.warning(
+            logger.info(
                 "provider check: cannot compare credentials of provider=%s: %s", self.config.provider, error.output
             )
             return OpenShellCommandResult(ok=True, command=[], output=f"warning: {error.output}")
@@ -429,10 +429,10 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
             return OpenShellCommandResult(ok=True, command=[], output="")
         if not self.config.refresh_provider_credentials:
             message = f"warning: {stale}; not refreshed (refresh_provider_credentials is off)"
-            logger.warning("provider check: %s", message)
+            logger.info("provider check: %s", message)
             return OpenShellCommandResult(ok=True, command=[], output=message)
 
-        logger.warning("provider check: refreshing provider=%s, %s", self.config.provider, stale)
+        logger.info("provider check: refreshing provider=%s, %s", self.config.provider, stale)
         results = [OpenShellCommandResult(ok=True, command=[], output=f"refreshing provider: {stale}")]
         names = [name for name in credentials if changed is None or name in changed]
         if names or not credentials:
@@ -702,7 +702,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
                     return combine_results(results, ok=result.ok)
                 return result
             if warn:
-                logger.warning(
+                logger.info(
                     "transient OpenShell transport failure command=%s attempt=%s/%s",
                     shlex.join([self.config.openshell_bin, *args]),
                     attempt,

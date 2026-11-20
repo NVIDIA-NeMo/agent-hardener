@@ -59,12 +59,19 @@ async def probe(state: ApiProberState) -> dict[str, object]:
 
     for question, result in zip(questions, results, strict=True):
         if isinstance(result, BaseException):
-            logger.warning("api_prober question failed (%s): %s", question[:40], result)
+            # INFO, not a warning: the progress line already counts probe errors, and the full error is kept below.
+            logger.info("api_prober question failed (%s): %s", question[:40], _one_line(result))
             errors.append(f"probe failed [{question[:40]}...]: {result}")
         else:
             responses.append((question, result))
 
     return {"probe_responses": responses, "probe_errors": errors}
+
+
+def _one_line(exc: BaseException) -> str:
+    """An exception's first line (httpx appends a docs URL on a second one), or its type when it has no text."""
+    text = str(exc).strip()
+    return text.splitlines()[0] if text else type(exc).__name__
 
 
 async def _probe_once(

@@ -115,7 +115,7 @@ async def _carries_request(
     try:
         return await args_judge(call.name, payload, call.args)
     except Exception:
-        logger.warning("args judge failed; counting the tool_failed row as refused", exc_info=True)
+        logger.info("args judge failed; counting the tool_failed row as refused", exc_info=True)
         return None
 
 

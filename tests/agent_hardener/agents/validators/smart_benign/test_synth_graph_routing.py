@@ -8,6 +8,7 @@ from __future__ import annotations
 import pytest
 
 from agent_hardener.agents.validators.smart_benign import graph
+from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
 from agent_hardener.agents.validators.smart_benign.state import SynthInputs, SynthState
 
 
@@ -57,3 +58,14 @@ def test_interview_ask_empty_batch_exits_via_question_budget() -> None:
     out = graph._interview_ask_node(empty)
     # No questions to ask → bump the question budget to the ceiling to end the loop.
     assert out["interview_questions_asked"] == empty.max_interview_questions
+
+
+def test_checkpoints_restore_our_models_without_the_unregistered_type_warning(caplog: pytest.LogCaptureFixture) -> None:
+    serde = graph.synth_checkpointer().serde
+    state = _state(requests=[GeneratedRequest(tool="t", payload="p", label="benign")])
+
+    with caplog.at_level("WARNING", logger="langgraph"):
+        restored = serde.loads_typed(serde.dumps_typed(state))
+
+    assert restored == state
+    assert "unregistered type" not in caplog.text

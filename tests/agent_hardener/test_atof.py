@@ -20,6 +20,7 @@ from agent_hardener.atof import (
     is_atof_record,
     iter_records,
     load_records,
+    requested_tools,
     succeeded,
     tool_calls,
 )
@@ -169,3 +170,22 @@ def test_a_real_concurrent_langchain_stream_yields_its_tool_calls() -> None:
 
     assert not has_quarantined_scopes(records)
     assert {call.name for call in tool_calls(records)} == {"transfer_funds", "read_customer_record", "send_email"}
+
+
+def test_requested_tools_reads_each_model_call_once_whatever_its_shape() -> None:
+    def model_end(data: object) -> dict[str, object]:
+        return {"kind": "scope", "scope_category": "end", "category": "llm", "uuid": "u", "data": data}
+
+    records = [
+        model_end(
+            {
+                "tool_calls": [{"id": "c1", "name": "a"}, "junk", {"id": "c2"}],
+                "copy": [{"tool_calls": [{"id": "c1", "name": "a"}]}],
+            }
+        ),
+        model_end({"function_style": {"tool_calls": [{"function": {"name": "b"}}]}}),
+        model_end([{"text": "Action: c"}, 7]),
+        {"kind": "scope", "scope_category": "end", "category": "tool", "data": {"tool_calls": [{"name": "ignored"}]}},
+    ]
+
+    assert requested_tools(records) == ["a", "b", "c"]

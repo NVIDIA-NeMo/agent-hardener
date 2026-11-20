@@ -62,7 +62,7 @@ async def extract(state: ApiProberState) -> dict[str, object]:
         rate_limit = rate_limit_error_from_exception(exc, source="smart_benign:api_prober.extract")
         if rate_limit is not None:
             raise rate_limit from exc
-        logger.exception("api_prober extract failed")
+        logger.info("api_prober extract failed", exc_info=True)
         return {
             "source_note": f"api_prober extract failed: {exc}",
             "errors": [*state.probe_errors, f"api_prober.extract: {exc}"],
@@ -70,7 +70,7 @@ async def extract(state: ApiProberState) -> dict[str, object]:
 
     # Some probes answered, so failed ones are not fatal; they are kept in source_details.
     if state.probe_errors:
-        logger.warning("api_prober: %d probe(s) failed: %s", len(state.probe_errors), state.probe_errors)
+        logger.info("api_prober: %d probe(s) failed; kept in source_details", len(state.probe_errors))
     tools = [
         ToolSpec(
             name=h.name,

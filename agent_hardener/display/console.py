@@ -48,39 +48,116 @@ def is_rich() -> bool:
     return get_console().is_terminal
 
 
-def _print(message: str, style: str | None) -> None:
-    """Print ``message`` styled when rich is active, else as plain text."""
-    get_console().print(message, style=style if is_rich() else None, highlight=False)
+# ``--debug`` switch for the whole process: set once by the CLI callback (``agent_hardener.loggers``), read by
+# :func:`detail` and the console log handler. A plain module flag because it is process-wide CLI state.
+_debug = False
 
 
-def step(message: str) -> None:
-    """Print an in-progress step line (dim cyan ``▸``)."""
-    _print(f"▸ {message}", "cyan")
+def set_debug(enabled: bool) -> None:
+    """Turn the console's debug tier on or off (``--debug``)."""
+    global _debug  # noqa: PLW0603 - one process-wide CLI switch
+    _debug = enabled
 
 
-def ok(message: str) -> None:
-    """Print a success line (green ``✓``)."""
-    _print(f"✓ {message}", "green")
+def is_debug() -> bool:
+    """Report whether ``--debug`` is on."""
+    return _debug
 
 
-def fail(message: str) -> None:
+def _print(message: str, style: str | None, *, markup: bool = True) -> None:
+    """Print ``message`` styled when rich is active, else as plain text.
+
+    ``soft_wrap`` keeps a long line (a path, a command) whole instead of hard-wrapping it at the console
+    width, which off a terminal is a fixed 80 columns and used to split paths mid-word. ``markup=False``
+    is for text that did not come from us (log messages, subprocess output) and may contain ``[...]``.
+    """
+    get_console().print(message, style=style if is_rich() else None, highlight=False, soft_wrap=True, markup=markup)
+
+
+def _with_elapsed(message: str, elapsed: float | None) -> str:
+    return message if elapsed is None else f"{message} ({format_elapsed(elapsed)})"
+
+
+def format_elapsed(seconds: float) -> str:
+    """Render a duration the way every console line shows it: ``0.4s``, ``12.4s``, ``3m05s``, ``1h02m``."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes, secs = divmod(int(seconds), 60)
+    if minutes < 60:
+        return f"{minutes}m{secs:02d}s"
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours}h{minutes:02d}m"
+
+
+# The console vocabulary: level -> (text template, style). One table, so the console, the engine's
+# ``output`` events and the log file's echo of them (:func:`line_text`) can never drift apart.
+_FORMATS: dict[str, tuple[str, str | None]] = {
+    "section": ("── {} ──", "bold"),
+    "step": ("▸ {}", "cyan"),
+    "ok": ("✓ {}", "green"),
+    "warn": ("! {}", "yellow"),
+    "fail": ("✗ {}", "red"),
+    "hint": ("  → {}", "dim"),
+    "detail": ("  · {}", "dim"),
+    "info": ("{}", None),
+}
+
+
+def line_text(level: str, message: str, elapsed: float | None = None) -> str:
+    """The unstyled text of a console line at ``level`` — e.g. ``✓ Sandbox ready (12.4s)``."""
+    template, _style = _FORMATS.get(level, _FORMATS["info"])
+    return template.format(_with_elapsed(message, elapsed))
+
+
+def _say_styled(level: str, message: str, *, elapsed: float | None = None, markup: bool = True) -> None:
+    text = line_text(level, message, elapsed)
+    _print(f"\n{text}" if level == "section" else text, _FORMATS.get(level, _FORMATS["info"])[1], markup=markup)
+
+
+def step(message: str, *, markup: bool = True) -> None:
+    """Print an in-progress step line (cyan ``▸``)."""
+    _say_styled("step", message, markup=markup)
+
+
+def ok(message: str, *, elapsed: float | None = None, markup: bool = True) -> None:
+    """Print a success line (green ``✓``), with how long the step took when ``elapsed`` is given."""
+    _say_styled("ok", message, elapsed=elapsed, markup=markup)
+
+
+def fail(message: str, *, markup: bool = True) -> None:
     """Print a failure line (red ``✗``)."""
-    _print(f"✗ {message}", "red")
+    _say_styled("fail", message, markup=markup)
 
 
-def warn(message: str) -> None:
+def warn(message: str, *, markup: bool = True) -> None:
     """Print a non-fatal warning line (yellow ``!``)."""
-    _print(f"! {message}", "yellow")
+    _say_styled("warn", message, markup=markup)
 
 
-def info(message: str) -> None:
+def hint(message: str, *, markup: bool = True) -> None:
+    """Print the next action or a pointer under the line above (dim ``→``)."""
+    _say_styled("hint", message, markup=markup)
+
+
+def detail(message: str, *, markup: bool = True) -> None:
+    """Print a supporting detail (dim ``·``) — only with ``--debug``; the log file always has it."""
+    if _debug:
+        _say_styled("detail", message, markup=markup)
+
+
+def info(message: str, *, markup: bool = True) -> None:
     """Print a neutral, unstyled line."""
-    _print(message, None)
+    _say_styled("info", message, markup=markup)
 
 
-def section(title: str) -> None:
-    """Print a dim section divider (preceded by a blank line) to group interactive prompts into phases."""
-    _print(f"\n── {title} ──", "dim")
+def literal(text: str, style: str | None = None) -> None:
+    """Print ``text`` exactly as given (no markup, no glyph), optionally styled — for log records."""
+    _print(text, style, markup=False)
+
+
+def section(title: str, *, markup: bool = True) -> None:
+    """Print a section divider (preceded by a blank line) that opens a stage of a command."""
+    _say_styled("section", title, markup=markup)
 
 
 def banner(title: str, lines: list[str]) -> None:
@@ -93,6 +170,19 @@ def banner(title: str, lines: list[str]) -> None:
     for line in lines:
         _print(line, "dim")
     info("")
+
+
+def say(level: str, message: str, *, elapsed: float | None = None) -> None:
+    """Print ``message`` at a named console level (see ``_FORMATS``), or ``output`` for verbatim subprocess output.
+
+    The text is printed literally (no rich markup): engine lines carry paths and model text.
+    """
+    if level == "output":
+        emit(message)
+    elif level == "detail":
+        detail(message, markup=False)
+    else:
+        _say_styled(level, message, elapsed=elapsed, markup=False)
 
 
 def _path_completer(base: Path) -> Callable[[str, int], str | None]:
@@ -165,11 +255,54 @@ def emit(line: str) -> None:
     """
     for text in line.splitlines() or [line]:
         if _RED_CUE.search(text) and not _BENIGN.search(text):
-            _print(text, "red")
+            _print(text, "red", markup=False)
         elif _GREEN_CUE.search(text):
-            _print(text, "green")
+            _print(text, "green", markup=False)
         else:
-            _print(text, None)
+            _print(text, None, markup=False)
+
+
+# A failure excerpt keeps at most this many lines, each cut to ``_EXCERPT_LINE_CHARS`` (a launcher command
+# line can run to hundreds of characters and is never the reason).
+FAILURE_EXCERPT_LINES = 15
+_EXCERPT_LINE_CHARS = 300
+_ERROR_BOX = re.compile(r"^\s*(error\b|\u00d7)", re.IGNORECASE)
+_STALL_CUE = re.compile(
+    r"\b(timed out|refused|denied|unreachable|in use|not found)\b|\bno\b[^.]*\bfound\b", re.IGNORECASE
+)
+# OpenShell answers an existence check ("is there a sandbox/provider by this name yet?") with an error box;
+# before a create that is the expected answer, not the failure.
+_EXPECTED_MISS = re.compile(r"requested entity was not found", re.IGNORECASE)
+
+
+def failure_excerpt(output: str, limit: int = FAILURE_EXCERPT_LINES) -> str:
+    """The part of a failed command's output worth showing: its error lines, not its whole transcript.
+
+    Keeps lines that read as errors (``Error:``, OpenShell's error box, ``failed``, ``timed out``…), the ``│``
+    lines continuing an error box (OpenShell's explanation of it), and the last line (where a cause usually
+    ends up). Existence-check misses are skipped. With no such line, the last ``limit`` lines. A first
+    ``… N other line(s) in the log`` line says what was left out.
+    """
+    lines = [line for line in output.strip().splitlines() if line.strip()]
+    keep: list[int] = []
+    in_box = False
+    for index, line in enumerate(lines):
+        if _EXPECTED_MISS.search(line):
+            in_box = False
+            continue
+        in_box = (in_box and line.strip().startswith("│")) or bool(_ERROR_BOX.match(line))
+        if in_box or _STALL_CUE.search(line) or (_RED_CUE.search(line) and not _BENIGN.search(line)):
+            keep.append(index)
+    keep = keep if keep else list(range(len(lines)))
+    if lines and keep[-1] != len(lines) - 1:
+        keep.append(len(lines) - 1)
+    keep = keep[-limit:]
+    shown = [
+        line if len(line) <= _EXCERPT_LINE_CHARS else f"{line[:_EXCERPT_LINE_CHARS]}…"
+        for line in (lines[i] for i in keep)
+    ]
+    left_out = len(lines) - len(shown)
+    return "\n".join([f"… {left_out} other line(s) in the log", *shown] if left_out else shown)
 
 
 def status_factory(label: str) -> contextlib.AbstractContextManager[object]:

@@ -31,7 +31,7 @@ if TYPE_CHECKING:
 
     from .schemas import Outcome, RailDraft, RailGrade, VulnerabilityAnalysis
 
-logger = logging.getLogger("agent_hardener.session")
+logger = logging.getLogger(__name__)
 
 ARTIFACTS_DIRNAME = "traces_guardrails_defender"
 OUTCOME_FILENAME = "outcome.json"

@@ -1,0 +1,13 @@
+{
+  "skill": "add-trace-provider",
+  "tests": [
+    {"type": "explicit", "prompt": "Use the add-trace-provider skill to add an OpenTelemetry trace backend.", "expected_skill": "add-trace-provider"},
+    {"type": "explicit", "prompt": "Follow add-trace-provider and wire a Phoenix TraceProvider into the factory.", "expected_skill": "add-trace-provider"},
+    {"type": "implicit", "prompt": "I want Agent Hardener to read the victim's traces from Langfuse instead of the Relay ATOF file.", "expected_skill": "add-trace-provider"},
+    {"type": "implicit", "prompt": "Add a new tracing backend and make it pass the trace provider contract tests.", "expected_skill": "add-trace-provider"},
+    {"type": "contextual", "prompt": "Our customer's agents already export OTLP spans to their collector and they won't run Relay's ATOF sink. Can the war-game get its execution traces from those spans?", "expected_skill": "add-trace-provider"},
+    {"type": "negative-control", "prompt": "My LangGraph agent's tool calls don't show up in the ATOF stream. How do I hook it up to Relay?", "expected_skill_not": "add-trace-provider"},
+    {"type": "negative-control", "prompt": "Add a new defender that writes guardrails from the attack transcripts.", "expected_skill_not": "add-trace-provider"},
+    {"type": "negative-control", "prompt": "Start Phoenix and the OTel collector so I can watch a run while it executes.", "expected_skill_not": "add-trace-provider"}
+  ]
+}

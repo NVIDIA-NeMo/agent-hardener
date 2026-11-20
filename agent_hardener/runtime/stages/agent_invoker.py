@@ -94,7 +94,9 @@ class AgentInvoker:
                 output = await self.agent_adapter.run(agent, request, ctx)
         except Exception as exc:
             duration_seconds = perf_counter() - started_at
-            logger.exception(
+            # File-only (INFO, with the traceback): the console shows the failure on the agent's progress
+            # row from the AGENT_FAILED event below, so a console log line here would say it twice.
+            logger.info(
                 "agent stop phase=%s role=%s name=%s id=%s iteration=%s ok=False duration_seconds=%.3f error=%s",
                 phase,
                 agent.role,
@@ -103,6 +105,7 @@ class AgentInvoker:
                 request.iteration,
                 duration_seconds,
                 str(exc),
+                exc_info=True,
             )
             events.emit(
                 EventType.AGENT_FAILED,

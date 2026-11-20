@@ -541,7 +541,7 @@ def test_the_tool_path_is_verified_when_an_attacker_ran(tmp_path: Path) -> None:
         _config(tmp_path),
         agent_adapter=ScenarioAdapter(),
         round_id_factory=lambda: "20260502T000030Z-abcdef12",
-        verify_tool_path=lambda: calls.append(1),
+        verify_tool_path=lambda _attacks: calls.append(1),
     )
 
     asyncio.run(orchestrator.run_round())
@@ -561,7 +561,7 @@ def test_a_replay_does_not_verify_the_tool_path(tmp_path: Path) -> None:
         config,
         agent_adapter=ScenarioAdapter(),
         round_id_factory=lambda: "20260502T000031Z-abcdef12",
-        verify_tool_path=lambda: calls.append(1),
+        verify_tool_path=lambda _attacks: calls.append(1),
     )
 
     asyncio.run(orchestrator.run_round())

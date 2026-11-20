@@ -1,0 +1,45 @@
+{
+  "skill": "agent-hardener",
+  "tests": [
+    {
+      "type": "explicit",
+      "prompt": "Use the agent-hardener skill to war-game my LangGraph agent.",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "explicit",
+      "prompt": "Run agent-hardener against my agent and show me the results.",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "implicit",
+      "prompt": "Red-team my LangChain agent and harden whatever gets through.",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "implicit",
+      "prompt": "I want to harden my agent against prompt injection before we ship it.",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "contextual",
+      "prompt": "Our support agent is a LangGraph graph in a Docker image. Security wants proof it blocks attacks without breaking normal requests \u2014 set that up and read me the results.",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "implicit",
+      "prompt": "I put a different model in .env but agent-hardener still uses Nemotron. Which setting wins, and how do I switch the model?",
+      "expected_skill": "agent-hardener"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Add a new defender class to the agent_hardener codebase and register it with the defenders manager.",
+      "expected_skill_not": "agent-hardener"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Write a unit test for the trace provider factory.",
+      "expected_skill_not": "agent-hardener"
+    }
+  ]
+}

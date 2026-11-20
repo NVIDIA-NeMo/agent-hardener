@@ -45,7 +45,7 @@ async def clone_and_scan(state: GitHubAnalyzerState) -> dict[str, object]:
     try:
         return await asyncio.to_thread(_clone_and_scan_sync, state)
     except Exception as exc:
-        logger.exception("github_analyzer clone_and_scan failed")
+        logger.info("github_analyzer clone_and_scan failed", exc_info=True)
         return {
             "source_note": f"github_analyzer failed: {exc}",
             "errors": [f"github_analyzer.clone_and_scan: {exc}"],

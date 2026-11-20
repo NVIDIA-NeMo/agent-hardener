@@ -29,28 +29,33 @@ def _interrupt(gap: str) -> dict[str, Any]:
     return {"__interrupt__": (SimpleNamespace(value={"questions": [question]}),)}
 
 
+_REQUESTS = [GeneratedRequest(tool="clock", payload="what time is it?", label="benign")]
+
+
 def _final_state() -> dict[str, Any]:
-    return SynthState(
-        inputs=SynthInputs(target_name="t"),
-        requests=[GeneratedRequest(tool="clock", payload="what time is it?", label="benign")],
-    ).model_dump()
+    return SynthState(inputs=SynthInputs(target_name="t"), requests=_REQUESTS).model_dump()
 
 
 class _FakeGraph:
-    """Interrupts on the first invoke (one interview round), completes on the resume."""
+    """Interrupts on the first run (one interview round), completes on the resume."""
 
     def __init__(self, interview_rounds: int = 1) -> None:
         self.calls = 0
         self.interview_rounds = interview_rounds
 
-    async def ainvoke(self, _input: Any, _config: Any) -> Any:
+    async def astream(self, _input: Any, _config: Any, stream_mode: Any) -> Any:
         self.calls += 1
         if self.calls <= self.interview_rounds:
-            return _interrupt(f"gap-{self.calls}")
-        return _final_state()
+            yield ("updates", {"gap_detector": {"gaps": [f"gap-{self.calls}"]}})
+            yield ("updates", _interrupt(f"gap-{self.calls}"))
+            return
+        yield ("updates", {"request_generator": {"requests": _REQUESTS}})
+        yield ("values", _final_state())
 
 
-def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, interview_rounds: int = 1) -> TestClient:
+def _client(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, interview_rounds: int = 1, events: list | None = None
+) -> TestClient:
     session = SimpleNamespace(
         target=SimpleNamespace(name="t", base_url="http://victim.test/v1", agent_relay_plugins=None),
         storage=SimpleNamespace(root_dir=tmp_path),
@@ -60,6 +65,8 @@ def _client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, interview_rounds
     monkeypatch.setattr(serve_app, "_resolve_validator", lambda _s, _v: SimpleNamespace(config={}))
     monkeypatch.setattr(serve_app, "build_synth_inputs", lambda *_a, **_k: SynthInputs(target_name="t"))
     monkeypatch.setattr(serve_app, "_write_requests_csv", lambda target_dir, _reqs: target_dir / "requests.csv")
+    sink = (lambda event, payload: events.append((event, payload))) if events is not None else None
+    monkeypatch.setattr(serve_app, "make_http_event_sink", lambda: sink)
     return TestClient(serve_app.create_app())
 
 
@@ -111,3 +118,17 @@ def test_synth_multi_round_interview_resumes_across_two_interrupts(
 def test_answers_for_unknown_thread_is_404(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     client = _client(tmp_path, monkeypatch)
     assert client.post("/synth/ghost/answers", json={"answers": []}).status_code == 404
+
+
+def test_each_finished_synth_step_reaches_the_event_sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Studio's recon checklist is fed by these events, across the interview's separate requests."""
+    events: list[tuple[str, dict[str, Any]]] = []
+    client = _client(tmp_path, monkeypatch, events=events)
+
+    thread_id = client.post("/synth", json={"config": "agent-hardener.yaml"}).json()["thread_id"]
+    client.post(f"/synth/{thread_id}/answers", json={"answers": [{"gap": "gap-1", "answer": "support"}]})
+
+    assert [(e, p["phase"], p["detail"]) for e, p in events] == [
+        ("synth_phase", "gap_detector", "1 gap unresolved"),
+        ("synth_phase", "request_generator", "1 request"),
+    ]

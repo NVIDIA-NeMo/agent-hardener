@@ -1,0 +1,45 @@
+{
+  "skill": "openshell-ops",
+  "tests": [
+    {
+      "type": "explicit",
+      "prompt": "Use openshell-ops to re-register the auto-defender gateway.",
+      "expected_skill": "openshell-ops"
+    },
+    {
+      "type": "explicit",
+      "prompt": "Follow the openshell-ops skill to rotate the API key in the agent-hardener-secrets provider.",
+      "expected_skill": "openshell-ops"
+    },
+    {
+      "type": "implicit",
+      "prompt": "openshell status says the gateway is Disconnected and every sandbox create fails.",
+      "expected_skill": "openshell-ops"
+    },
+    {
+      "type": "implicit",
+      "prompt": "I changed INFERENCE_API_KEY in .env but the sandboxed agent still uses the old key.",
+      "expected_skill": "openshell-ops"
+    },
+    {
+      "type": "contextual",
+      "prompt": "The run says the OpenShell defender hardened the policy, but I want to confirm the live sandbox actually has the new policy and plugins.toml. How do I check?",
+      "expected_skill": "openshell-ops"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Change the attack model to a different NVIDIA endpoint.",
+      "expected_skill_not": "openshell-ops"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Write the Dockerfile and manifest so my LangChain agent can be the victim.",
+      "expected_skill_not": "openshell-ops"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "My run crashed in the validation stage with a traceback — help me figure out why.",
+      "expected_skill_not": "openshell-ops"
+    }
+  ]
+}

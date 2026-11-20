@@ -19,7 +19,7 @@ from agent_hardener.cli._app import (
     VICTIM_IMAGE_OPTION,
     app,
 )
-from agent_hardener.display.console import fail, info, ok
+from agent_hardener.display.console import detail, fail, ok, section, warn
 
 if TYPE_CHECKING:
     from agent_hardener.models import SessionConfig
@@ -60,7 +60,7 @@ def _apply_initial_overrides(relay_plugins: Path | None, policy: Path | None) ->
         if not path.is_file():
             fail(f"--{label} file not found: {path}")
             raise typer.Exit(1)
-        info(f"Initial {label}: {path}")
+        ok(f"Initial {label}: {path}", markup=False)
 
 
 def _resolve_replay(replay: str | None, session_config: SessionConfig, with_traces: str | None = None) -> SessionConfig:
@@ -98,7 +98,7 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
             raise typer.Exit(1)
         preload_name = "uploaded"
 
-    info(f"Replaying attacks from: {hitlog_path}")
+    ok(f"Replaying attacks from {hitlog_path}", markup=False)
     traces_path = _resolve_replay_traces(with_traces, hitlog_path)
     return session_config.model_copy(
         update={
@@ -132,10 +132,8 @@ def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path |
     )
     if not path.is_file():
         if not explicit:
-            info(
-                f"No recorded attack traces next to the hitlog ({path}): the attacks will be sent to the agent "
-                "to record them."
-            )
+            warn("No recorded attack traces next to the hitlog; the attacks will be sent to the agent to record them")
+            detail(f"looked for {path}", markup=False)
             return None
         fail(f"Attack traces not found: {path}.")
         raise typer.Exit(1)
@@ -144,7 +142,7 @@ def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path |
     except ValueError as exc:
         fail(f"Not a valid attack traces file: {path} ({exc.__class__.__name__})")
         raise typer.Exit(1) from exc
-    info(f"Replaying with {count} recorded attack trace(s) from: {path}")
+    ok(f"Replaying with {count} recorded attack trace(s) from {path}", markup=False)
     return path
 
 
@@ -155,7 +153,7 @@ def _apply_benign_suite(benign_suite: Path | None, session_config: SessionConfig
     if not benign_suite.is_file():
         fail(f"Benign suite not found: {benign_suite}")
         raise typer.Exit(1)
-    info(f"Using supplied benign suite: {benign_suite}")
+    ok(f"Using benign suite {benign_suite}", markup=False)
     return session_config.model_copy(update={"benign_suite_path": benign_suite.resolve()})
 
 
@@ -234,12 +232,14 @@ def run(
     # One boundary over the whole command: any classified failure (bad manifest, sandbox down, victim
     # unreachable, …) is serialized to $AGENT_HARDENER_ERROR_FILE for the caller and printed cleanly here.
     with cli_error_boundary():
+        section("Setup")
         configure_local_docker_host()
         load_local_env(env_file)
         # Fail fast on a mistyped/unreachable operator-overridden model before building the sandbox.
         preflight_configured_models()
         _apply_initial_overrides(relay_plugins, policy)
         session_config = load_config(str(config), relay_plugins=relay_plugins, policy=policy)
+        ok(f"Config loaded: {config}", markup=False)
         session_config = _resolve_replay(replay, session_config, with_traces)
         session_config = _apply_benign_suite(benign_suite, session_config)
         if victim_image is not None:
@@ -255,9 +255,10 @@ def run(
         # is already running, otherwise build fresh.
         skip_initial_up = reuse and sandbox_is_ready(openshell_config(session_config.victim_control))
         if reuse:
-            (ok if skip_initial_up else info)(
-                "Reusing Ready sandbox; skipping rebuild." if skip_initial_up else "No Ready sandbox; building fresh."
-            )
+            if skip_initial_up:
+                ok("Reusing the Ready sandbox; skipping the rebuild")
+            else:
+                warn("No Ready sandbox to reuse; building a fresh one")
 
         # One subscriber renders all one-way presentation (output lines, spinners, phase banners); the
         # runner emits everything as events. MissionError/VictimUnavailableError propagate to the boundary.

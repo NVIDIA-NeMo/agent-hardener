@@ -1,0 +1,14 @@
+{
+  "skill": "nemo-relay",
+  "tests": [
+    {"type": "explicit", "prompt": "Use the nemo-relay skill to connect my LangChain agent to Relay.", "expected_skill": "nemo-relay"},
+    {"type": "explicit", "prompt": "Follow nemo-relay to bump nemo-relay to the next minor version.", "expected_skill": "nemo-relay"},
+    {"type": "implicit", "prompt": "Wire NemoRelayMiddleware into my LangGraph ToolNode so the guardrails can refuse tool calls.", "expected_skill": "nemo-relay"},
+    {"type": "implicit", "prompt": "The run failed with VictimNotInstrumentedError: no ATOF records from my LangChain agent. What is missing in its code?", "expected_skill": "nemo-relay"},
+    {"type": "implicit", "prompt": "Change the guardrail plugin's latch so it also refuses streamed model answers.", "expected_skill": "nemo-relay"},
+    {"type": "contextual", "prompt": "We built a create_agent LangChain agent for invoices. The war-game says Relay saw no tool calls even though attacks got through. How do I fix the agent?", "expected_skill": "nemo-relay"},
+    {"type": "negative-control", "prompt": "Build my agent's Docker image and deploy it into the OpenShell sandbox as the victim.", "expected_skill_not": "nemo-relay"},
+    {"type": "negative-control", "prompt": "Add a TraceProvider that reads spans from Langfuse.", "expected_skill_not": "nemo-relay"},
+    {"type": "negative-control", "prompt": "Switch the analysis model to OpenRouter.", "expected_skill_not": "nemo-relay"}
+  ]
+}

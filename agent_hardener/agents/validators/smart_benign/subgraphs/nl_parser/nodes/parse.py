@@ -51,7 +51,7 @@ async def parse(state: NLParserState) -> dict[str, object]:
         rate_limit = rate_limit_error_from_exception(exc, source="smart_benign:nl_parser")
         if rate_limit is not None:
             raise rate_limit from exc
-        logger.exception("nl_parser failed")
+        logger.info("nl_parser failed", exc_info=True)
         return {"errors": [f"nl_parser: {exc}"]}
 
     tools = [

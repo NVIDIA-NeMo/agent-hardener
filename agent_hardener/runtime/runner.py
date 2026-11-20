@@ -19,6 +19,9 @@ import contextlib
 import hashlib
 import json
 import logging
+import signal
+import threading
+import time
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -27,16 +30,17 @@ import httpx
 
 from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
-from agent_hardener.atof import load_records
+from agent_hardener.atof import load_records, requested_tools
 from agent_hardener.bundle import write_hardened_bundle
+from agent_hardener.display.console import failure_excerpt, line_text
 from agent_hardener.display.final.render_plain import render_final_run_log
 from agent_hardener.display.final.render_rich import print_final_summary
-from agent_hardener.errors import AgentHardenerError, BenignSuiteError, VictimUnavailableError
+from agent_hardener.errors import AgentHardenerError, AtofSyncError, BenignSuiteError, VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.final_log.mitigations import build_mitigations
 from agent_hardener.final_log.validation_summary import build_validation
 from agent_hardener.ids import generate_round_id
-from agent_hardener.loggers import EventBus, capture_run_log, emit_event, using_event_sink
+from agent_hardener.loggers import FILE_ONLY, EventBus, capture_run_log, emit_event, using_event_sink
 from agent_hardener.models import AgentRunInput, RelayVictimSpec
 from agent_hardener.openshell.lifecycle import OpenShellLifecycle
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
@@ -70,7 +74,7 @@ from agent_hardener.traces import build_trace_provider
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterator
 
-    from agent_hardener.models import AgentConfig, RoundReport, SessionConfig
+    from agent_hardener.models import AgentConfig, AttackRecord, RoundReport, SessionConfig
     from agent_hardener.openshell.lifecycle import OpenShellConfig
     from agent_hardener.traces import TraceProvider
 
@@ -95,6 +99,8 @@ class MissionResult:
     success: bool
 
 
+# Lines of a failed build/compose blob shown on the console; the whole blob is in the log file.
+
 SMART_BENIGN_IMPL_PREFIX = "agent_hardener.agents.validators.smart_benign"
 
 _events_logger = logging.getLogger("agent_hardener.events")
@@ -109,7 +115,7 @@ def _log_event(event: str, payload: dict[str, Any]) -> None:
     out of the text transcript — their full form lives in ``events.jsonl``. Routes through the
     ``agent_hardener.events`` logger, which the run-log bus captures.
     """
-    if event == EventType.OUTPUT:  # highlight lines are logged verbatim (the runner's announce path)
+    if event == EventType.OUTPUT:  # ``line`` is already the line as the console shows it (glyph, elapsed)
         _events_logger.info("%s", payload.get("line", ""))
         return
     fields = " ".join(f"{k}={v}" for k, v in payload.items() if isinstance(v, (str, int, float, bool)))
@@ -152,6 +158,42 @@ def _read_fingerprint(path: Path) -> str | None:
 def _write_fingerprint(path: Path, fingerprint: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(fingerprint + "\n", encoding="utf-8")
+
+
+#: Ways a run ends other than Ctrl-C: ``kill`` or a supervisor's stop (TERM), a closed terminal or dropped
+#: SSH session (HUP). SIGHUP does not exist on Windows.
+TERMINATION_SIGNALS = tuple(sig for sig in (signal.SIGTERM, getattr(signal, "SIGHUP", None)) if sig is not None)
+
+
+@contextlib.contextmanager
+def teardown_on_termination() -> Iterator[None]:
+    """Make SIGTERM and SIGHUP end the run the way Ctrl-C does, so its ``finally`` still tears down.
+
+    Python's default for both is to exit on the spot, skipping every ``finally``: the sandbox, its port
+    forward and the host backends were left running, and the forward kept the port bound. Raising
+    ``KeyboardInterrupt`` reuses the one path a run already handles. Only the first signal raises; later
+    ones are ignored, so a repeated stop cannot abort the teardown the first one started — SIGKILL still
+    ends the process outright.
+
+    A no-op off the main thread, where Python cannot install signal handlers.
+    """
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    def _interrupt(signum: int, _frame: object) -> None:
+        for sig in TERMINATION_SIGNALS:
+            signal.signal(sig, signal.SIG_IGN)
+        name = signal.Signals(signum).name
+        logging.getLogger("agent_hardener.run").warning("received %s; tearing down", name)
+        raise KeyboardInterrupt(name)
+
+    previous = {sig: signal.signal(sig, _interrupt) for sig in TERMINATION_SIGNALS}
+    try:
+        yield
+    finally:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
 
 
 @dataclass
@@ -203,14 +245,21 @@ class Mission:
 
     def __init__(self, ctx: MissionSpec) -> None:
         self.ctx = ctx
+        #: Scope ids in the victim's ATOF stream once the startup probe passed: the tool-path check
+        #: counts only the others as attack traffic.
+        self._probe_scopes: frozenset[str] = frozenset()
         self._prepare()
 
     def run(self) -> MissionResult:
         """Open the log/event sinks, run the phases in order, and always tear down at the end."""
         with contextlib.ExitStack() as sinks:
+            sinks.enter_context(teardown_on_termination())
             self._open_sinks(sinks)
+            self._infrastructure_started = False
             try:
                 self._load_benign_suite()
+                self._infrastructure_started = True
+                self._announce("Sandbox", level="section")
                 self._start_backends()
                 self._bring_up_victim()
                 reports = self._harden()
@@ -288,14 +337,36 @@ class Mission:
 
     # --- presentation (formerly nested closures) ---
 
-    def _detail(self, text: str) -> None:
-        """Record a run-log-only entry (heavy build/compose blobs)."""
-        if text:
-            self._run_log.info(text)
+    def _detail(self, text: str, *, console: bool = True) -> None:
+        """Record a run-log entry (heavy build/compose blobs). The console shows it only with ``--debug``.
 
-    def _announce(self, line: str) -> None:
-        """Emit a highlight line as an ``output`` event — rendered by the subscriber and logged."""
-        emit_event(EventType.OUTPUT, {"line": line})
+        ``console=False`` keeps it out of the console even then — for the final report, which the console
+        already renders as the summary.
+        """
+        if text:
+            self._run_log.info(text, extra=None if console else FILE_ONLY)
+
+    def _announce(self, line: str, *, level: str = "info", elapsed: float | None = None) -> None:
+        """Emit a console line as an ``output`` event — rendered by the subscriber and logged.
+
+        ``level`` picks how the console renders it: ``section``, ``step``, ``ok``, ``warn``, ``fail``, ``hint``,
+        ``detail`` (``--debug`` only), ``info``, or ``output`` for verbatim subprocess output. ``elapsed`` (seconds)
+        is shown after an ``ok`` line as ``(12.4s)``.
+
+        The payload's ``line`` is the line as the console shows it (``✓ Sandbox ready (12.4s)``), so a subscriber
+        that renders only ``line`` (Helix Studio's feed) keeps the marker; ``message``, ``level`` and ``elapsed``
+        are its parts, for subscribers that style lines themselves.
+        """
+        payload: dict[str, Any] = {"line": line_text(level, line, elapsed), "message": line, "level": level}
+        if elapsed is not None:
+            payload["elapsed"] = round(elapsed, 3)
+        emit_event(EventType.OUTPUT, payload)
+
+    def _announce_failure_output(self, output: str) -> None:
+        """Show the error lines of a failed build/compose blob (:func:`failure_excerpt`); the log has all of it."""
+        self._detail(output, console=False)
+        if excerpt := failure_excerpt(output):
+            self._announce(excerpt, level="output")
 
     @contextlib.contextmanager
     def _status(self, label: str) -> Iterator[None]:
@@ -306,19 +377,25 @@ class Mission:
         finally:
             emit_event(EventType.STATUS_COMPLETED, {"label": label})
 
+    @contextlib.contextmanager
+    def _timed(self) -> Iterator[Callable[[], float]]:
+        """Yield a clock reading the seconds since the block started, for the ``✓ … (12.4s)`` lines."""
+        started = time.monotonic()
+        yield lambda: time.monotonic() - started
+
     # --- phases ---
 
     def _start_backends(self) -> None:
         """Start the compose-managed backends the victim's tools call and wait for every backend's health."""
         if not self._backend_manager:
             return
-        self._announce("backend setup: starting backends")
-        backend_up = self._backend_manager.up(self._backend_specs, self._backend_cwd)
+        with self._timed() as elapsed, self._status("Starting backends"):
+            backend_up = self._backend_manager.up(self._backend_specs, self._backend_cwd)
         if not backend_up.ok:
-            self._announce(backend_up.output)  # real error: surface even when quiet
+            self._announce_failure_output(backend_up.output)  # the real error: shown even by default
             raise MissionError("backend startup failed")
         self._detail(backend_up.output)
-        self._announce("backends ready")
+        self._announce("Backends ready", level="ok", elapsed=elapsed())
 
     def _bring_up_victim(self) -> None:
         """Stand the victim up once at the baseline: build/reuse the sandbox and gate health (synth is separate)."""
@@ -329,45 +406,47 @@ class Mission:
         fp = _agent_fingerprint(cfg, base_config)
         fp_path = agent_fingerprint_path(base_config.cwd or Path.cwd(), base_config.sandbox)
         if self._adopted_image:
-            self._announce(f"reusing the pre-built victim image recorded for this sandbox: {self._adopted_image}")
+            self._announce(f"Reusing the pre-built victim image recorded for this sandbox: {self._adopted_image}")
         fingerprint_ok = _read_fingerprint(fp_path) == fp
         # A rotated API key leaves the provider (and every sandbox started under it) holding the old one.
         credentials_drift = self._lifecycle.credentials_drift()
         reuse_ok = self.ctx.skip_initial_up and fingerprint_ok and credentials_drift is None
         if self.ctx.skip_initial_up and not fingerprint_ok:
             self._announce(
-                "running sandbox does not match the configured agent (fingerprint mismatch or "
-                "unknown) — rebuilding instead of reusing"
+                "Running sandbox does not match the configured agent (fingerprint mismatch or "
+                "unknown); rebuilding instead of reusing",
+                level="warn",
             )
         if credentials_drift:
-            self._announce(f"{credentials_drift} — refreshing the provider and rebuilding the sandbox")
+            self._announce(f"{credentials_drift}; refreshing the provider and rebuilding the sandbox", level="warn")
         if not reuse_ok:
             self._lifecycle.down()
-            with self._status("Building and starting sandbox"):
+            with self._timed() as elapsed, self._status("Building and starting sandbox"):
                 result = self._lifecycle.up(None)
             if not result.ok:
-                self._announce(result.output)  # real error: surface even when quiet
+                self._announce_failure_output(result.output)  # the real error: shown even by default
                 raise MissionError("OpenShell sandbox failed to start")
             self._detail(result.output)
-            self._announce("sandbox ready")
-            self._announce(f"  → full build/infra output: {self._log_path}")
+            self._announce("Sandbox ready", level="ok", elapsed=elapsed())
+            self._announce(f"sandbox {self._base_config.sandbox}", level="detail")
             _write_fingerprint(fp_path, fp)
         else:
-            self._announce("reusing sandbox (agent fingerprint matches)")
+            self._announce("Reusing the running sandbox (agent fingerprint matches)", level="ok")
         drift = self._lifecycle.image_context_drift()
         if drift:
-            self._announce(f"warning: {drift}")
+            self._announce(drift, level="warn")
         # Ensure the victim is serving before synth probes it (wait_for_health is idempotent).
         health_url = target_health_url(cfg.target.base_url)
         if health_url:
             try:
-                with self._status("Waiting for victim health"):
+                with self._timed() as elapsed, self._status("Waiting for the victim to become healthy"):
                     wait_for_health(health_url, base_config.health_timeout)
             except TimeoutError as exc:
                 raise VictimUnavailableError(
                     f"victim did not become healthy at {health_url} within {base_config.health_timeout}s"
                 ) from exc
-            self._announce("victim health ready")
+            self._announce("Victim healthy", level="ok", elapsed=elapsed())
+            self._announce(health_url, level="detail")
         self._check_relay_instrumentation()
 
     def _check_relay_instrumentation(self) -> None:
@@ -400,49 +479,92 @@ class Mission:
                     sync=lambda: self._lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path),
                 )
             )
-        self._announce(f"relay instrumentation confirmed ({result.records_observed} event(s))")
+        records = load_records(atof_path) if atof_path.exists() else []
+        self._probe_scopes = frozenset(str(record["uuid"]) for record in records if "uuid" in record)
+        self._announce("Relay instrumentation confirmed", level="ok")
+        self._announce(f"{result.records_observed} Relay event(s) observed from the probe", level="detail")
         if result.quarantined:
             # Not fatal: the run still produces findings, but the trajectory is untrustworthy and a
             # report that does not say so reads as more certain than it is.
-            self._announce("  ⚠ Relay reported a dirty scope stack — the recorded trajectory may be wrong")
+            self._announce("Relay reported a dirty scope stack; the recorded trajectory may be wrong", level="warn")
 
     def _host_atof_path(self, spec: RelayVictimSpec) -> Path:
         """Where the victim's ATOF log lands on *this* machine."""
         cwd = self._base_config.cwd or Path.cwd()
         return cwd / spec.atof_path if not spec.atof_path.is_absolute() else spec.atof_path
 
-    def _verify_tool_path(self) -> None:
+    def _verify_tool_path(self, attacks: list[AttackRecord] | None = None) -> None:
         """Prove the victim's tool calls pass through Relay, from the first round's attack traffic.
 
         The startup probe proves Relay is *attached*; it cannot prove tool calls *reach* it, because a
         greeting provokes no tool. Garak does, so this runs once the attacks have — no probe tool to
         declare, no synthetic call, and no side effect Agent Hardener caused itself.
 
+        The copy is fetched strictly here: the startup probe already read the stream, so a fetch that
+        fails now is a sync fault, and judging a stale copy would blame the victim's wiring for it.
+
         Skipped for a plain HTTP target with no relay-victim block, matching the startup probe: there
         is no sandbox to read telemetry out of.
+
+        Args:
+            attacks: The live attackers' records, when they produced the traffic; their targets are
+                checked against the tools the victim actually used. ``None`` after a replay.
         """
         spec = self._base_config.relay_victim
         if spec is None:
             return
         atof_path = self._host_atof_path(spec)
-        self._sync_atof()
+        self._sync_atof(strict=True)
         records = load_records(atof_path) if atof_path.exists() else []
-        tools = check_tool_path(records)
-        self._announce(f"tool calls reach Relay ({', '.join(tools)})")
+        tools = check_tool_path(records, before=self._probe_scopes)
+        self._announce(f"Tool calls reach Relay ({', '.join(tools)})", level="ok")
+        if attacks:
+            self._warn_untouched_targets(attacks, {*tools, *requested_tools(records)})
 
-    def _sync_atof(self) -> None:
-        """Copy the victim's ATOF stream out of the sandbox, best-effort.
+    def _warn_untouched_targets(self, attacks: list[AttackRecord], used: set[str]) -> None:
+        """Name the attack targets the victim never asked for nor ran.
+
+        Not fatal: the run is valid, but attempts spent on a tool the victim does not have (garak has
+        targeted ``multi_tool_use.parallel``, an artifact of OpenAI's tool-call format) are attacks that
+        never tested anything, and a report that does not say so overstates the coverage.
+        """
+        targets = {str(target) for attack in attacks for target in attack.metadata.get("attack_targets") or []}
+        untouched = sorted(targets - used)
+        if untouched:
+            self._announce(
+                f"attacks targeted {len(untouched)} tool(s) the victim never asked for or ran "
+                f"({', '.join(untouched)}) — they may not exist, so those attempts tested nothing",
+                level="warn",
+            )
+
+    def _sync_atof(self, *, strict: bool = False) -> None:
+        """Copy the victim's ATOF stream out of the sandbox, best-effort unless ``strict``.
 
         Separate from :meth:`_verify_tool_path` because collecting the telemetry and asserting
         something about it are different jobs: the assertion only makes sense when live attackers
         produced the traffic, while the collection is worth doing for every round.
+
+        Raises:
+            AtofSyncError: ``strict`` and the stream could not be copied.
         """
         spec = self._base_config.relay_victim
         if spec is None:
             return
         atof_path = self._host_atof_path(spec)
-        with contextlib.suppress(Exception):
-            self._lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path)
+        remote = f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}"
+        if not strict:
+            with contextlib.suppress(Exception):
+                self._lifecycle.fetch_file(remote, atof_path)
+            return
+        try:
+            fetched = self._lifecycle.fetch_file(remote, atof_path)
+        except Exception as exc:
+            raise AtofSyncError(f"could not copy {remote} out of the victim's sandbox: {exc}") from exc
+        if not fetched:
+            raise AtofSyncError(
+                f"could not copy {remote} out of the victim's sandbox: the copy came back empty, although "
+                "the startup probe read it, so the victim's telemetry is unreadable rather than absent"
+            )
 
     def _load_benign_suite(self) -> None:
         """Pre-flight: seed the supplied benign suite for each smart-benign validator.
@@ -456,6 +578,7 @@ class Mission:
         validators = [v for v in cfg.benign_validators if _is_smart_benign(v)]
         if not validators:
             return
+        self._announce("Benign suite", level="section")
         if cfg.benign_suite_path is None:
             raise BenignSuiteError("smart-benign validation requires an explicit benign suite, but none was supplied")
         context = {"storage_root": str(cfg.storage.root_dir)}
@@ -464,7 +587,7 @@ class Mission:
                 round_id="preflight-load", target=cfg.target, context=context, validator_kind="benign"
             )
             try:
-                with self._status(f"loading benign suite ({agent.name})"):
+                with self._status(f"Loading benign suite ({agent.name})"):
                     result = asyncio.run(
                         synthesize(
                             request,
@@ -481,7 +604,8 @@ class Mission:
                 raise BenignSuiteError(
                     f"benign suite {cfg.benign_suite_path} contains no replayable requests for {agent.name}"
                 )
-            self._announce(f"benign suite ready: {result.request_count} request(s) → {result.artifact_dir}")
+            self._announce(f"Benign suite loaded: {result.request_count} request(s) for {agent.name}", level="ok")
+            self._announce(f"from {cfg.benign_suite_path}", level="detail")
 
     def _harden(self) -> list[RoundReport]:
         """Run the orchestrator's hardening rounds and persist the final report."""
@@ -503,8 +627,8 @@ class Mission:
         # one-shot terminal render that needs the full RoundReport objects, which don't fit the
         # serializable-event model the rest of the run uses.
         mission_ids = [self.ctx.mission_id] if self.ctx.mission_id else None
-        self._detail("\n" + render_final_run_log(reports, mission_ids=mission_ids))
-        self._announce(f"  → full report detail: {self._log_path}")
+        self._detail("\n" + render_final_run_log(reports, mission_ids=mission_ids), console=False)
+        self._announce("Report", level="section")
         print_final_summary(reports, verbose=self.ctx.verbose)
         cfg = self.ctx.session_config
         # mitigations.json: the run's before/after policy+workflow — the NeMo plugin saves it for the Studio
@@ -542,7 +666,7 @@ class Mission:
             raw_dir=RunLayout(self.ctx.session_config.storage.root_dir, self._run_id).dir_for(TRACES),
         )
         if provider is not None:
-            self._announce(f"execution traces on ({traces.provider})")
+            self._announce(f"execution traces from {traces.provider}", level="detail")
         return provider
 
     def _write_hardened_bundle(self) -> None:
@@ -577,7 +701,7 @@ class Mission:
         except Exception:
             self._run_log.warning("could not assemble the hardened image bundle", exc_info=True)
             return
-        self._announce(f"  → hardened image bundle: {bundle}")
+        self._announce(f"hardened image bundle: {bundle}", level="hint")
 
     def _write_run_artifact(self, filename: str, build: Callable[[Path], Any]) -> None:
         """Persist a best-effort JSON run artifact next to the run log; skip a falsy payload, never raise."""
@@ -603,11 +727,23 @@ class Mission:
             self._run_log.debug("failed to save victim logs", exc_info=True)
 
     def _teardown(self) -> None:
-        """Tear the sandbox + backends down, unless --no-cleanup left them running."""
-        if self.ctx.no_cleanup:
-            self._announce("Cleanup skipped; sandbox + backends left running.")
+        """Tear the sandbox + backends down, unless --no-cleanup left them running.
+
+        A run that failed before the sandbox stage started nothing, so it still clears any sandbox an
+        earlier run left behind, but only into the log: the console never claims a teardown it did not need.
+        """
+        if not self._infrastructure_started:
+            if not self.ctx.no_cleanup:
+                self._detail(self._lifecycle.down().output, console=False)
             return
-        self._save_victim_logs()
-        self._detail(self._lifecycle.down().output)
-        if self._backend_manager:
-            self._detail(self._backend_manager.down(self._backend_specs, self._backend_cwd).output)
+        self._announce("Cleanup", level="section")
+        if self.ctx.no_cleanup:
+            self._announce("Cleanup skipped: the sandbox and backends are still running", level="warn")
+            self._announce("tear them down with: agent-hardener down", level="hint")
+            return
+        with self._timed() as elapsed, self._status("Tearing down the sandbox"):
+            self._save_victim_logs()
+            self._detail(self._lifecycle.down().output)
+            if self._backend_manager:
+                self._detail(self._backend_manager.down(self._backend_specs, self._backend_cwd).output)
+        self._announce("Sandbox torn down", level="ok", elapsed=elapsed())

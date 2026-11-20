@@ -17,14 +17,15 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from agent_hardener.atof import has_quarantined_scopes, load_records, tool_calls
-from agent_hardener.errors import VictimNotInstrumentedError, VictimUnavailableError
+from agent_hardener.atof import has_quarantined_scopes, load_records, model_scope_ends, requested_tools, tool_calls
+from agent_hardener.errors import AttackerIneffectiveError, VictimNotInstrumentedError, VictimUnavailableError
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable
+    from collections.abc import Awaitable, Callable, Collection, Iterable
     from pathlib import Path
 
 #: A greeting, not a tool request: this proves Relay is attached. Whether tool calls *reach* it is a
@@ -45,8 +46,8 @@ class RelayPreflight:
     quarantined: bool
 
 
-def check_tool_path(records: Iterable[dict[str, Any]]) -> tuple[str, ...]:
-    """The tools Relay saw, raising when it saw none.
+def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str] = ()) -> tuple[str, ...]:
+    """The tools Relay saw, raising when it saw none — with the reason it saw none.
 
     Separate from the probe check because the evidence arrives much later. A warm-up greeting proves
     Relay is *attached*; only real attack traffic proves tool calls *pass through* it. A victim can
@@ -54,19 +55,59 @@ def check_tool_path(records: Iterable[dict[str, Any]]) -> tuple[str, ...]:
     its tool calls bypass Relay entirely — and that victim is unguardable no matter what the
     defenders write.
 
+    "No tool call" has three causes, told apart by the victim's own model calls since the startup probe:
+
+    - the model asked for tools and none ran through Relay: the tools bypass it (not instrumented);
+    - no model call was traced at all: Relay stopped tracing after the probe (not instrumented);
+    - model calls were traced but none asked for a tool: Relay is fine, the attacks never led the
+      model to a tool (:class:`AttackerIneffectiveError`).
+
+    An attacker that sent nothing, or reached a dead victim, has already failed the attack stage.
+
     Raises rather than warns. The alternative is a run that reports every attack unblocked, which
     reads as weak defenders, while attribution silently falls back to guessing the tool from the
     attack prompt.
+
+    Args:
+        records: The victim's whole ATOF stream.
+        before: The scope ids already in the stream when the startup probe passed, so the probe's own
+            model call is not counted as attack traffic. By id, not position: a Fabric victim's stream is
+            several per-session files joined in directory order, not in time order.
     """
+    records = list(records)
     seen = tuple(sorted({call.name for call in tool_calls(records) if call.name}))
-    if not seen:
+    if seen:
+        return seen
+    traffic = [record for record in records if record.get("uuid") not in before]
+    if requested := requested_tools(traffic):
+        asked = ", ".join(f"{name} x{count}" for name, count in Counter(requested).most_common())
         raise VictimNotInstrumentedError(
-            "the victim answered attacks but Relay recorded no tool call at all, so its tool calls do "
-            "not pass through Relay — a guardrail installed here could never fire. Attach Relay's "
-            "middleware (or, for a hand-built LangGraph graph, build the tools node with Relay's "
-            "create_tool_node)."
+            f"the victim's model asked for tools ({asked}) but Relay recorded none of them running, so its "
+            "tool calls do not pass through Relay — a guardrail installed here could never fire. Attach "
+            "Relay's middleware (or, for a hand-built LangGraph graph, build the tools node with Relay's "
+            "create_tool_node).",
+            # Relay is attached and writing events here, so the class's "attach Relay" default misleads.
+            remediation=(
+                "Route the tool calls through Relay: for a hand-built LangGraph graph, "
+                "ToolNode(TOOLS, awrap_tool_call=NemoRelayMiddleware().awrap_tool_call) or Relay's create_tool_node."
+            ),
         )
-    return seen
+    model_calls = len(model_scope_ends(traffic))
+    if model_calls == 0:
+        raise VictimNotInstrumentedError(
+            f"the victim answered attacks but Relay recorded no event for them ({len(traffic)} record(s) since "
+            "the startup probe, no model call among them), so tracing stopped after the probe or the "
+            "attacks were served by a process Relay is not attached to.",
+            remediation=(
+                "Check the victim log for a Relay error after startup, and that every worker process serving "
+                "requests calls nemo_relay.plugin.initialize() and runs inside a Relay scope."
+            ),
+        )
+    raise AttackerIneffectiveError(
+        f"the attacks reached the victim and Relay traced {model_calls} of its model call(s), but the model "
+        "never asked for a tool, so there is no tool traffic to guard. Relay is working; the attacks did not "
+        "steer the agent into its tools."
+    )
 
 
 async def check_relay_instrumentation(

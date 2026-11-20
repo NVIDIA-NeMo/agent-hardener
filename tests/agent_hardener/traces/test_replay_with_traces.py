@@ -181,7 +181,7 @@ def _replay_round(
         config,
         agent_adapter=Adapter(),
         trace_provider=provider,
-        verify_tool_path=(lambda: verify.append(1)) if verify is not None else None,
+        verify_tool_path=(lambda _attacks: verify.append(1)) if verify is not None else None,
         **extra,
     )
     reports = asyncio.run(orchestrator.run_rounds(rounds=rounds, run_id="run-1"))

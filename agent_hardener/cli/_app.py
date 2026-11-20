@@ -10,6 +10,8 @@ avoid a circular import (``__init__`` → command modules → ``app``).
 
 from __future__ import annotations
 
+import logging
+import os
 import warnings
 from pathlib import Path
 
@@ -26,6 +28,45 @@ app = typer.Typer(
     no_args_is_help=True,
     add_completion=False,  # hide the built-in --install-completion/--show-completion options
 )
+
+# Commands whose stdout is machine-readable output (a path, JSON): no trailing log-path line on them.
+_MACHINE_OUTPUT_COMMANDS = frozenset({"stage", "inspect"})
+
+
+@app.callback()
+def _configure(
+    ctx: typer.Context,
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Print every log record to the console — engine detail, OpenShell commands, tracebacks and "
+        "third-party library logs. The log file always has them. Also: AGENT_HARDENER_LOG_LEVEL=debug.",
+    ),
+) -> None:
+    """Wire logging for this invocation and print where its log file is when the command ends."""
+    from agent_hardener import __version__
+    from agent_hardener.loggers import configure_cli_logging
+
+    command = ctx.invoked_subcommand or "agent-hardener"
+    debug = debug or os.environ.get("AGENT_HARDENER_LOG_LEVEL", "").strip().lower() == "debug"
+    log_path = configure_cli_logging(command, debug=debug)
+    logging.getLogger("agent_hardener.cli").debug("agent-hardener %s %s (debug=%s)", __version__, command, debug)
+    if command not in _MACHINE_OUTPUT_COMMANDS:
+        ctx.call_on_close(lambda: _print_log_path(log_path))
+
+
+def _print_log_path(path: Path) -> None:
+    """Close every command with the location of its full diagnostic log (when anything was logged)."""
+    from agent_hardener.display.console import hint
+
+    if not path.is_file():
+        return
+    try:
+        shown = path.relative_to(Path.cwd())
+    except ValueError:
+        shown = path
+    hint(f"log: {shown}", markup=False)
+
 
 DEFAULT_MANIFEST = Path("agent-hardener.yaml")
 DEFAULT_ENV_FILE = Path(".env")

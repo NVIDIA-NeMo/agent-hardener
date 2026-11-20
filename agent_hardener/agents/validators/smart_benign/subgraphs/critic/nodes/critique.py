@@ -38,7 +38,7 @@ async def critique(state: CriticState) -> dict[str, object]:
     except RateLimitError:
         raise
     except Exception as exc:
-        logger.exception("critic failed")
+        logger.info("critic failed", exc_info=True)
         deduped = _dedupe_exact(state.requests)
         return {
             "filtered_requests": deduped,
@@ -89,14 +89,14 @@ def _apply_decisions(
     by_index: dict[int, CriticDecision] = {}
     for decision in decisions:
         if decision.index in by_index:
-            logger.warning("critic emitted multiple decisions for index %d; last wins", decision.index)
+            logger.info("critic emitted multiple decisions for index %d; last wins", decision.index)
         by_index[decision.index] = decision
 
     out: list[GeneratedRequest] = []
     for one_based, request in enumerate(requests, start=1):
         decision = by_index.get(one_based)
         if decision is None:
-            logger.warning("critic missed index %d; keeping by default", one_based)
+            logger.info("critic missed index %d; keeping by default", one_based)
             out.append(request)
             continue
         if decision.action == "drop":
@@ -105,7 +105,7 @@ def _apply_decisions(
             if decision.new_payload:
                 out.append(request.model_copy(update={"payload": decision.new_payload}))
             else:
-                logger.warning("critic chose 'rewrite' at index %d without new_payload; keeping original", one_based)
+                logger.info("critic chose 'rewrite' at index %d without new_payload; keeping original", one_based)
                 out.append(request)
             continue
         # keep

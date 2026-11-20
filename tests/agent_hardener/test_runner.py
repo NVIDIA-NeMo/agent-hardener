@@ -6,8 +6,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+import signal
 import tempfile
+import threading
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -18,6 +21,7 @@ import pytest
 from agent_hardener.errors import BenignSuiteError
 from agent_hardener.models import TargetInput, TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.runtime import runner as runner_module
 from agent_hardener.runtime.runner import Mission, MissionError, run_mission
 
 if TYPE_CHECKING:
@@ -31,7 +35,7 @@ def _collect_output(sink: list[str]):  # type: ignore[no-untyped-def]
 
     def _on_event(event: str, payload: dict[str, Any]) -> None:
         if event == "output":
-            sink.append(str(payload.get("line", "")))
+            sink.append(str(payload.get("message", "")))
 
     return _on_event
 
@@ -91,7 +95,7 @@ def _benign_preflight_mission(
     mission = Mission.__new__(Mission)
     mission.ctx = SimpleNamespace(session_config=config)
     mission._status = lambda _label: nullcontext()
-    mission._announce = lambda _message: None
+    mission._announce = lambda _message, **_kw: None
     return mission, agent
 
 
@@ -146,7 +150,7 @@ def test_explicit_benign_suite_is_seeded(tmp_path: Path, monkeypatch: pytest.Mon
     mission, agent = _benign_preflight_mission(tmp_path, suite_path=suite_path)
     announcements: list[str] = []
     captured: dict[str, object] = {}
-    mission._announce = announcements.append
+    mission._announce = lambda line, **_kw: announcements.append(line)
 
     async def fake_synthesize(request: object, configured_agent: object, **kwargs: object) -> SimpleNamespace:
         captured.update(request=request, agent=configured_agent, **kwargs)
@@ -158,7 +162,11 @@ def test_explicit_benign_suite_is_seeded(tmp_path: Path, monkeypatch: pytest.Mon
 
     assert captured["agent"] is agent
     assert captured["source_suite"] == suite_path
-    assert announcements == [f"benign suite ready: 2 request(s) → {tmp_path / 'profile'}"]
+    assert announcements == [
+        "Benign suite",
+        "Benign suite loaded: 2 request(s) for smart-benign",
+        f"from {suite_path}",
+    ]
 
 
 def test_empty_benign_suite_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -223,6 +231,23 @@ def test_benign_suite_preflight_runs_before_infrastructure() -> None:
         mission.run()
 
     assert calls == ["open_sinks", "teardown"]
+
+
+@pytest.mark.parametrize(("no_cleanup", "downs"), [(False, 1), (True, 0)])
+def test_teardown_before_infrastructure_is_quiet(no_cleanup: bool, downs: int) -> None:
+    mission = Mission.__new__(Mission)
+    mission.ctx = SimpleNamespace(no_cleanup=no_cleanup)
+    mission._infrastructure_started = False
+    announced: list[str] = []
+    mission._announce = lambda line, **_kw: announced.append(line)
+    down_calls: list[None] = []
+    mission._lifecycle = SimpleNamespace(down=lambda: down_calls.append(None) or SimpleNamespace(output="deleted"))
+    mission._detail = lambda _text, **_kw: None
+
+    mission._teardown()
+
+    assert announced == []
+    assert len(down_calls) == downs
 
 
 def test_run_mission_happy_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -290,11 +315,14 @@ def test_run_mission_always_writes_full_report_to_log(monkeypatch: pytest.Monkey
     log_text = _run_log_path(tmp_path).read_text(encoding="utf-8")
     assert "Agent Hardener final log" in log_text
     # Runner highlight lines are `output` events, echoed to the log via the events bridge, timestamped.
-    stamped = [line for line in log_text.splitlines() if "sandbox ready" in line]
+    stamped = [line for line in log_text.splitlines() if "Sandbox ready" in line]
     assert stamped, "highlight lines should be mirrored into the log"
     assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", stamped[0])
     assert "agent_hardener.events" in stamped[0]
-    assert ("output", {"line": "sandbox ready"}) in events_seen
+    sandbox_ready = [p for e, p in events_seen if e == "output" and p["message"] == "Sandbox ready"]
+    assert [(p["level"], isinstance(p["elapsed"], float)) for p in sandbox_ready] == [("ok", True)]
+    # ``line`` is the line as the console shows it, for subscribers that render only ``line`` (Studio's feed).
+    assert re.fullmatch(r"✓ Sandbox ready \(\d+\.\ds\)", sandbox_ready[0]["line"])
     # Agent-level logging is captured by the same bus and lands in agent-hardener.log.
     assert "fake-agent-log-line" in log_text
 
@@ -360,7 +388,7 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
     outputs: list[str] = []
     result = run_mission(_session(), rounds=2, mission_id="m", on_event=_collect_output(outputs))
     assert result.success is True
-    assert "backends ready" in outputs  # the "backends-up" blob is teed to the log, not an output event
+    assert "Backends ready" in outputs  # the "backends-up" blob is teed to the log, not an output event
     assert captured["rounds"] == 2  # rounds flows to a single run_rounds as the round count
     assert restarts == []  # the runner no longer restarts between rounds — the orchestrator owns the loop
 
@@ -472,7 +500,7 @@ def test_run_mission_emits_status_events(monkeypatch: pytest.MonkeyPatch) -> Non
     result = run_mission(_session(), rounds=2, on_event=on_event)
     assert result.reports  # reports populated
     assert "Building and starting sandbox" in labels
-    assert "Waiting for victim health" in labels
+    assert "Waiting for the victim to become healthy" in labels
     assert "Restarting sandbox" not in labels  # the runner no longer restarts between rounds
 
 
@@ -506,8 +534,7 @@ def test_run_mission_tees_detail_to_log_and_surfaces_errors(monkeypatch: pytest.
     log_text = _run_log_path(tmp_path).read_text(encoding="utf-8")
     assert "UP-BLOB" in log_text  # success blob teed to the log file, never inline
     assert "UP-BLOB" not in highlights
-    assert "sandbox ready" in highlights  # explicit highlight shown even when quiet
-    assert any("agent-hardener.log" in line for line in highlights)  # pointer to the log printed
+    assert "Sandbox ready" in highlights  # explicit highlight shown even when quiet
 
 
 def test_run_mission_failure_output_surfaced_to_highlights(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -614,6 +641,7 @@ def _teardown_mission(tmp_path: Path, diagnostics: OpenShellCommandResult, calls
     mission._run_id = "test-run"
     mission._lifecycle = FakeLifecycle()
     mission._backend_manager = None
+    mission._infrastructure_started = True
     mission._detail = lambda _output: None
     mission._run_log = logging.getLogger("test")
     (tmp_path / "run-logs" / "test-run").mkdir(parents=True)
@@ -651,7 +679,8 @@ def test_no_cleanup_leaves_the_sandbox_and_backends_running(build_mission: Build
     harness.run()
 
     assert harness.lifecycle.calls == ["down", "up"]  # the initial rebuild only; no teardown down
-    assert "Cleanup skipped; sandbox + backends left running." in harness.lines
+    assert "Cleanup skipped: the sandbox and backends are still running" in harness.lines
+    assert "tear them down with: agent-hardener down" in harness.lines
 
 
 @pytest.mark.usefixtures("relay_probe")
@@ -672,3 +701,51 @@ def test_teardown_without_backends_only_stops_the_sandbox(build_mission: BuildMi
 
     assert harness.lifecycle.calls == ["down", "up", "down"]
     assert harness.backends.downed == []
+
+
+# --- termination -------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("signum", runner_module.TERMINATION_SIGNALS, ids=lambda sig: signal.Signals(sig).name)
+def test_a_terminated_run_still_tears_down_and_a_repeated_signal_cannot_abort_it(
+    build_mission: BuildMission, signum: int
+) -> None:
+    """A closed terminal or ``kill`` used to skip teardown, leaving the sandbox and its port forward up."""
+    previous = signal.getsignal(signum)
+    harness = build_mission()
+    signalled: list[bool] = []
+
+    def terminate(_kwargs: object) -> None:
+        signalled.append(True)
+        os.kill(os.getpid(), signum)
+
+    harness.orchestrator_hook = terminate
+    down = harness.lifecycle.down
+
+    def down_while_signalled_again() -> OpenShellCommandResult:
+        if signalled:  # teardown, not the bring-up's own down
+            os.kill(os.getpid(), signum)
+        return down()
+
+    harness.lifecycle.down = down_while_signalled_again  # type: ignore[method-assign]
+
+    with pytest.raises(KeyboardInterrupt):
+        harness.run()
+
+    assert harness.lifecycle.calls == ["down", "up", "down"]
+    assert signal.getsignal(signum) == previous
+
+
+def test_termination_handling_is_a_noop_off_the_main_thread() -> None:
+    seen: list[object] = []
+
+    def in_thread() -> None:
+        with runner_module.teardown_on_termination():
+            seen.append(signal.getsignal(signal.SIGTERM))
+
+    before = signal.getsignal(signal.SIGTERM)
+    worker = threading.Thread(target=in_thread)
+    worker.start()
+    worker.join()
+
+    assert seen == [before]

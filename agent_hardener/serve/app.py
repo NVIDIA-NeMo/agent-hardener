@@ -16,26 +16,30 @@ Localhost-only. Synth probes the live victim (`api_prober`), so the victim's ``b
 
 from __future__ import annotations
 
+import contextlib
 import uuid
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
-from langgraph.checkpoint.memory import MemorySaver
 from langgraph.types import Command
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-from agent_hardener.agents.validators.smart_benign.graph import build_synth_graph
+from agent_hardener.agents.validators.smart_benign.driver import advance
+from agent_hardener.agents.validators.smart_benign.graph import build_synth_graph, synth_checkpointer
 from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
+from agent_hardener.agents.validators.smart_benign.progress import PhaseTracker
 from agent_hardener.agents.validators.smart_benign.state import SynthState
 from agent_hardener.agents.validators.smart_benign.subgraphs.profile_writer.nodes.write import _write_requests_csv
 from agent_hardener.agents.validators.smart_benign.validator import build_synth_inputs
 from agent_hardener.agents.validators.smart_benign.wizard import _resolve_validator
 from agent_hardener.config import load_config
+from agent_hardener.loggers import using_event_sink
+from agent_hardener.runtime.event_sink import make_http_event_sink
 from agent_hardener.swarm_tracker import benign_profiles_dir
 
 
@@ -63,6 +67,7 @@ class _Session:
     """Per-run state the endpoints need beyond the checkpointer (which holds the graph state)."""
 
     artifact_dir: Path
+    tracker: PhaseTracker  # turns the graph's node updates into synth_phase events across requests
 
 
 def _serialize_suite(requests: list[GeneratedRequest]) -> list[dict[str, str]]:
@@ -89,19 +94,28 @@ def _deserialize_suite(rows: list[dict[str, Any]]) -> list[GeneratedRequest]:
 def create_app() -> FastAPI:
     """Build the synth service. Holds one checkpointed graph + a thread_id -> session map for the process."""
     app = FastAPI(title="Agent Hardener Synth Service")
-    graph = build_synth_graph(checkpointer=MemorySaver())
+    graph = build_synth_graph(checkpointer=synth_checkpointer())
     sessions: dict[str, _Session] = {}
+    # The NeMo plugin points this at the run Studio is watching, so each finished synth step shows up in its
+    # recon checklist. Unset (a bare `agent-hardener serve`) → events go nowhere.
+    event_sink = make_http_event_sink()
 
-    def _step(thread_id: str, result: dict[str, Any]) -> dict[str, Any]:
-        """Map a graph invoke/resume result to an interview (interrupt) or review (completed) response."""
-        interrupts = result.get("__interrupt__")
+    async def _advance(thread_id: str, graph_input: Any) -> dict[str, Any]:
+        """Run the graph to its next interrupt or the end, emitting a synth_phase event per finished node.
+
+        Maps the outcome to an interview (interrupt) or review (completed) response.
+        """
+        config: Any = {"configurable": {"thread_id": thread_id}}
+        tracker = sessions[thread_id].tracker
+        with using_event_sink(event_sink) if event_sink else contextlib.nullcontext():
+            values, interrupts = await advance(graph, graph_input, config, on_node=tracker.on_node)
         if interrupts:
             return {
                 "thread_id": thread_id,
                 "status": "interview",
                 "questions": interrupts[0].value.get("questions", []),
             }
-        final = SynthState.model_validate(result)
+        final = SynthState.model_validate(values)
         return {"thread_id": thread_id, "status": "review", "suite": _serialize_suite(final.requests)}
 
     @app.get("/healthz")
@@ -125,16 +139,14 @@ def create_app() -> FastAPI:
         # interactive=True routes into the interview; the graph interrupts for answers (no TTY needed).
         state = SynthState.from_inputs(inputs, interactive=True, artifact_dir=artifact_dir)
         thread_id = uuid.uuid4().hex
-        sessions[thread_id] = _Session(artifact_dir=artifact_dir)
-        result = await graph.ainvoke(state, {"configurable": {"thread_id": thread_id}})
-        return _step(thread_id, result)
+        sessions[thread_id] = _Session(artifact_dir=artifact_dir, tracker=PhaseTracker(state))
+        return await _advance(thread_id, state)
 
     @app.post("/synth/{thread_id}/answers")
     async def answers(thread_id: str, body: AnswersIn) -> dict[str, Any]:
         if thread_id not in sessions:
             raise HTTPException(status_code=404, detail=f"unknown synth thread {thread_id!r}")
-        result = await graph.ainvoke(Command(resume=body.answers), {"configurable": {"thread_id": thread_id}})
-        return _step(thread_id, result)
+        return await _advance(thread_id, Command(resume=body.answers))
 
     @app.post("/synth/{thread_id}/suite")
     async def suite(thread_id: str, body: SuiteIn) -> dict[str, Any]:

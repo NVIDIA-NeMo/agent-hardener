@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import asyncio
 import email.utils
+import logging
 import time
 
 import httpx
@@ -165,3 +166,21 @@ def test_backoff_doubles_with_jitter_up_to_the_cap() -> None:
 def test_max_wait_reads_the_env(monkeypatch: pytest.MonkeyPatch, raw: str, expected: float) -> None:
     monkeypatch.setenv(rate_limits.RATE_LIMIT_MAX_WAIT_ENV, raw)
     assert rate_limits.rate_limit_max_wait() == expected
+
+
+def test_a_wait_starting_is_one_console_warning_per_host_per_minute(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(rate_limits, "_last_wait_warning", {})
+    clock = [1000.0]
+    monkeypatch.setattr(rate_limits.time, "monotonic", lambda: clock[0])
+
+    with caplog.at_level(logging.INFO, logger="agent_hardener.rate_limits"):
+        _post_sync(_Provider(_LIMITED, _LIMITED, _OK))  # one wait, two retries
+        _post_sync(_Provider(_LIMITED, _OK))  # a parallel call throttled at the same time
+        clock[0] += 61
+        _post_sync(_Provider(_LIMITED, _OK))  # a minute later: worth saying again
+
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings == ["provider.test is rate limiting requests (HTTP 429); waiting up to 600s before retrying"] * 2
+    assert sum(r.levelno == logging.INFO for r in caplog.records) == 4  # every retry, in the log only

@@ -50,7 +50,7 @@ async def compose(state: InterviewerState) -> dict[str, object]:
     except RateLimitError:
         raise
     except Exception as exc:
-        logger.exception("interviewer.compose LLM call failed")
+        logger.info("interviewer.compose LLM call failed", exc_info=True)
         return {
             "composed_questions": [],
             "source_note": f"interviewer.compose failed ({exc}); skipping round",

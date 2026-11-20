@@ -6,7 +6,8 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+import logging
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +20,30 @@ from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import Mission, MissionResult
 from agent_hardener.swarm_tracker import write_victim_image
+
+
+@pytest.fixture(autouse=True)
+def _isolated_cli_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep each test's CLI logging to itself.
+
+    Invoking the app runs ``configure_cli_logging``, which writes a log file under the cwd and rewires the
+    ``agent_hardener`` and root loggers process-wide. Point the file at the test's tmp dir and put the logger
+    state (and the console's ``--debug`` switch) back afterwards, so later tests' ``caplog`` still sees records.
+    """
+    from agent_hardener import loggers  # noqa: PLC0415
+    from agent_hardener.display import console  # noqa: PLC0415
+
+    monkeypatch.setattr(loggers, "CLI_LOGS_DIR", tmp_path / "cli-logs")
+    package, root = logging.getLogger("agent_hardener"), logging.getLogger()
+    saved = [(lg, lg.level, lg.propagate, list(lg.handlers)) for lg in (package, root)]
+    yield
+    for lg, level, propagate, handlers in saved:
+        for handler in [h for h in lg.handlers if h not in handlers]:
+            lg.removeHandler(handler)
+            handler.close()
+        lg.setLevel(level)
+        lg.propagate = propagate
+    console.set_debug(False)
 
 
 def command_result(output: str = "", *, ok: bool = True) -> OpenShellCommandResult:
@@ -71,10 +96,11 @@ class FakeLifecycle:
     def collect_victim_diagnostics(self) -> OpenShellCommandResult:
         return self.diagnostics
 
-    def fetch_file(self, remote: str, local: Path) -> None:
+    def fetch_file(self, remote: str, local: Path) -> bool:
         if self.fetch_error:
             raise self.fetch_error
         self.fetched.append((remote, local))
+        return True
 
 
 class FakeBackends:
@@ -112,7 +138,7 @@ class MissionHarness:
     @property
     def lines(self) -> list[str]:
         """Highlight lines the run announced."""
-        return [payload["line"] for event, payload in self.events if event == "output"]
+        return [payload["message"] for event, payload in self.events if event == "output"]
 
     @property
     def statuses(self) -> list[str]:

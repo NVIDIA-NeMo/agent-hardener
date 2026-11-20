@@ -1,0 +1,50 @@
+{
+  "skill": "models-and-providers",
+  "tests": [
+    {
+      "type": "explicit",
+      "prompt": "Use the models-and-providers skill to switch the analysis model.",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "explicit",
+      "prompt": "Follow models-and-providers to point the garak attacker at OpenRouter.",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "implicit",
+      "prompt": "I want the defenders to use a different LLM from OpenRouter instead of Nemotron.",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "implicit",
+      "prompt": "How do I change the model provider and API key Agent Hardener calls?",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "implicit",
+      "prompt": "Which env var sets the safety judge model endpoint?",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "contextual",
+      "prompt": "My run failed with 'The analysis model is not available at https://openrouter.ai/api/v1', I set AGENT_HARDENER_MODEL in .env. What's wrong?",
+      "expected_skill": "models-and-providers"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "The OpenShell provider still holds my old API key after I rotated it \u2014 how do I refresh the sandbox credential?",
+      "expected_skill_not": "models-and-providers"
+    },
+    {
+      "type": "negative-control",
+      "prompt": "Connect my LangGraph agent to NeMo Relay so its tool calls are traced.",
+      "expected_skill_not": "models-and-providers"
+    },
+    {
+      "type": "implicit",
+      "prompt": "If AGENT_HARDENER_MODEL is exported in my shell and also set in the --env-file, which one does a run use?",
+      "expected_skill": "models-and-providers"
+    }
+  ]
+}

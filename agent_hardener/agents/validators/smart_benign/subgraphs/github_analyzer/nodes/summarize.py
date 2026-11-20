@@ -75,7 +75,7 @@ async def summarize(state: GitHubAnalyzerState) -> dict[str, object]:
         rate_limit = rate_limit_error_from_exception(exc, source="smart_benign:github_analyzer.summarize")
         if rate_limit is not None:
             raise rate_limit from exc
-        logger.exception("github_analyzer summarize failed")
+        logger.info("github_analyzer summarize failed", exc_info=True)
         note_parts.append(f"summarize_failed={exc.__class__.__name__}")
         return {
             "tools": state.declared_tools,

@@ -41,8 +41,16 @@ def load_run_callable(reference: str | None) -> RunCallable:
 
     module_name, _, attribute = reference.partition(":")
     attribute = attribute or "run"
-    logger.warning(
-        "importing user-configured module %r (attribute %r) — ensure the source is trusted", module_name, attribute
+    # Agent Hardener's own agents load through here too; only a module from outside the package is worth a
+    # warning (it runs with the operator's privileges), the built-ins are a debug-level note.
+    builtin = module_name == "agent_hardener" or module_name.startswith("agent_hardener.")
+    logger.log(
+        logging.DEBUG if builtin else logging.WARNING,
+        "importing %s module %r (attribute %r)%s",
+        "built-in" if builtin else "user-configured",
+        module_name,
+        attribute,
+        "" if builtin else " — ensure the source is trusted",
     )
     module = importlib.import_module(module_name)
     run_callable = getattr(module, attribute)

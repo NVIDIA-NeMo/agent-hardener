@@ -4,25 +4,46 @@
 """Live console renderer: turns run events into colored, phase-structured console output.
 
 Wired by the CLI as the sole ``on_event`` subscriber. All one-way presentation flows through here as
-events: ``output`` highlight lines, ``status_started``/``status_completed`` spinners (sandbox bring-up,
-health, benign recon), ATTACK / DEFENSE / VALIDATION banners, live per-agent progress, and the benign
-synth spinner (label updates on ``synth_phase``; paused around the interview via
+events: ``output`` highlight lines, ``status_started``/``status_completed`` spinners with an elapsed clock
+(sandbox bring-up, health, benign synthesis), ATTACK / DEFENSE / VALIDATION banners, live per-agent progress,
+and benign synthesis steps (each ``synth_phase`` prints a line with what the step produced and moves the
+spinner to the step running now; the spinner is paused around the interview via
 ``interview_started``/``interview_completed`` so questionary owns the terminal). Presentation only; a
-failure here never aborts a run (the event logger guards it). ``output`` always prints (even off a TTY);
-the rich banners/spinners no-op when not on a styled terminal.
+failure here never aborts a run (the event bus guards it).
+
+Off a styled terminal (CI, piped) spinners and live progress rows are skipped, but the run keeps its
+structure: ``output`` lines, phase headers, one line per finished agent or synth step, and the phase
+summaries all still print, as plain text.
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_hardener.display.console import emit, get_console, is_rich
+from agent_hardener.display.console import emit, fail, get_console, is_rich, ok, say, section, warn
 from agent_hardener.display.context import DisplayContext
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from rich.progress import Progress, TaskID
+
+# Events that still render off a styled terminal (as plain lines); everything else is spinner/live-row only.
+_PLAIN_EVENTS = frozenset(
+    {
+        "phase_started",
+        "phase_completed",
+        "agent_completed",
+        "agent_failed",
+        "attack_summary",
+        "defender_summary",
+        "validator_summary",
+        "synth_phase",  # one line per finished synth step
+    }
+)
+
+# Longest failure reason shown on an agent's line; the full error is in the log file.
+_REASON_MAX_CHARS = 160
 
 # phase key -> (banner label, emoji, accent color). Only the war-game phases get a banner; the
 # internal "victim" replay phase is intentionally omitted to keep the timeline readable.
@@ -31,13 +52,57 @@ _PHASES: dict[str, tuple[str, str, str]] = {
     "defenders": ("DEFENSE", "🛡", "cyan"),
     "validators": ("VALIDATION", "🔬", "magenta"),
 }
+# Phases closed by a tally of their agent runs (headline label, noun). ATTACK has its own hits summary.
+_TALLIED_PHASES: dict[str, tuple[str, str]] = {
+    "defenders": ("DEFENSE", "defender run"),
+    "validators": ("VALIDATION", "validator"),
+}
+
+
+class _Spinner:
+    """A one-line spinner with an elapsed clock, so a long blocking step visibly keeps moving.
+
+    Same ``start``/``stop``/``update`` surface as ``Console.status``, which has no clock. The text is cut to the
+    terminal's width: rich drops the spinner and clock columns, not the text, when a line does not fit.
+    """
+
+    _RESERVED = 12  # spinner + "0:00:00" + the gaps between columns
+
+    def __init__(self, text: str) -> None:
+        from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn  # noqa: PLC0415
+
+        self._console = get_console()
+        self._progress = Progress(
+            SpinnerColumn(),
+            TimeElapsedColumn(),
+            TextColumn("{task.description}", markup=False),
+            console=self._console,
+            transient=True,
+        )
+        self._task = self._progress.add_task(self._fit(text), total=None)
+
+    def start(self) -> None:
+        self._progress.start()
+
+    def stop(self) -> None:
+        self._progress.stop()
+
+    def update(self, text: str) -> None:
+        self._progress.update(self._task, description=self._fit(text))
+
+    def _fit(self, text: str) -> str:
+        from rich.text import Text  # noqa: PLC0415
+
+        fitted = Text(text)
+        fitted.truncate(max(10, self._console.width - self._RESERVED), overflow="ellipsis")
+        return fitted.plain
 
 
 class ConsoleRenderer:
     """Stateful event subscriber that renders the run's live console narrative.
 
-    ``output`` events always print (so CI/piped runs still get highlight lines); every other (rich)
-    event is rendered only on a styled terminal.
+    ``output`` events and the events in ``_PLAIN_EVENTS`` print on any stream; spinners and live
+    per-agent rows only on a styled terminal.
     """
 
     def __init__(self, *, verbose: bool = False) -> None:
@@ -45,14 +110,24 @@ class ConsoleRenderer:
         self._rich = is_rich()
         self._progress: Progress | None = None
         self._task_ids: dict[str, TaskID] = {}  # agent_id → rich task id
-        self._status: Any = None  # active rich Console.status (spinner), if any
+        self._status: Any = None  # active spinner (``_Spinner``), if any
         self._status_label = ""
+        # This phase's agent results: (name, failure reason or "") -> count. Drives the phase headline and
+        # keeps a failure that repeats per attack to one line off a terminal (the log has every one).
+        self._results: dict[tuple[str, str], int] = {}
 
     def __call__(self, event: str, payload: dict[str, Any]) -> None:
-        if event == "output":  # highlight lines always print, TTY or not
-            emit(str(payload.get("line", "")))
+        if event == "output":  # console lines always print, TTY or not
+            line = str(payload.get("line", ""))
+            level = payload.get("level")
+            elapsed = payload.get("elapsed")
+            if level:  # ``line`` is pre-formatted; style the bare ``message`` at its level instead
+                message = str(payload.get("message", line))
+                say(str(level), message, elapsed=float(elapsed) if isinstance(elapsed, (int, float)) else None)
+            else:
+                emit(line)
             return
-        if not self._rich:  # banners/spinners/summaries are styled-terminal only
+        if not self._rich and event not in _PLAIN_EVENTS:  # spinners/live rows are styled-terminal only
             return
         handler: Callable[[dict[str, Any]], None] | None = getattr(self, f"_on_{event}", None)
         if handler is not None:
@@ -63,7 +138,8 @@ class ConsoleRenderer:
     def _on_status_started(self, payload: dict[str, Any]) -> None:
         self._stop_progress()
         self._status_label = str(payload.get("label") or "")
-        self._status = get_console().status(f"{self._status_label}…", spinner="dots")
+        detail = payload.get("detail")  # what the step is doing first, e.g. the synth's first node
+        self._status = _Spinner(f"{self._status_label} — {detail}…" if detail else f"{self._status_label}…")
         self._status.start()
 
     def _on_status_completed(self, _payload: dict[str, Any]) -> None:
@@ -72,8 +148,14 @@ class ConsoleRenderer:
             self._status = None
 
     def _on_synth_phase(self, payload: dict[str, Any]) -> None:
-        if self._status is not None:
-            self._status.update(f"{self._status_label} — {payload.get('label', '')}")
+        """Print what the finished step produced and point the spinner at the step running now."""
+        line = str(payload.get("label") or payload.get("phase") or "")
+        if payload.get("detail"):
+            line += f" — {payload['detail']}"
+        seconds = payload.get("seconds")
+        ok(line, elapsed=float(seconds) if isinstance(seconds, (int, float)) else None, markup=False)
+        if self._status is not None and payload.get("next"):
+            self._status.update(f"{self._status_label} — {payload['next']}…")
 
     def _on_interview_started(self, _payload: dict[str, Any]) -> None:
         if self._status is not None:
@@ -91,23 +173,37 @@ class ConsoleRenderer:
             return
         from rich.rule import Rule  # noqa: PLC0415
 
+        self._results = {}
         label, emoji, color = banner
         count = payload.get("count")
         suffix = f"  ({count} {'agent' if count == 1 else 'agents'})" if isinstance(count, int) else ""
+        if not self._rich:
+            section(f"{label} {suffix.strip()}".rstrip(), markup=False)
+            return
         get_console().print(Rule(f"{emoji}  {label}{suffix}", style=color))
         self._start_progress()
 
     def _on_phase_completed(self, payload: dict[str, Any]) -> None:
+        """Close DEFENSE / VALIDATION with how many agent runs succeeded (ATTACK has its own summary)."""
         self._stop_progress()
-        if payload.get("phase") != "validators":
+        phase = str(payload.get("phase"))
+        if phase not in _TALLIED_PHASES:
             return
-        from rich.text import Text  # noqa: PLC0415
-
-        count = payload.get("count", 0)
-        ok = payload.get("ok", True)
-        line = Text("✓ VALIDATION complete — ")
-        line.append(f"{count} validator{'' if count == 1 else 's'}", style="green" if ok else "red")
-        get_console().print(line)
+        label, noun = _TALLIED_PHASES[phase]
+        total = sum(self._results.values())
+        if not total:  # no per-agent events seen: the phase's own count and verdict are all there is
+            count = payload.get("count") or 0
+            if not count:
+                warn(f"{label} complete — no {noun} ran", markup=False)
+                return
+            (ok if payload.get("ok", True) else fail)(f"{label} complete — {count} {noun}(s)", markup=False)
+            return
+        succeeded = sum(n for (_name, reason), n in self._results.items() if not reason)
+        repeated = total - len(self._results)
+        line = f"{label} complete — {succeeded} / {total} {noun}(s) succeeded"
+        if repeated and not self._rich:
+            line += f"; {repeated} repeated result(s) not shown again (all are in the log)"
+        (ok if succeeded == total else fail)(line, markup=False)
 
     # --- per-agent progress ---------------------------------------------------------------
 
@@ -139,22 +235,36 @@ class ConsoleRenderer:
         )
 
     def _on_agent_completed(self, payload: dict[str, Any]) -> None:
-        self._finish_agent_task(payload, ok=True)
+        self._finish_agent_task(payload, succeeded=bool(payload.get("ok", True)))
 
     def _on_agent_failed(self, payload: dict[str, Any]) -> None:
-        self._finish_agent_task(payload, ok=False)
+        self._finish_agent_task(payload, succeeded=False)
 
-    def _finish_agent_task(self, payload: dict[str, Any], *, ok: bool) -> None:
-        if self._progress is None:
-            return
+    def _finish_agent_task(self, payload: dict[str, Any], *, succeeded: bool) -> None:
+        """Close an agent's row: ``✓ name`` or ``✗ name: reason`` (a plain line off a styled terminal)."""
         agent_id = str(payload.get("agent_id") or "")
-        task_id = self._task_ids.get(agent_id)
-        if task_id is None:
+        agent_name = str(payload.get("agent_name") or agent_id or "<agent>")
+        reason = _failure_reason(payload) if not succeeded else ""
+        note = reason or (_one_line(payload.get("summary")) if payload.get("phase") == "validators" else "")
+        label = f"{agent_name}: {note}" if note else agent_name
+        key = (agent_name, reason)
+        seen = key in self._results
+        self._results[key] = self._results.get(key, 0) + 1
+        if not self._rich:
+            if seen and not succeeded:
+                return  # the same failure again: counted in the phase headline, and every one is in the log
+            duration = payload.get("duration_seconds")
+            elapsed = float(duration) if isinstance(duration, (int, float)) else None
+            ok(label, elapsed=elapsed, markup=False) if succeeded else fail(label, markup=False)
             return
-        agent_name = str(payload.get("agent_name") or agent_id)
-        mark = "✓" if ok else "✗"
-        style = "green" if ok else "red"
-        self._progress.update(task_id, description=f"[{style}]{mark} {agent_name}[/{style}]", total=1, completed=1)
+        task_id = self._task_ids.get(agent_id)
+        if self._progress is None or task_id is None:
+            return
+        from rich.markup import escape  # noqa: PLC0415
+
+        mark = "✓" if succeeded else "✗"
+        style = "green" if succeeded else "red"
+        self._progress.update(task_id, description=f"[{style}]{mark} {escape(label)}[/{style}]", total=1, completed=1)
 
     # --- headline highlights --------------------------------------------------------------
 
@@ -204,6 +314,18 @@ class ConsoleRenderer:
             self._progress.stop()
             self._progress = None
             self._task_ids = {}
+
+
+def _failure_reason(payload: dict[str, Any]) -> str:
+    """The one-line reason an agent failed: its ``error``, else its ``summary`` (a validator's verdict)."""
+    return _one_line(payload.get("error")) or _one_line(payload.get("summary")) or "failed"
+
+
+def _one_line(text: object) -> str:
+    """The first line of ``text``, cut to ``_REASON_MAX_CHARS``."""
+    lines = str(text or "").strip().splitlines()
+    line = lines[0] if lines else ""
+    return line if len(line) <= _REASON_MAX_CHARS else line[: _REASON_MAX_CHARS - 1] + "…"
 
 
 def build_console_renderer(*, verbose: bool) -> ConsoleRenderer:
