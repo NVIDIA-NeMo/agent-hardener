@@ -9,13 +9,20 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.agents.defenders.guardrails_defender_v2.nodes.data_augmenter import AugmentedData
 from agent_hardener.agents.defenders.openshell_defender_v2.extraction.prompts import (
     AttackTuplesOutput,
     EnvironmentEndpointOutput,
 )
 from agent_hardener.agents.defenders.openshell_defender_v2.models import HarmCertificate
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.merge import MergeConflictOutput
+from agent_hardener.agents.defenders.traces_guardrails_defender.schemas import (
+    AnalysisResponse,
+    BenignArgsResponse,
+    GradeResponse,
+    RailResponse,
+)
+from agent_hardener.agents.validators.args_judge import ArgsVerdict
+from agent_hardener.agents.validators.smart_benign.replay_judge.judge.schema import JudgeVerdict
 from agent_hardener.agents.validators.smart_benign.subgraphs.api_prober.schemas import ProberOutput
 from agent_hardener.agents.validators.smart_benign.subgraphs.critic.schemas import CriticResult
 from agent_hardener.agents.validators.smart_benign.subgraphs.gap_detector.schemas import BoundaryVerdict
@@ -33,18 +40,23 @@ if TYPE_CHECKING:
 
 # Every model passed to ``with_structured_output``.
 STRUCTURED_OUTPUT_SCHEMAS: list[type[BaseModel]] = [
+    AnalysisResponse,
+    ArgsVerdict,
     AttackTuplesOutput,
-    AugmentedData,
+    BenignArgsResponse,
     BoundaryVerdict,
     CriticResult,
     EnvironmentEndpointOutput,
+    GradeResponse,
     HarmCertificate,
     InterviewBatch,
     JudgeScore,
+    JudgeVerdict,
     MergeConflictOutput,
     NormalizedProfileGlobals,
     ParserOutput,
     ProberOutput,
+    RailResponse,
     SummarizerOutput,
     ToolGenerationOutput,
 ]
