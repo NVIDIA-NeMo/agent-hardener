@@ -13,6 +13,7 @@ import httpx
 import openai
 import pytest
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
 from agent_hardener.relay_plugin.json_reply import JsonReplyError
@@ -62,6 +63,27 @@ def test_a_fenced_reply_with_reasoning_reads_in_a_chain() -> None:
     chain = ChatPromptTemplate.from_template("{prompt}") | model.with_structured_output(Verdict)
     assert chain.invoke({"prompt": "judge"}) == Verdict(ok=True, reason="fine")
     assert requests[0]["response_format"]["json_schema"]["name"] == "Verdict"
+
+
+def test_the_schema_is_sent_exactly_as_chatopenai_sends_it() -> None:
+    requests: list[dict[str, Any]] = []
+    _model(['{"ok": true, "reason": "fine"}'], requests).with_structured_output(Verdict).invoke("judge")
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        return httpx.Response(400, json={"error": {"message": "stop"}})
+
+    plain = ChatOpenAI(
+        model="m",
+        api_key="k",
+        base_url="http://llm.test/v1",
+        max_retries=0,
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(openai.BadRequestError):
+        plain.with_structured_output(Verdict).invoke("judge")
+    assert requests[0]["response_format"] == requests[1]["response_format"]
+    assert requests[0]["response_format"]["json_schema"]["strict"] is True
 
 
 def test_an_unreadable_reply_is_asked_for_again_with_the_error() -> None:

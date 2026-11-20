@@ -31,7 +31,7 @@ from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
-from .json_reply import JsonReplyError, parse_json_reply, reply_text, response_format
+from .json_reply import JsonReplyError, parse_json_reply, reply_text
 
 if TYPE_CHECKING:
     from langchain_core.language_models import LanguageModelInput
@@ -118,14 +118,23 @@ async def _aask(model: ChatOpenAI, schema: type[BaseModel], messages: list[BaseM
         return await model.ainvoke(_without_schema(model, schema, messages, exc), config)
 
 
+def response_format(schema: type[BaseModel]) -> dict[str, Any]:
+    """The ``response_format`` ChatOpenAI itself sends for ``schema``, as a dict so the SDK does not parse the reply.
+
+    The strict form (every field required, no additional properties) matters beyond OpenAI: an
+    endpoint that enforces the schema by guided decoding can loop on a looser one until it times out.
+    """
+    function = openai.pydantic_function_tool(schema)["function"]
+    return {
+        "type": "json_schema",
+        "json_schema": {"name": function["name"], "schema": function["parameters"], "strict": True},
+    }
+
+
 def _cut_off(exc: openai.LengthFinishReasonError) -> AIMessage:
     """The reply the SDK refused because it hit ``max_tokens``, kept so the retry can quote it."""
-    message = exc.completion.choices[0].message
-    reasoning = (message.model_extra or {}).get("reasoning_content")
     return AIMessage(
-        content=message.content or "",
-        additional_kwargs={"reasoning_content": reasoning} if isinstance(reasoning, str) else {},
-        response_metadata={"finish_reason": "length"},
+        content=exc.completion.choices[0].message.content or "", response_metadata={"finish_reason": "length"}
     )
 
 

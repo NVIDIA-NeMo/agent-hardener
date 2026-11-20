@@ -8,9 +8,10 @@ honours it only when the model behind it does. Some models (``nemotron-nano-9b-v
 reasoning as prose before the JSON, or wrap it in a ``<think>`` block or a markdown fence. The
 answer is there, but a strict ``model_validate_json`` of the whole reply rejects it.
 
-:func:`parse_json_reply` drops the reasoning, then tries every ``{`` or ``[`` as the start of a JSON
-value and returns the first value that validates. Anything else (Python literals, comments, a reply
-cut off at ``max_tokens``) does not decode and is left to the caller's retry.
+:func:`parse_json_reply` drops the reasoning, then reads the top-level JSON values in what is left and
+returns the last one that validates: a model that drafts an answer in untagged prose and then gives
+its final one is scored on the final one. Anything else (Python literals, comments, a reply cut off
+at ``max_tokens``) does not decode and is left to the caller's retry.
 
 Standard library and pydantic only: this module is staged into the victim with the guardrail plugin.
 """
@@ -46,22 +47,21 @@ class JsonReplyError(ValueError):
         self.reply = reply
 
 
-def response_format(schema: type[BaseModel]) -> dict[str, Any]:
-    """The OpenAI ``response_format`` asking for ``schema``, sent as a dict so no client parses it strictly."""
-    return {"type": "json_schema", "json_schema": {"name": schema.__name__, "schema": schema.model_json_schema()}}
-
-
 def reply_text(message: Any) -> str:
-    """The visible text of a chat message, else its reasoning channel, where some endpoints put the answer.
+    """The visible text of a chat message, never its reasoning channel.
 
-    Duck-typed on LangChain's ``AIMessage`` (string or content-block ``content``) so this module does
-    not import LangChain.
+    A draft in the reasoning is not the answer: a model that thought but never answered gets an empty
+    reply, which the caller retries. Duck-typed on LangChain's ``AIMessage`` (string or content-block
+    ``content``) so this module does not import LangChain.
     """
     content = getattr(message, "content", "")
     if isinstance(content, list):
-        content = "".join(b.get("text", "") if isinstance(b, dict) else str(b) for b in content)
-    reasoning = (getattr(message, "additional_kwargs", None) or {}).get("reasoning_content")
-    return content if content.strip() or not isinstance(reasoning, str) else reasoning
+        content = "".join(b if isinstance(b, str) else b.get("text", "") for b in content if _is_text(b))
+    return content
+
+
+def _is_text(block: Any) -> bool:
+    return isinstance(block, str) or (isinstance(block, dict) and block.get("type") == "text")
 
 
 def strip_reasoning(text: str) -> str:
@@ -75,26 +75,31 @@ def strip_reasoning(text: str) -> str:
 
 
 def parse_json_reply(text: str, schema: type[T]) -> T:
-    """The first JSON value in ``text``, after its reasoning, that validates as ``schema``.
+    """The last top-level JSON value in ``text``, after its reasoning, that validates as ``schema``.
 
-    Prose, fences and draft JSON around the answer don't matter, since every ``{`` or ``[`` is tried
-    as the start of a value. A list is also tried element by element, for ``[{...}]``.
+    Prose and fences around the answer don't matter: each ``{`` or ``[`` that is not inside a value
+    already read is tried as the start of one. Values nested in the answer are never candidates, so
+    an inner object cannot stand in for it, and a draft before the answer loses to the answer.
 
     Raises:
         JsonReplyError: when no value validates; carries the reply and the last validation error.
     """
     body = strip_reasoning(text)
+    found: T | None = None
     error: ValidationError | None = None
-    for start in _VALUE_START.finditer(body):
+    position = 0
+    while start := _VALUE_START.search(body, position):
         try:
-            value, _ = _DECODER.raw_decode(body, start.start())
+            value, position = _DECODER.raw_decode(body, start.start())
         except ValueError:
+            position = start.start() + 1
             continue
-        for candidate in (value, *(value if isinstance(value, list) else ())):
-            try:
-                return schema.model_validate(candidate)
-            except ValidationError as exc:
-                error = exc
+        try:
+            found = schema.model_validate(value)
+        except ValidationError as exc:
+            error = exc
+    if found is not None:
+        return found
     if not body:
         reason = "empty reply"
     elif error is None:
