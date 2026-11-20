@@ -137,7 +137,7 @@ class MissionHarness:
     @property
     def lines(self) -> list[str]:
         """Highlight lines the run announced."""
-        return [payload["line"] for event, payload in self.events if event == "output"]
+        return [payload["message"] for event, payload in self.events if event == "output"]
 
     @property
     def statuses(self) -> list[str]:

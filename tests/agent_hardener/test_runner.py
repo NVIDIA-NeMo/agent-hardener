@@ -31,7 +31,7 @@ def _collect_output(sink: list[str]):  # type: ignore[no-untyped-def]
 
     def _on_event(event: str, payload: dict[str, Any]) -> None:
         if event == "output":
-            sink.append(str(payload.get("line", "")))
+            sink.append(str(payload.get("message", "")))
 
     return _on_event
 
@@ -315,8 +315,10 @@ def test_run_mission_always_writes_full_report_to_log(monkeypatch: pytest.Monkey
     assert stamped, "highlight lines should be mirrored into the log"
     assert re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}", stamped[0])
     assert "agent_hardener.events" in stamped[0]
-    sandbox_ready = [p for e, p in events_seen if e == "output" and p["line"] == "Sandbox ready"]
+    sandbox_ready = [p for e, p in events_seen if e == "output" and p["message"] == "Sandbox ready"]
     assert [(p["level"], isinstance(p["elapsed"], float)) for p in sandbox_ready] == [("ok", True)]
+    # ``line`` is the line as the console shows it, for subscribers that render only ``line`` (Studio's feed).
+    assert re.fullmatch(r"✓ Sandbox ready \(\d+\.\ds\)", sandbox_ready[0]["line"])
     # Agent-level logging is captured by the same bus and lands in agent-hardener.log.
     assert "fake-agent-log-line" in log_text
 

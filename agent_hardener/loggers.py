@@ -9,6 +9,7 @@ import contextlib
 import contextvars
 import json
 import logging
+import os
 import re
 import threading
 from collections.abc import Callable
@@ -34,6 +35,8 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
 
 # Where every CLI invocation writes its full diagnostic log: ``<cwd>/.agent-hardener/logs/<command>-<ts>.log``.
 CLI_LOGS_DIR = Path(".agent-hardener") / "logs"
+#: Names the CLI log file outright (instead of ``CLI_LOGS_DIR/<command>-<time>.log``).
+LOG_FILE_ENV = "AGENT_HARDENER_LOG_FILE"
 
 # ``extra=FILE_ONLY`` keeps a record out of the console even under ``--debug`` — for blobs that already have
 # their own console rendering (the final report) and would otherwise print twice.
@@ -213,14 +216,20 @@ def configure_cli_logging(command: str, *, debug: bool, logs_dir: Path | None = 
     * The console gets ``agent_hardener.*`` WARNING+ as one-line ``!``/``✗`` messages (everything, in the log
       format, with ``--debug``). Third-party libraries reach the console only with ``--debug``.
 
+    ``AGENT_HARDENER_LOG_FILE`` names the file instead, for a caller that keeps it somewhere other than the
+    working directory (Helix uploads it; only a job's stdout survives otherwise).
+
     The ``agent_hardener`` logger is made terminal (``propagate=False``) so its records are not seen twice by
     the root handlers. Calling it again replaces the handlers it installed.
     """
     from agent_hardener.display.console import set_debug  # noqa: PLC0415 - see ConsoleLogHandler.emit
 
     set_debug(debug)
-    stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-    path = (logs_dir or Path.cwd() / CLI_LOGS_DIR) / f"{command}-{stamp}.log"
+    if chosen := os.environ.get(LOG_FILE_ENV):
+        path = Path(chosen).expanduser()
+    else:
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = (logs_dir or Path.cwd() / CLI_LOGS_DIR) / f"{command}-{stamp}.log"
 
     file_handler = _LazyFileHandler(path)
     file_handler.setFormatter(logging.Formatter(RUN_LOG_FORMAT))

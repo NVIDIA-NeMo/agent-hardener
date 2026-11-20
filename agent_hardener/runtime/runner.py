@@ -113,11 +113,8 @@ def _log_event(event: str, payload: dict[str, Any]) -> None:
     out of the text transcript — their full form lives in ``events.jsonl``. Routes through the
     ``agent_hardener.events`` logger, which the run-log bus captures.
     """
-    if event == EventType.OUTPUT:  # console lines are logged as the console shows them (glyph, elapsed)
-        line, level, elapsed = str(payload.get("line", "")), payload.get("level"), payload.get("elapsed")
-        if level and level != "output":
-            line = line_text(str(level), line, float(elapsed) if isinstance(elapsed, (int, float)) else None)
-        _events_logger.info("%s", line)
+    if event == EventType.OUTPUT:  # ``line`` is already the line as the console shows it (glyph, elapsed)
+        _events_logger.info("%s", payload.get("line", ""))
         return
     fields = " ".join(f"{k}={v}" for k, v in payload.items() if isinstance(v, (str, int, float, bool)))
     _events_logger.info("%s %s", event, fields)
@@ -313,8 +310,12 @@ class Mission:
         ``level`` picks how the console renders it: ``section``, ``step``, ``ok``, ``warn``, ``fail``, ``hint``,
         ``detail`` (``--debug`` only), ``info``, or ``output`` for verbatim subprocess output. ``elapsed`` (seconds)
         is shown after an ``ok`` line as ``(12.4s)``.
+
+        The payload's ``line`` is the line as the console shows it (``✓ Sandbox ready (12.4s)``), so a subscriber
+        that renders only ``line`` (Helix Studio's feed) keeps the marker; ``message``, ``level`` and ``elapsed``
+        are its parts, for subscribers that style lines themselves.
         """
-        payload: dict[str, Any] = {"line": line, "level": level}
+        payload: dict[str, Any] = {"line": line_text(level, line, elapsed), "message": line, "level": level}
         if elapsed is not None:
             payload["elapsed"] = round(elapsed, 3)
         emit_event(EventType.OUTPUT, payload)

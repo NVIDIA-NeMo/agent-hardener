@@ -129,6 +129,17 @@ def test_the_log_file_is_created_only_when_something_is_logged(tmp_path: Path) -
     assert path.name.startswith("status-")
 
 
+def test_the_log_file_can_be_named_by_the_caller(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    chosen = tmp_path / "job" / "agent-hardener.log"
+    monkeypatch.setenv("AGENT_HARDENER_LOG_FILE", str(chosen))
+
+    path = configure_cli_logging("run", debug=False, logs_dir=tmp_path / "ignored")
+    logging.getLogger("agent_hardener").info("kept for the upload")
+
+    assert path == chosen
+    assert "kept for the upload" in chosen.read_text(encoding="utf-8")
+
+
 def test_error_boundary_keeps_the_traceback_in_the_log_not_the_console(out: io.StringIO, tmp_path: Path) -> None:
     path = configure_cli_logging("run", debug=False, logs_dir=tmp_path)
 
@@ -296,7 +307,7 @@ def test_run_reuse_says_whether_the_sandbox_is_reused(monkeypatch: pytest.Monkey
 
 def test_output_events_render_by_level(out: io.StringIO) -> None:
     render = ConsoleRenderer()
-    render("output", {"line": "Sandbox ready", "level": "ok", "elapsed": 1.0})
+    render("output", {"line": "✓ Sandbox ready (1.0s)", "message": "Sandbox ready", "level": "ok", "elapsed": 1.0})
     render("output", {"line": "docker: no space left on device", "level": "output"})
     render("output", {"line": "legacy line without a level"})
     assert out.getvalue().splitlines() == [

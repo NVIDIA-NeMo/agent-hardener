@@ -80,8 +80,9 @@ class ConsoleRenderer:
             line = str(payload.get("line", ""))
             level = payload.get("level")
             elapsed = payload.get("elapsed")
-            if level:
-                say(str(level), line, elapsed=float(elapsed) if isinstance(elapsed, (int, float)) else None)
+            if level:  # ``line`` is pre-formatted; style the bare ``message`` at its level instead
+                message = str(payload.get("message", line))
+                say(str(level), message, elapsed=float(elapsed) if isinstance(elapsed, (int, float)) else None)
             else:
                 emit(line)
             return
