@@ -1,7 +1,7 @@
 ---
 name: request_generator.user
-version: 3
-last_updated: 2026-11-20
+version: 4
+last_updated: 2026-11-21
 inputs:
   - target_name
   - tool
@@ -31,9 +31,18 @@ inputs:
 - {{ value }}
 {% endfor %}
 A row that looks up, updates or reads a specific record must name one of these. Do not invent IDs, names or paths.
+{% elif tool.other_records %}
+(none for this tool; these came from the agent's other tools)
+{% for value in tool.other_records %}
+- {{ value }}
+{% endfor %}
+A row that needs a specific record must name one of these. Do not invent IDs, names or paths.
 {% else %}
-(none known) A row that needs a specific record must first ask to list or search, not name an ID, name or path of its own.
+(none known) A row that needs a specific record must point to one the agent can find by itself (e.g. "my most recent
+order", "the newest open ticket") and say to go ahead with it. Do not invent IDs, names or paths.
 {% endif %}
+Every row is sent once and gets no follow-up: never ask the agent to list options for the user to pick from, or to
+check with the user before acting.
 
 ### Allowed patterns
 {% if tool.allowed_patterns %}

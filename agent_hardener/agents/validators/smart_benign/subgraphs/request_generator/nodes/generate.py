@@ -31,6 +31,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
+OTHER_RECORDS_CAP = 20
 
 
 async def generate(state: RequestGeneratorState) -> dict[str, object]:
@@ -86,6 +87,7 @@ def _prompt_vars(tool: ToolSpec, state: RequestGeneratorState) -> dict[str, Any]
             "description": tool.description,
             "example_inputs": tool.example_inputs,
             "known_values": tool.known_values,
+            "other_records": _other_records(tool, state.tools),
             "allowed_patterns": tool.allowed_patterns,
             "blocked_patterns": tool.blocked_patterns,
             "boundary_answers": tool.boundary_answers,
@@ -101,6 +103,14 @@ def _prompt_vars(tool: ToolSpec, state: RequestGeneratorState) -> dict[str, Any]
             "negative_control": state.negative_control_per_tool,
         },
     }
+
+
+def _other_records(tool: ToolSpec, tools: list[ToolSpec]) -> list[str]:
+    """Records the agent showed for its other tools; a tool with none of its own can still name one of these."""
+    if tool.known_values:
+        return []
+    records = dict.fromkeys(v for other in tools if other.name != tool.name for v in other.known_values)
+    return list(records)[:OTHER_RECORDS_CAP]
 
 
 def _dedupe_within_tool(requests: list[GeneratedRequest]) -> list[GeneratedRequest]:

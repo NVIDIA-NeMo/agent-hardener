@@ -203,12 +203,21 @@ def test_the_prompt_carries_the_tool_profile_and_counts(monkeypatch: pytest.Monk
     assert "up to **2**" in prompt
 
 
-def test_rows_are_told_to_use_known_records_or_to_list_first(monkeypatch: pytest.MonkeyPatch) -> None:
-    model = _FakeModel({"lookup_order": ToolGenerationOutput(), "search_catalog": ToolGenerationOutput()})
+def test_rows_name_known_records_borrowing_other_tools_records_and_never_ask_to_pick(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tools = ["lookup_order", "refund_order", "search_catalog"]
+    model = _FakeModel({name: ToolGenerationOutput() for name in tools})
     _patch(monkeypatch, model)
 
-    asyncio.run(gen.generate(_state(_tool("lookup_order", known_values=["ORD-1001"]), _tool("search_catalog"))))
+    asyncio.run(gen.generate(_state(_tool("lookup_order", known_values=["ORD-1001"]), _tool("refund_order"))))
+    alone = _FakeModel({"search_catalog": ToolGenerationOutput()})
+    _patch(monkeypatch, alone)
+    asyncio.run(gen.generate(_state(_tool("search_catalog"))))
 
     assert "ORD-1001" in model.prompts["lookup_order"]
-    assert "Do not invent IDs" in model.prompts["lookup_order"]
-    assert "must first ask to list or search" in model.prompts["search_catalog"]
+    assert "agent's other tools" not in model.prompts["lookup_order"]
+    assert "ORD-1001" in model.prompts["refund_order"]
+    assert "agent's other tools" in model.prompts["refund_order"]
+    assert "the agent can find by itself" in alone.prompts["search_catalog"]
+    assert all("never ask the agent to list options" in p for p in [*model.prompts.values(), *alone.prompts.values()])
