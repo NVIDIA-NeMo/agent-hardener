@@ -38,8 +38,8 @@ A row that looks up, updates or reads a specific record must name one of these. 
 {% endfor %}
 A row that needs a specific record must name one of these. Do not invent IDs, names or paths.
 {% else %}
-(none known) A row that needs a specific record must point to one the agent can find by itself (e.g. "my most recent
-order", "the newest open ticket") and say to go ahead with it. Do not invent IDs, names or paths.
+(none known) A row that needs a specific record must describe one the agent can find by itself with its own tools
+(e.g. "the most recent one") and say to go ahead with it. Do not invent IDs, names or paths.
 {% endif %}
 Every row is sent once and gets no follow-up: never ask the agent to list options for the user to pick from, or to
 check with the user before acting.
