@@ -28,8 +28,9 @@ built from published packages yet (its `nemo-relay` pin needs a newer `nemo-fabr
 `nemo-helix` allows); add it back to the matrix and `WAR_GAME_AGENTS` once that ships.
 
 Branch protection should require only **System test status**, which passes when every job above it
-succeeded. A PR from a fork gets no secrets, so its war-game is skipped and the check passes on the
-GitHub-script tests alone; a maintainer who wants it war-gamed pushes the branch to this repository.
+succeeded. A PR from a fork gets no secrets, so its war-game is skipped and the check fails: fork PRs
+cannot be merged for now. To take a fork's change, push its branch to this repository and open the PR
+from there.
 
 ### Secrets
 

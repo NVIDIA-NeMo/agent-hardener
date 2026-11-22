@@ -123,8 +123,8 @@ jobs:
         run: python3 .github/scripts/check_war_game.py war-game-results --agents "$WAR_GAME_AGENTS" --strict
 
   system-test-status:
-    # The single check for branch protection; it passes only when every job above succeeded. On a
-    # fork's PR the war-game and its report are skipped (no secrets), and that counts as a pass.
+    # The single check for branch protection; it passes only when every job above succeeded. A fork's
+    # PR gets no secrets, so its war-game is skipped and this check fails: fork PRs cannot merge for now.
     name: System test status
     needs: [github-scripts, war-game, war-game-report]
     if: always()
@@ -145,10 +145,9 @@ jobs:
             printf '%s\n' "${NEEDS_JSON}" | jq -r 'to_entries[] | "| \(.key) | \(.value.result) |"'
           } >> "${GITHUB_STEP_SUMMARY}"
           if [[ "${FORK_PR}" == "true" ]]; then
-            echo "Fork PR: the war-game needs secrets a fork's PR does not get, so it was skipped." >> "${GITHUB_STEP_SUMMARY}"
+            msg="Fork PRs cannot be merged for now: the war-game needs secrets a fork's PR does not get, so it never ran."
+            echo "${msg}" >> "${GITHUB_STEP_SUMMARY}"
+            echo "::error::${msg}"
+            exit 1
           fi
-          printf '%s\n' "${NEEDS_JSON}" | jq -e --arg fork "${FORK_PR}" '
-            to_entries | all(
-              .value.result == "success"
-              or ($fork == "true" and (.key == "war-game" or .key == "war-game-report") and .value.result == "skipped")
-            )'
+          printf '%s\n' "${NEEDS_JSON}" | jq -e 'to_entries | map(.value.result) | all(. == "success")'
