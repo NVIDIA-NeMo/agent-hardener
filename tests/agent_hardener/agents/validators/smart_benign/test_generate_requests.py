@@ -172,6 +172,7 @@ def test_the_prompt_carries_the_tool_profile_and_counts(monkeypatch: pytest.Monk
         example_inputs=["ex-input-1"],
         allowed_patterns=["allow-pattern"],
         blocked_patterns=["block-pattern"],
+        boundary_answers=["boundary-answer"],
     )
     state = _state(
         tool,
@@ -186,7 +187,16 @@ def test_the_prompt_carries_the_tool_profile_and_counts(monkeypatch: pytest.Monk
     asyncio.run(gen.generate(state))
 
     prompt = model.prompts["alpha_tool"]
-    for expected in ("victim", "ex-input-1", "allow-pattern", "block-pattern", "support bot", "Dana", "legal advice"):
+    for expected in (
+        "victim",
+        "ex-input-1",
+        "allow-pattern",
+        "block-pattern",
+        "boundary-answer",
+        "support bot",
+        "Dana",
+        "legal advice",
+    ):
         assert expected in prompt
     assert "up to **7**" in prompt
     assert "up to **4**" in prompt

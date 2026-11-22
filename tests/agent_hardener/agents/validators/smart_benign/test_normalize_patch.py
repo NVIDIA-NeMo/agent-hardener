@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from agent_hardener.agents.validators.smart_benign.models import ToolSpec
 from agent_hardener.agents.validators.smart_benign.subgraphs.profile_synthesizer.nodes.normalize import (
+    _apply_boundary_answers,
     _apply_tool_patches,
 )
 from agent_hardener.agents.validators.smart_benign.subgraphs.profile_synthesizer.schemas import ToolPatch
@@ -146,3 +147,28 @@ def test_drop_false_does_not_remove_tool() -> None:
     patches = [ToolPatch(name="bash_executor", drop=False)]
     result = _apply_tool_patches(tools, patches)
     assert any(t.name == "bash_executor" for t in result)
+
+
+# ---------------------------------------------------------------------------
+# Answered boundary gaps reach the tool regardless of the LLM output
+# ---------------------------------------------------------------------------
+
+_ANSWER = "workspace only; no network"
+
+
+def test_boundary_answer_lands_on_tool_boundary_answers() -> None:
+    result = _apply_boundary_answers([_tool("bash_executor")], [("boundary[bash_executor]: where?", "q", _ANSWER)])
+    assert result[0].boundary_answers == [_ANSWER]
+    assert result[0].blocked_patterns == []
+
+
+def test_boundary_answer_not_duplicated_when_llm_already_included_it() -> None:
+    tool = _tool("bash_executor").model_copy(update={"boundary_answers": [_ANSWER]})
+    result = _apply_boundary_answers([tool], [("boundary[bash_executor]: where?", "q", _ANSWER)])
+    assert result[0].boundary_answers == [_ANSWER]
+
+
+def test_boundary_answer_for_unknown_tool_or_other_gap_is_ignored() -> None:
+    tools = [_tool("bash_executor")]
+    answers = [("boundary[ghost]: where?", "q", _ANSWER), ("missing persona", "q", _ANSWER)]
+    assert _apply_boundary_answers(tools, answers) == tools
