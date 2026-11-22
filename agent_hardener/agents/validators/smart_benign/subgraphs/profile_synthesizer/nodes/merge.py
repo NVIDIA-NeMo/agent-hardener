@@ -16,13 +16,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 SOURCE_PRIORITY: Final[dict[ToolSource, int]] = {
+    "trace": 4,
     "github": 3,
     "nl": 2,
     "api_probe": 1,
     "interview": 0,
 }
 """Tool-merge precedence. Higher beats lower when the same tool appears in
-multiple sources. Structural sources (``github``) outrank inferential ones
+multiple sources. ``trace`` (the victim was seen calling the tool) is ground truth and
+outranks everything. Structural sources (``github``) outrank inferential ones
 (``nl``, ``api_probe``); ``interview`` is the lowest because the interviewer
 is meant to clarify global fields, not add tools."""
 
