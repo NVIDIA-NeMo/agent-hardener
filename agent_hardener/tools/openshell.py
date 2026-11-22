@@ -10,7 +10,7 @@ import asyncio
 import contextlib
 import os
 import shlex
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
@@ -46,7 +46,7 @@ from agent_hardener.relay_plugin.victim import ARTIFACTS_ENV, SANDBOX_ARTIFACTS_
 _BUILD_COMMANDS = {"up", "restart", "cycle-reset"}
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
     from agent_hardener.models import RelayVictimSpec, VictimControlConfig
 
@@ -317,12 +317,9 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
     """
     if base_url is None:
         return
-    spec = prepared.relay_victim
-    if spec is None:
+    atof = relay_atof(prepared)
+    if atof is None:
         return
-    cwd = prepared.cwd or Path.cwd()
-    atof_path = cwd / spec.atof_path if not spec.atof_path.is_absolute() else spec.atof_path
-    lifecycle = OpenShellLifecycle(prepared)
 
     async def probe() -> Any:
         async with httpx.AsyncClient(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
@@ -330,19 +327,44 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
                 base_url, json={"model": "victim", "messages": [{"role": "user", "content": RELAY_PROBE_PROMPT}]}
             )
 
-    asyncio.run(
-        check_relay_instrumentation(
-            probe=probe,
-            atof_path=atof_path,
-            sync=lambda: lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path),
-        )
-    )
+    asyncio.run(check_relay_instrumentation(probe=probe, atof_path=atof.path, sync=atof.sync))
+
+
+@dataclass(frozen=True)
+class RelayAtof:
+    """Where the victim's ATOF stream lands on the host, and how to copy it out of the sandbox."""
+
+    path: Path
+    sync: Callable[[], None]
+
+
+def relay_atof(prepared: OpenShellConfig) -> RelayAtof | None:
+    """The victim's ATOF stream, or ``None`` for a victim without a relay-victim block (no traces)."""
+    spec = prepared.relay_victim
+    if spec is None:
+        return None
+    cwd = prepared.cwd or Path.cwd()
+    atof_path = cwd / spec.atof_path if not spec.atof_path.is_absolute() else spec.atof_path
+    lifecycle = OpenShellLifecycle(prepared)
+
+    def sync() -> None:
+        lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path)
+
+    return RelayAtof(path=atof_path, sync=sync)
+
+
+@dataclass(frozen=True)
+class ManagedSandbox:
+    """What :func:`managed_victim_sandbox` yields: the sandbox config, and its ATOF stream when it has one."""
+
+    config: OpenShellConfig
+    atof: RelayAtof | None
 
 
 @contextlib.contextmanager
 def managed_victim_sandbox(
     config: VictimControlConfig, *, reuse: bool, no_cleanup: bool, base_url: str | None = None
-) -> Iterator[OpenShellConfig]:
+) -> Iterator[ManagedSandbox]:
     """Bring the victim sandbox up, verify its Relay instrumentation, yield, then tear it down.
 
     Mirrors ``run``'s lifecycle semantics: ``reuse`` skips the rebuild when a Ready sandbox is already
@@ -353,6 +375,8 @@ def managed_victim_sandbox(
     The instrumentation check runs here rather than only in ``run`` because this is the *first* and
     slowest bring-up: failing at ``synth-benign`` costs one probe, while failing at ``run`` costs a
     docker build plus the whole benign interview first.
+
+    Yields the config plus the victim's ATOF stream, so the caller can read the traces of its own requests.
     """
     openshell = openshell_config(config)
     current = OpenShellLifecycle(openshell)
@@ -373,7 +397,7 @@ def managed_victim_sandbox(
         if drift:
             warn(drift)
         verify_relay_instrumentation(prepared, base_url=base_url)
-        yield openshell
+        yield ManagedSandbox(config=openshell, atof=relay_atof(prepared))
     finally:
         if not no_cleanup and not reused:  # only tear down what we brought up
             OpenShellLifecycle(openshell).down()

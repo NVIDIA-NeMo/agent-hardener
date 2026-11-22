@@ -1170,6 +1170,7 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
             return _ok("torn-down")
 
     monkeypatch.setattr("agent_hardener.tools.openshell.OpenShellLifecycle", FakeLifecycle)
+    monkeypatch.setattr("agent_hardener.tools.openshell.relay_atof", lambda _prepared: None)
     monkeypatch.setattr(
         "agent_hardener.agents.validators.smart_benign.wizard.run_synth_wizard",
         lambda *_a, **_k: events.append("synth") or 0,
