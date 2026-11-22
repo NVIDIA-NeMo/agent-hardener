@@ -82,6 +82,15 @@ class PipelineDefaults(AgentHardenerModel):
     github_llm_call_budget: int = Field(ge=0)
 
 
+class VerificationDefaults(AgentHardenerModel):
+    """Defaults for the post-synth tool verification (replay the suite, read the traces)."""
+
+    enabled: bool
+    max_passes: int = Field(ge=1)
+    max_observed_calls_per_tool: int = Field(ge=1)
+    ignore_tools: list[str] = Field(default_factory=list)
+
+
 class Defaults(AgentHardenerModel):
     """All smart benign validator defaults, loaded from defaults.yaml."""
 
@@ -90,6 +99,7 @@ class Defaults(AgentHardenerModel):
     generation: GenerationDefaults
     replay: ReplayDefaults
     pipeline: PipelineDefaults
+    verification: VerificationDefaults
 
 
 @lru_cache(maxsize=1)

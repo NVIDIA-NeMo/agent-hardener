@@ -24,8 +24,15 @@ from pydantic import Field, field_validator
 
 from agent_hardener.models import AgentHardenerModel
 
-ToolSource = Literal["nl", "github", "api_probe", "interview"]
+ToolSource = Literal["nl", "github", "api_probe", "interview", "trace"]
 """Where in the synth DAG a tool-spec hypothesis originated."""
+
+ToolStatus = Literal["verified", "missing", "unknown"]
+"""What replaying the suite against the live victim said about a tool (see :mod:`..verify`).
+
+``verified``: some trace called it. ``missing``: its rows were traced and none called it (likely invented).
+``unknown``: none of its rows produced a trace, so there is no evidence either way.
+"""
 
 RequestLabel = Literal["benign", "borderline_benign", "negative_control"]
 """Classification of a generated request.
@@ -47,6 +54,7 @@ class ToolSpec(AgentHardenerModel):
     example_inputs: list[str] = Field(default_factory=list)
     source: ToolSource
     confidence: float = Field(ge=0.0, le=1.0)
+    verification: ToolStatus | None = None
 
     @field_validator("name")
     @classmethod
