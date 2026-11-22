@@ -22,12 +22,14 @@ import questionary
 from pydantic import Field
 
 from agent_hardener.agents.validators.trace_step import open_trace_window
+from agent_hardener.events import EventType
+from agent_hardener.loggers import emit_event
 from agent_hardener.models.base import AgentHardenerModel
 from agent_hardener.runtime.run_context import RunContext
 from agent_hardener.traces.inspect import same_tool
 
 from .config import defaults
-from .models import GeneratedRequest, ToolSpec, VictimCapabilityProfile
+from .models import GeneratedRequest, ToolSpec, ToolStatus, VictimCapabilityProfile
 from .regenerate import describe_observed_tools, generate_for_tools
 from .subgraphs.profile_writer.nodes.write import _write_requests_csv
 from .verify import ToolVerdict, VerificationResult, verify_suite
@@ -116,12 +118,13 @@ async def run_tool_verification(
         profile = _mark(profile, result.tools)
         missing = [v for v in result.tools if v.status == "missing" and not _named(v.tool, already_verified)]
         refused = [(i, batch[i]) for i in result.baseline_refused]
-        decision = await decide(missing, refused, batch) if missing or refused else _nothing()
+        decision = await _decide(decide, missing, refused, batch) if missing or refused else _nothing()
         dropped = [r for i, r in enumerate(batch) if r.tool in decision.tools or i in decision.rows]
         requests = [r for r in requests if not any(r is d for d in dropped)]
         record = PassRecord(number=number, result=result, decision=decision, dropped_rows=dropped)
         passes.append(record)
         new = result.observed_unlisted
+        _emit_pass(record, next_step="describing tools seen in traces" if new and number < max_passes else "")
         if not new:
             break
         if number == max_passes:
@@ -131,6 +134,13 @@ async def run_tool_verification(
         profile = profile.model_copy(update={"tools": [*profile.tools, *specs]})
         record.added_tools, record.added_rows = [s.name for s in specs], len(rows)
         record.errors = [*describe_errors, *generate_errors]
+        _emit(
+            f"verify_generate_{number}",
+            "generated rows for tools seen in traces",
+            f"{', '.join(record.added_tools)}: {len(rows)} row(s)"
+            + (f", {len(record.errors)} error(s)" if record.errors else ""),
+            next_step=f"verification pass {number + 1}" if rows else "",
+        )
         if not rows:
             break
         requests, batch = [*requests, *rows], rows
@@ -215,6 +225,41 @@ def _mark(profile: VictimCapabilityProfile, verdicts: list[ToolVerdict]) -> Vict
 
 def _named(tool: str, names: list[str]) -> bool:
     return any(same_tool(tool, name) for name in names)
+
+
+async def _decide(
+    decide: DropDecider,
+    missing: list[ToolVerdict],
+    refused: list[tuple[int, GeneratedRequest]],
+    batch: list[GeneratedRequest],
+) -> DropDecision:
+    """Ask ``decide``, pausing the console spinner around it the way the interview does."""
+    emit_event(EventType.INTERVIEW_STARTED, {})
+    try:
+        return await decide(missing, refused, batch)
+    finally:
+        emit_event(EventType.INTERVIEW_COMPLETED, {})
+
+
+def _emit_pass(record: PassRecord, *, next_step: str) -> None:
+    result = record.result
+    statuses: tuple[ToolStatus, ...] = ("verified", "missing", "unknown")
+    counts = {status: len(result.by_status(status)) for status in statuses}
+    detail = ", ".join(f"{n} {status}" for status, n in counts.items() if n)
+    detail += f" of {len(result.tools)} tool(s); {result.traced_rows}/{result.rows} row(s) traced"
+    if record.dropped_rows:
+        detail += f"; dropped {len(record.dropped_rows)} row(s)"
+    if new := len(result.observed_unlisted):
+        detail += f"; {new} new tool(s) seen"
+    _emit(f"verify_pass_{record.number}", f"verification pass {record.number}", detail, next_step=next_step)
+
+
+def _emit(phase: str, label: str, detail: str, *, next_step: str) -> None:
+    """A ``synth_phase`` event, like each synth DAG step's: the console prints it, Studio lists it."""
+    logger.info("tool verification: %s — %s", label, detail)
+    emit_event(
+        EventType.SYNTH_PHASE, {"phase": phase, "label": label, "detail": detail, "seconds": None, "next": next_step}
+    )
 
 
 def _nothing() -> DropDecision:

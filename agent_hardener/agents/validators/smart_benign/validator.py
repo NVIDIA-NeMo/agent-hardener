@@ -102,7 +102,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     if not requests:
         return _empty_report(agent, started, artifact_dir, reason=f"{csv_path} is empty")
 
-    cfg = _build_config(request, agent)
+    cfg = build_replay_config(request, agent)
     # Opened before any replay so the window excludes everything the victim did earlier.
     window = await open_trace_window(ctx)
     with quiet_warnings():
@@ -354,7 +354,8 @@ def _resolve_artifact_dir(request: AgentRunInput, agent: AgentConfig) -> Path:
     return root / "benign_profiles" / request.target.name
 
 
-def _build_config(request: AgentRunInput, agent: AgentConfig) -> ReplayJudgeConfig:
+def build_replay_config(request: AgentRunInput, agent: AgentConfig) -> ReplayJudgeConfig:
+    """The replay + judge settings for a benign-validator entry (also used by the post-synth tool verification)."""
     d = defaults()
     raw = agent.config
     judge_raw: dict[str, Any] = raw.get("judge") or {}
