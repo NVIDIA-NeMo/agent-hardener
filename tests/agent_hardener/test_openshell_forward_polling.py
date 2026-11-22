@@ -370,6 +370,7 @@ def test_wait_for_forward_active_without_a_forward_is_a_noop(tmp_path: Path) -> 
         ("8000", "sb only", False),
         (":8000", "sb 8000", False),
         ("0.0.0.0:", "sb 0.0.0.0", False),
+        (_FORWARD, "default sb 0.0.0.0 9000 1 running\ndefault other 0.0.0.0 8000 2 running", False),
     ],
     ids=[
         "exact-match",
@@ -381,6 +382,7 @@ def test_wait_for_forward_active_without_a_forward_is_a_noop(tmp_path: Path) -> 
         "bare-port-missing",
         "missing-bind",
         "missing-port",
+        "another-sandbox-holds-the-port",
     ],
 )
 def test_forward_is_active_matches_on_forward_and_sandbox(
@@ -390,6 +392,60 @@ def test_forward_is_active_matches_on_forward_and_sandbox(
     lifecycle.config = OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "p.yaml", forward=forward)
 
     assert lifecycle._forward_is_active(listing) is expected
+
+
+def test_ensure_forward_leaves_this_sandboxs_active_forward_alone(tmp_path: Path) -> None:
+    runner = ScriptedRunner(lambda _args: (0, "default sb 0.0.0.0 8000 123 running"))
+
+    assert _lifecycle(tmp_path, runner).ensure_forward().ok
+    assert [args[1:3] for args in runner.commands] == [["forward", "list"]]
+
+
+def test_ensure_forward_starts_the_forward_and_reports_a_port_another_sandbox_holds(tmp_path: Path) -> None:
+    taken = "Error: Port 8000 is already forwarded to sandbox 'other'."
+
+    def respond(args: list[str]) -> tuple[int, str]:
+        return (0, "default other 0.0.0.0 8000 123 running") if args[1:3] == ["forward", "list"] else (1, taken)
+
+    runner = ScriptedRunner(respond)
+    result = _lifecycle(tmp_path, runner).ensure_forward()
+
+    assert not result.ok
+    assert taken in result.output
+    assert [args[1:3] for args in runner.commands] == [["forward", "list"], ["forward", "start"]]
+
+
+def test_ensure_forward_without_a_configured_forward_is_a_noop(tmp_path: Path) -> None:
+    runner = ScriptedRunner()
+    lifecycle = _lifecycle(tmp_path, runner)
+    lifecycle.config = OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "p.yaml")
+
+    assert lifecycle.ensure_forward().ok
+    assert runner.commands == []
+
+
+@pytest.mark.parametrize(
+    ("output", "headline", "remedy"),
+    [
+        ("Error: Port 8000 is already in use by another process.", "Port 8000 is already in use", "lsof -i :8000"),
+        (
+            "Error: Port 8000 is already forwarded to sandbox 'other'.",
+            "Port 8000 is already forwarded to sandbox 'other'",
+            "openshell forward stop 8000",
+        ),
+    ],
+    ids=["another-process", "another-sandbox"],
+)
+def test_a_taken_port_becomes_a_classified_error_naming_the_port(output: str, headline: str, remedy: str) -> None:
+    exc = _forward.port_in_use_error(f"gateway info\n{output}\n  │ Stop it with: …")
+
+    assert exc is not None
+    assert headline in str(exc)
+    assert remedy in exc.remediation
+
+
+def test_any_other_failure_is_not_a_port_conflict() -> None:
+    assert _forward.port_in_use_error("Error: gateway unreachable") is None
 
 
 def test_forward_is_active_is_false_without_a_configured_forward(tmp_path: Path) -> None:
