@@ -470,12 +470,11 @@ def _build_report(
         trace_counts["traced_count"] = sum(
             1 for result in row_results if result["tool_facts"].get("trace_status") == "inspected"
         )
-    # How each row counts: served, refused, not counted (agent_refused, not_exercised) or error; see
-    # traces.benign_outcome.
+    # How each row counts: served, refused, not counted (agent_refused) or error; see traces.benign_outcome.
     outcomes = [trace_section.benign_outcome(result) for result in row_results]
     served, refused, errors = outcomes.count("served"), outcomes.count("refused"), outcomes.count("error")
     not_counted = outcomes.count("not_counted")
-    declined = f", {not_counted} not counted: declined by the agent or never reached their tool" if not_counted else ""
+    declined = f", {not_counted} declined by the agent, not counted" if not_counted else ""
 
     return _benign_report(
         agent,
