@@ -86,31 +86,28 @@ uv run agent-hardener run --benign-suite <path/to/requests.csv>   # build, harde
 `synth-benign` (or the `serve` HITL) to produce it. Without `--benign-suite`, `run` still attacks,
 defends, and validates the attacks; it just skips the benign false-positive check.
 
-A manifest for an agents-lab checkout next to it looks like this (`examples/agent-hardener.yaml` is the annotated version):
+A manifest is about ten lines. `examples/agent-hardener.yaml` is the annotated version, built around the
+LangGraph victim bundled in `examples/langgraph-victim/`:
 
 ```yaml
 agent:
-  name: finance-langgraph
-  project_dir: ../agents-lab                 # relative to this manifest's directory
-  dockerfile: deploy/finance_langgraph/Dockerfile
-  start_command: /usr/local/bin/python -m agents_lab.runtime.serve
+  name: langgraph-victim
+  project_dir: langgraph-victim              # relative to this manifest's directory
+  dockerfile: Dockerfile                     # relative to project_dir
+  start_command: /usr/local/bin/python /app/server.py
   binaries: ["/usr/local/bin/python*"]
+  harness: langgraph
   port: 8000
   secrets: [INFERENCE_API_KEY]
-  env:                                       # image ENV does not reach the sandbox
-    AGENT_SCENARIO: finance
-    AGENT_HARNESS: langgraph
-    AGENTS_LAB_ROOT: /app
-    FINANCE_BACKEND_URL: http://host.docker.internal:8086
-backends:
-  - name: finance
-    compose_file: ../agents-lab/services/finance_backend/docker-compose.yaml
-    health_url: http://127.0.0.1:8086/health
-    ports: [8086]
-  # - name: ledger                      # a service that is not on this host: only the route is opened
-  #   host: ledger.ns.svc
-  #   ports: [8087]
-  #   allowed_ips: [10.96.0.0/12]       # private ranges OpenShell would otherwise block
+# backends:                                  # host services the agent's tools call (the example needs none)
+#   - name: ledger
+#     compose_file: services/ledger/docker-compose.yaml
+#     health_url: http://127.0.0.1:8086/health
+#     ports: [8086]
+#   - name: ledger-remote                    # a service that is not on this host: only the route is opened
+#     host: ledger.ns.svc
+#     ports: [8087]
+#     allowed_ips: [10.96.0.0/12]            # private ranges OpenShell would otherwise block
 ```
 
 The minimum a user must supply: `agent.project_dir`, `agent.dockerfile` (your image), `agent.start_command`
