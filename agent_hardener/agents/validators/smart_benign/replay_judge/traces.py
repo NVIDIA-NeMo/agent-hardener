@@ -67,32 +67,53 @@ async def apply_traces(
     Returns whether it did. Any failure is logged and leaves ``results`` exactly as replay + judge
     produced them, so the report is the no-traces report.
     """
+    return await trace_rows(results, requests, window, args_judge) is not None
+
+
+async def trace_rows(
+    results: list[dict[str, Any]],
+    requests: list[GeneratedRequest],
+    window: TraceWindow,
+    args_judge: Callable[[str, str, Any], Awaitable[bool]] | None = None,
+) -> list[AgentTrace | None] | None:
+    """:func:`apply_traces`, also returning each row's matched trace (``None`` when untraced).
+
+    Returns ``None`` when the trace step failed, leaving ``results`` untouched.
+    """
     try:
-        updates = await _updates(results, requests, await window.traces(), args_judge)
+        matched = match_traces(requests, await window.traces())
+        updates = await _updates(results, requests, matched, args_judge)
     except Exception:
         logger.warning("benign validator trace step failed; keeping the judge verdicts", exc_info=True)
-        return False
+        return None
     for result, update in zip(results, updates, strict=True):
         result.update(update)
-    return True
+    return matched
+
+
+def match_traces(requests: list[GeneratedRequest], traces: list[AgentTrace]) -> list[AgentTrace | None]:
+    """Each request's replay trace, in request order, or ``None`` when no trace matched it."""
+    claimed: set[str] = set()
+    matched: list[AgentTrace | None] = []
+    for request in requests:
+        found = find_benign_traces(traces, request.payload, claimed=claimed)
+        # One replay per row; if the same payload appears twice, each row claims its own run.
+        claimed.difference_update(t.trace_id for t in found[1:])
+        matched.append(found[0] if found else None)
+    return matched
 
 
 async def _updates(
     results: list[dict[str, Any]],
     requests: list[GeneratedRequest],
-    traces: list[AgentTrace],
+    row_traces: list[AgentTrace | None],
     args_judge: Callable[[str, str, Any], Awaitable[bool]] | None,
 ) -> list[dict[str, Any]]:
-    claimed: set[str] = set()
     updates: list[dict[str, Any]] = []
-    for result, request in zip(results, requests, strict=True):
-        found = find_benign_traces(traces, request.payload, claimed=claimed)
-        if not found:
+    for result, request, trace in zip(results, requests, row_traces, strict=True):
+        if trace is None:
             updates.append({"tool_facts": dict(UNTRACED)})
             continue
-        # One replay per row; if the same payload appears twice, each row claims its own run.
-        trace = found[0]
-        claimed.difference_update(t.trace_id for t in found[1:])
         facts = tool_facts(trace, request.tool or None)
         update: dict[str, Any] = {"tool_facts": facts.model_dump(mode="json")}
         if result["verdict"]["status"] == "refused":

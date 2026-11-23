@@ -44,6 +44,11 @@ def synth_benign(
         False, "--reuse", help="Reuse the running sandbox if it's already Ready (skip rebuild)."
     ),
     no_cleanup: bool = typer.Option(False, "--no-cleanup", help="Leave the sandbox running after synthesis."),
+    no_verify_tools: bool = typer.Option(
+        False,
+        "--no-verify-tools",
+        help="Skip replaying the suite against the victim to check, from its traces, that each tool exists.",
+    ),
     victim_image: str | None = VICTIM_IMAGE_OPTION,
     allow_context_drift: bool = ALLOW_CONTEXT_DRIFT_OPTION,
 ) -> None:
@@ -54,6 +59,10 @@ def synth_benign(
     Writes profile.json + requests.csv under <storage.root_dir>/benign_profiles/<target>/. The same
     synthesis runs automatically as a pre-flight phase of ``agent-hardener run``; use this to generate,
     iterate on, or inspect a suite standalone.
+
+    Then, unless ``--no-verify-tools``, the suite is replayed against the live victim and its traces show
+    which tools really exist: tools it never called are offered for dropping, and tools it called that the
+    profile lacks get rows of their own (see tool_verification.json).
     """
     from contextlib import ExitStack
 
@@ -61,12 +70,14 @@ def synth_benign(
     from agent_hardener.cli._errors import cli_error_boundary
     from agent_hardener.config import load_config
     from agent_hardener.model_check import preflight_configured_models
+    from agent_hardener.swarm_tracker import benign_profiles_dir
     from agent_hardener.tools.openshell import (
         configure_local_docker_host,
         load_local_env,
         managed_victim_sandbox,
         with_victim_image,
     )
+    from agent_hardener.traces import build_trace_provider
 
     if yes and no_interactive:
         fail("--yes and --no-interactive are mutually exclusive")
@@ -87,12 +98,24 @@ def synth_benign(
         with ExitStack() as sandbox:
             started = time.monotonic()
             with status_factory("Building and starting victim sandbox"):
-                sandbox.enter_context(
+                managed = sandbox.enter_context(
                     managed_victim_sandbox(
                         victim_control, reuse=reuse, no_cleanup=no_cleanup, base_url=session.target.base_url
                     )
                 )
             ok("Sandbox ready", elapsed=time.monotonic() - started)
+            # The victim's traces, read while the sandbox is still up; raw copies land beside the suite.
+            trace_provider = (
+                build_trace_provider(
+                    session.traces,
+                    relay_spec=managed.config.relay_victim,
+                    atof_path=managed.atof.path,
+                    sync=managed.atof.sync,
+                    raw_dir=benign_profiles_dir(session.storage.root_dir, session.target.name) / "traces",
+                )
+                if managed.atof is not None and not no_verify_tools
+                else None
+            )
             section("Synthesis")
             code = run_synth_wizard(
                 config,
@@ -101,5 +124,7 @@ def synth_benign(
                 yes=yes,
                 validator=validator,
                 upload_dataset=upload_dataset,
+                verify_tools=not no_verify_tools,
+                trace_provider=trace_provider,
             )
         raise typer.Exit(code)

@@ -346,6 +346,21 @@ def test_verification_probes_the_victim_and_pulls_the_atof_log(
     assert _Fetcher.last.fetched == [(f"{SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", resolved)]
 
 
+def test_relay_atof_is_none_without_a_relay_spec() -> None:
+    assert tool.relay_atof(_prepared(None, None)) is None
+
+
+def test_relay_atof_syncs_the_sandbox_stream_to_the_host_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(tool, "OpenShellLifecycle", _Fetcher)
+
+    atof = tool.relay_atof(_prepared(Path("rel/events.atof.jsonl"), tmp_path))
+
+    assert atof is not None
+    assert atof.path == tmp_path / "rel/events.atof.jsonl"
+    atof.sync()
+    assert _Fetcher.last.fetched == [(f"{SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", atof.path)]
+
+
 # --- managed sandbox ---------------------------------------------------------------------------------------
 
 
@@ -409,6 +424,7 @@ class _Sandbox:
         monkeypatch.setattr(tool, "prepare_relay_victim", lambda cfg: f"prepared-{cfg}")
         monkeypatch.setattr(tool, "sandbox_is_ready", is_ready)
         monkeypatch.setattr(tool, "verify_relay_instrumentation", verify)
+        monkeypatch.setattr(tool, "relay_atof", lambda prepared: f"atof-{prepared}")
         monkeypatch.setattr(tool, "OpenShellLifecycle", Lifecycle)
         monkeypatch.setattr(tool, "warn", lambda message: outer.events.append(f"warn:{message}"))
 
@@ -419,10 +435,10 @@ class _Sandbox:
 def test_a_fresh_sandbox_is_built_verified_and_torn_down(monkeypatch: pytest.MonkeyPatch) -> None:
     sandbox = _Sandbox(monkeypatch)
 
-    with sandbox.enter(reuse=False, no_cleanup=False, base_url="http://victim/v1") as config:
+    with sandbox.enter(reuse=False, no_cleanup=False, base_url="http://victim/v1") as managed:
         sandbox.events.append("body")
 
-    assert config == "base"
+    assert (managed.config, managed.atof) == ("base", "atof-prepared-base")
     assert sandbox.events == ["up:prepared-base", "verify:prepared-base:http://victim/v1", "body", "down:base"]
 
 

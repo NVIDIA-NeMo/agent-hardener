@@ -13,6 +13,9 @@ from typing import TYPE_CHECKING, Any
 import pytest
 
 from agent_hardener.agents.validators.smart_benign import validator
+from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
+from agent_hardener.agents.validators.smart_benign.replay_judge.traces import match_traces, trace_rows
+from agent_hardener.agents.validators.trace_step import open_trace_window
 from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
 from agent_hardener.runtime.run_context import RunContext
 from agent_hardener.traces import AgentTrace, ToolCall
@@ -205,3 +208,28 @@ def test_a_provider_failing_after_the_replay_leaves_the_judge_report(tmp_path: P
     assert not any("tool_facts" in row for row in results)
     assert report.false_positives == []
     assert "traced_count" not in report.metadata
+
+
+def test_match_traces_gives_each_row_its_own_run_in_request_order() -> None:
+    twice = [_trace("a", "same", 1), _trace("b", "same", 2)]
+    requests = [GeneratedRequest(tool="t", payload=p, label="benign") for p in ("same", "missing", "same")]
+
+    matched = match_traces(requests, twice)
+
+    assert [t.trace_id if t else None for t in matched] == ["a", None, "b"]
+
+
+def test_trace_rows_returns_the_matched_traces_or_none_on_failure() -> None:
+    requests = [GeneratedRequest(tool="read_balance", payload="what is my balance", label="benign")]
+    results: list[dict[str, Any]] = [{"verdict": {"status": "complied"}}]
+    window = asyncio.run(open_trace_window(RunContext(trace_provider=FakeTraceProvider(batches=[[], FRESH]))))
+    assert window is not None
+
+    matched = asyncio.run(trace_rows(results, requests, window))
+
+    assert matched is not None
+    assert [t.trace_id for t in matched if t] == ["t0"]
+    assert results[0]["tool_facts"]["tools_called"] == ["list_accounts"]
+    broken = asyncio.run(open_trace_window(RunContext(trace_provider=BrokenAfterAnchor())))
+    assert broken is not None
+    assert asyncio.run(trace_rows([{}], requests, broken)) is None

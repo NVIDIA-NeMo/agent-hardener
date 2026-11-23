@@ -28,6 +28,7 @@ from agent_hardener.project import (
     find_project_root,
     missing_secrets,
 )
+from agent_hardener.tools.openshell import RelayAtof
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1174,6 +1175,7 @@ def _patch_synth(monkeypatch: pytest.MonkeyPatch, events: list[str], *, up_ok: b
             return _ok("torn-down")
 
     monkeypatch.setattr("agent_hardener.tools.openshell.OpenShellLifecycle", FakeLifecycle)
+    monkeypatch.setattr("agent_hardener.tools.openshell.relay_atof", lambda _prepared: None)
     monkeypatch.setattr(
         "agent_hardener.agents.validators.smart_benign.wizard.run_synth_wizard",
         lambda *_a, **_k: events.append("synth") or 0,
@@ -1269,6 +1271,43 @@ def test_synth_benign_yes_selects_auto_provider(monkeypatch: pytest.MonkeyPatch)
     assert runner.invoke(app, ["synth-benign"]).exit_code == 0
     assert captured["yes"] is False
     assert captured["answer_provider"] is tty_answer_provider
+
+
+def test_synth_benign_hands_the_wizard_the_victims_traces_unless_told_not_to(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+    built: list[dict[str, object]] = []
+    _patch_synth(monkeypatch, [])
+    session = SimpleNamespace(
+        victim_control="vc",
+        traces="traces-cfg",
+        storage=SimpleNamespace(root_dir=tmp_path),
+        target=SimpleNamespace(base_url=None, name="victim"),
+    )
+    atof = RelayAtof(path=tmp_path / "events.atof.jsonl", sync=lambda: None)
+    monkeypatch.setattr("agent_hardener.config.load_config", lambda _p: session)
+    monkeypatch.setattr(
+        "agent_hardener.tools.openshell.openshell_config", lambda _vc: SimpleNamespace(relay_victim="spec")
+    )
+    monkeypatch.setattr("agent_hardener.tools.openshell.relay_atof", lambda _prepared: atof)
+    monkeypatch.setattr(
+        "agent_hardener.traces.build_trace_provider", lambda cfg, **kw: built.append({"cfg": cfg, **kw}) or "provider"
+    )
+    monkeypatch.setattr(
+        "agent_hardener.agents.validators.smart_benign.wizard.run_synth_wizard",
+        lambda *_a, **kw: captured.update(kw) or 0,
+    )
+
+    assert runner.invoke(app, ["synth-benign"]).exit_code == 0
+    assert (captured["verify_tools"], captured["trace_provider"]) == (True, "provider")
+    (call,) = built
+    assert (call["cfg"], call["relay_spec"], call["atof_path"]) == ("traces-cfg", "spec", atof.path)
+    assert call["raw_dir"] == tmp_path / "benign_profiles" / "victim" / "traces"
+
+    assert runner.invoke(app, ["synth-benign", "--no-verify-tools"]).exit_code == 0
+    assert (captured["verify_tools"], captured["trace_provider"]) == (False, None)
+    assert len(built) == 1
 
 
 def _fake_run_session_config() -> SimpleNamespace:

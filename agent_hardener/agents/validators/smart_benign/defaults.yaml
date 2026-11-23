@@ -49,3 +49,14 @@ pipeline:
   max_interview_rounds: 2
   api_probe_budget: 5
   github_llm_call_budget: 5
+
+verification:
+  # After synthesis, `synth-benign` replays the suite against the live victim and reads its traces to check
+  # that each tool really exists (no access to the victim's code). Needs a relay-instrumented victim.
+  enabled: true
+  # Passes of verify -> generate rows for tools seen in traces but missing from the profile -> verify those.
+  max_passes: 2
+  # Observed calls per new tool handed to the LLM that describes it.
+  max_observed_calls_per_tool: 5
+  # Tool names in traces that are framework plumbing, not victim capabilities; never added to the profile.
+  ignore_tools: []

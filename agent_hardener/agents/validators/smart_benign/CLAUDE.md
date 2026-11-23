@@ -10,7 +10,8 @@ The smart benign validator answers one question: *does this victim agent over-bl
 It works in two stages:
 
 1. **Synth DAG** — infers what the victim can do (tools, personas, out-of-scope behaviour) from three optional input sources, then generates a tiered suite of benign request payloads.
-2. **Replay + judge** — sends those payloads to the live victim endpoint and classifies each response as complied or refused via an LLM judge.
+2. **Tool verification** (`synth-benign` only) — replays the fresh suite against the live victim and reads its traces to check that each tool really exists, without looking at the victim's code. See below.
+3. **Replay + judge** — sends those payloads to the live victim endpoint and classifies each response as complied or refused via an LLM judge.
 
 A finding is raised for every request the victim refuses. Zero findings means the victim does not over-block for this profile.
 
@@ -26,6 +27,8 @@ START → [nl_parser, github_analyzer, api_prober]   ← parallel fan-in
         interviewer            (LLM picks question → stdin → loop back)
               ↓
         request_generator → critic → profile_writer → END
+              ↓
+        tool verification      (synth-benign: replay + traces, drop / add tools; not a graph node)
               ↓
         replay_judge           (HTTP replay + LLM verdict per row)
 ```
@@ -43,7 +46,8 @@ agent-hardener synth-benign -c examples/vulnerable_demo_e2e.yaml --validator my-
 ```
 
 Writes `profile.json`, `requests.csv`, and per-source notes under
-`<storage.root_dir>/benign_profiles/<target>/`.
+`<storage.root_dir>/benign_profiles/<target>/`, then verifies the suite's tools against the live victim
+(`tool_verification.json`, `requests.pre_verification.csv`). `--no-verify-tools` skips verification.
 
 At the end of an interactive run the CLI prints newly collected Q&A pairs:
 
@@ -88,6 +92,24 @@ benign_validators:
 
 See `examples/vulnerable_demo_e2e.yaml` for a complete working example.
 
+## Tool verification
+
+The synth DAG can invent tools. After it finishes, `synth-benign` replays the suite through the in-loop
+validator's own path (`run_all` → `trace_rows`) while the sandbox is still up, and reads the victim's Relay
+traces. It never reads the victim's code.
+
+- **Per tool:** `verified` (any trace in the replay called it, from any row), `missing` (its rows were traced
+  and nothing called it) or `unknown` (none of its rows produced a trace: kept, no evidence either way).
+- **Drops:** missing tools and rows the unhardened victim refused are offered in a TTY checkbox (missing
+  pre-checked, refused unchecked). With no TTY, `--yes` or `--no-interactive`: missing tools are dropped,
+  refused rows kept.
+- **Tools the traces show but the profile lacks:** `extract_spec` builds a spec from the calls (deterministic,
+  `source="trace"`), `refine_spec` asks the synth LLM for a cleaner description and extra examples (best
+  effort), then only `request_generator` → `critic` run for those tools and their rows are verified in the
+  next pass. At most `verification.max_passes` passes; tools seen on the last one are reported, not added.
+- **No relay-victim block, or the trace step fails:** a warning, and the suite is left unchanged.
+- **Not run by** `run` (a supplied suite is used as is) or `serve` (Studio).
+
 ## Ingestion sources and skip flags
 
 | Source | Activated by | Skip flag | Skip mechanism |
@@ -103,10 +125,10 @@ All three nodes remain in the LangGraph graph regardless — they just return an
 **Source merge priority** (in `subgraphs/profile_synthesizer/nodes/merge.py`):
 
 ```
-github (3) > nl (2) > api_probe (1) > interview (0)
+trace (4) > github (3) > nl (2) > api_probe (1) > interview (0)
 ```
 
-Structural sources outrank inferential ones. When the same tool name appears in multiple sources the highest-priority source wins; `example_inputs` are unioned across all sources.
+`trace` (the victim was seen calling the tool) is ground truth. Structural sources outrank inferential ones. When the same tool name appears in multiple sources the highest-priority source wins; `example_inputs` are unioned across all sources.
 
 **`gap_detector` runs rules first, then an interactive-only LLM boundary pass.** The deterministic `detect_gaps` rules check that every tool has a non-empty description, at least one example input, and a confidence above threshold, and that the profile has `system_role`, `personas`, and `out_of_scope` set — keep these LLM-free. The `analyze_boundaries` node then makes one LLM call per tool to judge whether the benign/attack line is clear and, if not, emits a `boundary[<tool>]:` gap into the interview. It no-ops (no LLM call) when `interactive=False`, so non-TTY runs stay rules-only. The `boundary[<tool>]:` prefix is a stable per-tool key: a later round skips any tool that already has an answered boundary gap, which is what keeps the interview loop from re-asking when the LLM rephrases the question.
 
@@ -128,6 +150,10 @@ Structural sources outrank inferential ones. When the same tool name appears in 
 | `pipeline.max_interview_questions` | `10` | Hard ceiling on interview loop |
 | `pipeline.api_probe_budget` | `5` | Max meta-probes sent to victim |
 | `replay.confidence_cutoff` | `0.5` | Judge threshold for "refused" verdict |
+| `verification.enabled` | `true` | Post-synth tool verification in `synth-benign` |
+| `verification.max_passes` | `2` | Verify → add observed tools → verify their rows |
+| `verification.max_observed_calls_per_tool` | `5` | Observed calls kept per new tool |
+| `verification.ignore_tools` | `[]` | Framework tool names in traces that are never added |
 
 Override any of these per-validator in the session YAML `config` block. Never duplicate defaults in code — this file is the single source of truth for fallback values.
 
@@ -153,7 +179,11 @@ smart_benign/
   state.py              — SynthState, SynthInputs
   models.py             — ToolSpec, VictimCapabilityProfile, GeneratedRequest
   defaults.yaml         — all default knobs
-  wizard.py             — agent-hardener synth-benign command (synth-only)
+  wizard.py             — agent-hardener synth-benign command (synth + tool verification)
+  verify.py             — one verification pass: replay + traces → tool verdicts, unlisted tools
+  regenerate.py         — spec + rows for tools seen in traces (extract, LLM refine, generate → critic)
+  tool_verification.py  — the passes, the drop prompt, and what is written to disk
+  prompts/              — observed_tool refine prompt
   tracing.py            — Langfuse opt-in
   subgraphs/
     nl_parser/          — description → ToolSpec list (1 LLM call)
