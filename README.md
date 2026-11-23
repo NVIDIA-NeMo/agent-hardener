@@ -79,12 +79,12 @@ uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detec
 uv run agent-hardener synth-benign    # generate the benign test suite (brings the sandbox up, interviews
                                   #   you, writes requests.csv, tears down); --reuse/--no-cleanup available
 uv run agent-hardener run --benign-suite <path/to/requests.csv>   # build, harden, replay + validate, report
-                           #   (omit --benign-suite to skip the benign false-positive checks)
 ```
 
 `run` is a pure consumer: it validates against the suite you pass and never generates one — use
-`synth-benign` (or the `serve` HITL) to produce it. Without `--benign-suite`, `run` still attacks,
-defends, and validates the attacks; it just skips the benign false-positive check.
+`synth-benign` (or the `serve` HITL) to produce it. By default a manifest runs the smart benign validator, so `run`
+needs `--benign-suite` (or `benign_suite_path` in the manifest); without one it stops before building
+anything and prints the `synth-benign` command to run first.
 
 A manifest is about ten lines. `examples/agent-hardener.yaml` is the annotated version, built around the
 LangGraph victim bundled in `examples/langgraph-victim/`:
