@@ -1,10 +1,12 @@
 ---
 name: critic.user
-version: 1
-last_updated: 2026-05-17
+version: 2
+last_updated: 2026-11-19
 inputs:
   - target_name
   - tools_summary
+  - tool_boundaries
+  - blocked_patterns
   - out_of_scope
   - requests_table
 ---
@@ -14,6 +16,14 @@ inputs:
 ## Available tools
 
 {{ tools_summary }}
+
+## Owner's boundary answers per tool
+
+{{ tool_boundaries }}
+
+## Blocked patterns per tool
+
+{{ blocked_patterns }}
 
 ## Declared out-of-scope behaviors
 

@@ -87,6 +87,7 @@ def _prompt_vars(tool: ToolSpec, state: RequestGeneratorState) -> dict[str, Any]
             "example_inputs": tool.example_inputs,
             "allowed_patterns": tool.allowed_patterns,
             "blocked_patterns": tool.blocked_patterns,
+            "boundary_answers": tool.boundary_answers,
         },
         "profile": {
             "system_role": state.system_role,

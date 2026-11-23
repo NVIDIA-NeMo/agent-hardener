@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
-from agent_hardener.errors import VictimBuildError, VictimUnavailableError
+from agent_hardener.errors import VictimBuildError, VictimPortInUseError, VictimUnavailableError
 from agent_hardener.models import VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
@@ -360,6 +360,7 @@ class _Sandbox:
         up_ok: bool = True,
         same_image: bool = True,
         stale_credentials: str | None = None,
+        forward_output: str | None = None,
     ) -> None:
         self.events: list[str] = []
         self.verify_error: Exception | None = None
@@ -385,6 +386,11 @@ class _Sandbox:
             def collect_victim_diagnostics(self) -> OpenShellCommandResult:
                 outer.events.append(f"diagnostics:{self.config}")
                 return OpenShellCommandResult(ok=True, command=[], output=outer.victim_log)
+
+            def ensure_forward(self) -> OpenShellCommandResult:
+                outer.events.append(f"forward:{self.config}")
+                ok = forward_output is None
+                return OpenShellCommandResult(ok=ok, command=[], output="" if ok else str(forward_output))
 
             def credentials_drift(self) -> str | None:
                 outer.events.append(f"credentials?:{self.config}")
@@ -478,7 +484,26 @@ def test_a_ready_sandbox_is_reused_and_left_running(monkeypatch: pytest.MonkeyPa
     with sandbox.enter(reuse=True, no_cleanup=False):
         pass
 
-    assert sandbox.events == ["ready?:base", "image?:base", "credentials?:base", "verify:prepared-base:None"]
+    assert sandbox.events == [
+        "ready?:base",
+        "image?:base",
+        "credentials?:base",
+        "forward:prepared-base",
+        "verify:prepared-base:None",
+    ]
+
+
+def test_a_reused_sandbox_whose_port_is_taken_is_never_probed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Another run's forward on the port would answer the Relay probe and be reported as this victim.
+    sandbox = _Sandbox(monkeypatch, ready=True, forward_output="Error: Port 8000 is already in use by another process.")
+
+    with (
+        pytest.raises(VictimPortInUseError, match="Port 8000 is already in use"),
+        sandbox.enter(reuse=True, no_cleanup=False),
+    ):
+        pass
+
+    assert sandbox.events == ["ready?:base", "image?:base", "credentials?:base", "forward:prepared-base"]
 
 
 def test_reuse_replaces_a_ready_sandbox_holding_stale_provider_keys(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -42,6 +42,7 @@ from agent_hardener.final_log.validation_summary import build_validation
 from agent_hardener.ids import generate_round_id
 from agent_hardener.loggers import FILE_ONLY, EventBus, capture_run_log, emit_event, using_event_sink
 from agent_hardener.models import AgentRunInput, RelayVictimSpec
+from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.lifecycle import OpenShellLifecycle
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.preflight.relay import (
@@ -425,12 +426,18 @@ class Mission:
                 result = self._lifecycle.up(None)
             if not result.ok:
                 self._announce_failure_output(result.output)  # the real error: shown even by default
-                raise MissionError("OpenShell sandbox failed to start")
+                raise port_in_use_error(result.output) or MissionError("OpenShell sandbox failed to start")
             self._detail(result.output)
             self._announce("Sandbox ready", level="ok", elapsed=elapsed())
             self._announce(f"sandbox {self._base_config.sandbox}", level="detail")
             _write_fingerprint(fp_path, fp)
         else:
+            # ``up`` is what starts the forward, so a reused sandbox checks it holds its port: otherwise the
+            # health check and Relay probe below reach whatever else does, and pass or fail on its behalf.
+            result = self._lifecycle.ensure_forward()
+            if not result.ok:
+                self._announce_failure_output(result.output)
+                raise port_in_use_error(result.output) or MissionError("the reused sandbox's port forward failed")
             self._announce("Reusing the running sandbox (agent fingerprint matches)", level="ok")
         drift = self._lifecycle.image_context_drift()
         if drift:

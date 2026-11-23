@@ -305,10 +305,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if results[-1].ok and self.config.start_command:
             results.append(self.start_victim())
         if results[-1].ok and self.config.forward:
-            forward_list = self._exec.run(["forward", "list", "--gateway", self.config.gateway])
-            results.append(forward_list)
-            if not self._forward_is_active(forward_list.output):
-                results.append(self.start_forward())
+            results.append(self.ensure_forward())
 
     def ensure_provider(self) -> OpenShellCommandResult:
         """Ensure the configured provider exists for sandbox credential injection."""
