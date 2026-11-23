@@ -295,7 +295,9 @@ def test_up_names_the_taken_port_instead_of_blaming_docker(monkeypatch: pytest.M
 
 @pytest.mark.parametrize(("ready", "line"), [(True, "✓ Reusing the Ready sandbox"), (False, "! No Ready sandbox")])
 def test_run_reuse_says_whether_the_sandbox_is_reused(monkeypatch: pytest.MonkeyPatch, ready: bool, line: str) -> None:
-    session = SimpleNamespace(victim_control="vc", model_copy=lambda **_kw: session)
+    session = SimpleNamespace(
+        victim_control="vc", benign_suite_path=None, benign_validators=[], model_copy=lambda **_kw: session
+    )
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: "cfg")

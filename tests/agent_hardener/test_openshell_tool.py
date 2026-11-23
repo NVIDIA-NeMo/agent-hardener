@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
-from agent_hardener.errors import VictimBuildError, VictimPortInUseError
+from agent_hardener.errors import VictimBuildError, VictimPortInUseError, VictimUnavailableError
 from agent_hardener.models import VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
@@ -365,6 +365,7 @@ class _Sandbox:
         self.events: list[str] = []
         self.verify_error: Exception | None = None
         self.drift: str | Exception | None = None
+        self.victim_log = ""
         outer = self
 
         class Lifecycle:
@@ -381,6 +382,10 @@ class _Sandbox:
 
             def down(self) -> None:
                 outer.events.append(f"down:{self.config}")
+
+            def collect_victim_diagnostics(self) -> OpenShellCommandResult:
+                outer.events.append(f"diagnostics:{self.config}")
+                return OpenShellCommandResult(ok=True, command=[], output=outer.victim_log)
 
             def ensure_forward(self) -> OpenShellCommandResult:
                 outer.events.append(f"forward:{self.config}")
@@ -411,6 +416,7 @@ class _Sandbox:
         monkeypatch.setattr(tool, "verify_relay_instrumentation", verify)
         monkeypatch.setattr(tool, "OpenShellLifecycle", Lifecycle)
         monkeypatch.setattr(tool, "warn", lambda message: outer.events.append(f"warn:{message}"))
+        monkeypatch.setattr(tool, "hint", lambda message: outer.events.append(f"hint:{message}"))
 
     def enter(self, **kwargs: Any) -> Any:
         return tool.managed_victim_sandbox(cast("VictimControlConfig", None), **kwargs)
@@ -443,7 +449,33 @@ def test_a_failed_image_context_check_tears_the_sandbox_down(monkeypatch: pytest
     with pytest.raises(VictimBuildError), sandbox.enter(reuse=False, no_cleanup=False):
         pass
 
-    assert sandbox.events == ["up:prepared-base", "down:base"]
+    assert sandbox.events == ["up:prepared-base", "diagnostics:prepared-base", "down:base"]
+
+
+def test_a_failed_verification_keeps_the_victim_log_before_teardown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    sandbox = _Sandbox(monkeypatch)
+    sandbox.victim_log = "=== app log ===\nopenai.AuthenticationError: 401"
+    sandbox.verify_error = VictimUnavailableError("the victim answered the Relay probe with HTTP 502")
+
+    with pytest.raises(VictimUnavailableError), sandbox.enter(reuse=False, no_cleanup=False):
+        pass
+
+    [saved] = (tmp_path / ".agent-hardener" / "logs").glob("victim-diagnostics-*.log")
+    assert saved.read_text(encoding="utf-8") == sandbox.victim_log
+    assert sandbox.events[-3:] == ["diagnostics:prepared-base", f"hint:victim log: {saved}", "down:base"]
+
+
+def test_a_failed_run_left_running_keeps_its_sandbox_and_logs_in_place(monkeypatch: pytest.MonkeyPatch) -> None:
+    sandbox = _Sandbox(monkeypatch)
+    sandbox.verify_error = VictimUnavailableError("probe failed")
+
+    with pytest.raises(VictimUnavailableError), sandbox.enter(reuse=False, no_cleanup=True):
+        pass
+
+    assert not any(event.startswith(("diagnostics", "down")) for event in sandbox.events)
 
 
 def test_a_ready_sandbox_is_reused_and_left_running(monkeypatch: pytest.MonkeyPatch) -> None:

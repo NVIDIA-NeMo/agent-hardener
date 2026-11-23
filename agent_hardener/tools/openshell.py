@@ -8,9 +8,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import contextlib
+import logging
 import os
 import shlex
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
@@ -20,8 +22,9 @@ import yaml  # type: ignore[import-untyped]
 
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
-from agent_hardener.display.console import failure_excerpt, warn
+from agent_hardener.display.console import failure_excerpt, hint, warn
 from agent_hardener.errors import SandboxProvisioningError
+from agent_hardener.loggers import CLI_LOGS_DIR
 from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.egress import (
     CodeEgressSource,
@@ -43,6 +46,8 @@ from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, dockerfile_en
 from agent_hardener.preflight.relay import RELAY_PROBE_PROMPT, RELAY_PROBE_TIMEOUT_SECONDS, check_relay_instrumentation
 from agent_hardener.relay_plugin.config import judge_endpoint
 from agent_hardener.relay_plugin.victim import ARTIFACTS_ENV, SANDBOX_ARTIFACTS_DIR
+
+logger = logging.getLogger(__name__)
 
 # Commands that build/launch the sandbox and therefore need the victim build staged.
 _BUILD_COMMANDS = {"up", "restart", "cycle-reset"}
@@ -378,9 +383,38 @@ def managed_victim_sandbox(
             warn(drift)
         verify_relay_instrumentation(prepared, base_url=base_url)
         yield openshell
+    except Exception:
+        if not no_cleanup and not reused:  # the sandbox is about to go, and the victim's logs with it
+            save_victim_diagnostics(lifecycle)
+        raise
     finally:
         if not no_cleanup and not reused:  # only tear down what we brought up
             OpenShellLifecycle(openshell).down()
+
+
+def save_victim_diagnostics(lifecycle: OpenShellLifecycle) -> Path | None:
+    """Keep the victim's in-sandbox logs before a failed command deletes the sandbox. Best-effort.
+
+    A victim that starts healthy and then fails its requests (a 401 from its own model, say) leaves its
+    traceback only inside the sandbox. ``run`` saves it to its run directory on teardown; this does the same for
+    ``synth-benign``, next to the command's log, and points at it under the failure.
+
+    Returns:
+        Where the logs were written, or ``None`` when there was nothing to save or the sandbox could not be read.
+    """
+    try:
+        output = lifecycle.collect_victim_diagnostics().output
+        if not output:
+            return None
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        path = Path.cwd() / CLI_LOGS_DIR / f"victim-diagnostics-{stamp}.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(output, encoding="utf-8")
+    except Exception:
+        logger.debug("could not save the victim's logs", exc_info=True)
+        return None
+    hint(f"victim log: {path}")
+    return path
 
 
 if __name__ == "__main__":  # pragma: no cover

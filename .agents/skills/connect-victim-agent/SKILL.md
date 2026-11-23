@@ -118,8 +118,8 @@ Compare with `examples/langgraph-victim/agent-hardener.yaml`, which explains eac
 ## Step 4: Secrets, egress, backends
 
 - **Secrets.** List env-var *names* under `secrets`; values stay in `secrets_file`. Dotenv files are
-  never copied into the build context. Values reach the sandbox through the shared OpenShell provider
-  `agent-hardener-secrets`, which has a reuse gotcha (see Gotchas).
+  never copied into the build context. Values reach the sandbox through the agent's own OpenShell
+  provider, `<sandbox name>-secrets` (key rotation is in `openshell-ops`).
 - **Egress.** The policy denies by default. `discover_egress: true` scans the project's code,
   Dockerfile `ENV` and config for hosts. Add the ones it can't infer (SDK defaults, runtime URLs)
   under `egress`. Private IPs are blocked unless they're resolved and listed (see `openshell-ops`).

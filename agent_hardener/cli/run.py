@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import shlex
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -146,6 +147,38 @@ def _resolve_replay_traces(with_traces: str | None, hitlog_path: Path) -> Path |
     return path
 
 
+def _require_benign_suite(session_config: SessionConfig, *, config: Path, env_file: Path) -> None:
+    """Stop before any setup when a smart benign validator has no suite, and give the commands that make one.
+
+    ``run`` never synthesizes a suite. Without this check the run gets as far as its benign-suite step and
+    fails there with a generic hint; this one names the config and env file the user is running with.
+
+    Raises:
+        BenignSuiteError: A smart benign validator is configured and neither ``--benign-suite`` nor the
+            manifest's ``benign_suite_path`` supplies a suite.
+    """
+    from agent_hardener.errors import BenignSuiteError
+    from agent_hardener.runtime.runner import SMART_BENIGN_IMPL_PREFIX
+
+    if session_config.benign_suite_path is not None:
+        return
+    if not any(
+        (validator.implementation or "").startswith(SMART_BENIGN_IMPL_PREFIX)
+        for validator in session_config.benign_validators
+    ):
+        return
+    flags = f"--config {shlex.quote(str(config))} --env-file {shlex.quote(str(env_file))}"
+    raise BenignSuiteError(
+        "this config validates against a benign suite, and none was given (--benign-suite, or benign_suite_path "
+        "in the manifest). `run` does not generate one.",
+        remediation=(
+            "Generate one, then pass the requests.csv it prints:\n"
+            f"  agent-hardener synth-benign {flags}\n"
+            f"  agent-hardener run {flags} --benign-suite <requests.csv>"
+        ),
+    )
+
+
 def _apply_benign_suite(benign_suite: Path | None, session_config: SessionConfig) -> SessionConfig:
     """Point the run at a supplied benign-suite CSV, or leave the config untouched when none is given."""
     if benign_suite is None:
@@ -193,7 +226,8 @@ def run(
         None,
         "--benign-suite",
         help="Benign-suite CSV (tool,payload,label,rationale,persona) to validate against. Generate one with "
-        "`agent-hardener synth-benign`. When omitted, benign validation is skipped for this run.",
+        "`agent-hardener synth-benign`. Required when the config runs a smart benign validator (the default "
+        "manifest does), unless the manifest sets benign_suite_path.",
     ),
     relay_plugins: Path | None = typer.Option(
         None,
@@ -242,6 +276,7 @@ def run(
         ok(f"Config loaded: {config}", markup=False)
         session_config = _resolve_replay(replay, session_config, with_traces)
         session_config = _apply_benign_suite(benign_suite, session_config)
+        _require_benign_suite(session_config, config=config, env_file=env_file)
         if victim_image is not None:
             session_config = session_config.model_copy(
                 update={

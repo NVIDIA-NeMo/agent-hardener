@@ -19,7 +19,7 @@ from agent_hardener.manifest import (
     with_session_reclaim,
 )
 from agent_hardener.models import SessionConfig
-from agent_hardener.openshell.naming import sandbox_name
+from agent_hardener.openshell.naming import provider_name, sandbox_name
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.tools.openshell import openshell_config
 
@@ -129,6 +129,7 @@ def test_expand_builds_relay_victim_and_backends() -> None:
     config = expand(AgentManifest.model_validate(AGENT), base_dir=REPO_ROOT)
     osc = openshell_config(config.victim_control)
     assert osc.sandbox == sandbox_name("finance")
+    assert osc.provider == provider_name("finance")
     assert osc.provider_credentials == ["INFERENCE_API_KEY"]
     assert osc.forward == "0.0.0.0:8000"
     assert osc.relay_victim is not None
@@ -302,11 +303,15 @@ def test_load_config_rejects_overrides_for_full_session_config() -> None:
         load_config(str(full_config), policy=Path("/tmp/whatever.yaml"))
 
 
-def test_example_manifest_round_trips() -> None:
+def test_example_manifest_builds_the_bundled_victim_with_nothing_outside_the_repo() -> None:
+    # The repo is public: the default example must not depend on a checkout outside it.
     config = load_config(str(REPO_ROOT / "examples/agent-hardener.yaml"))
     osc = openshell_config(config.victim_control)
     assert osc.relay_victim is not None
-    assert [b.name for b in osc.relay_victim.backends] == ["finance"]
+    assert osc.relay_victim.backends == []
+    project_dir = (REPO_ROOT / "examples" / osc.relay_victim.project_dir).resolve()
+    assert project_dir == REPO_ROOT / "examples/langgraph-victim"
+    assert (project_dir / osc.relay_victim.dockerfile).is_file()
 
 
 # --- garak settings -----------------------------------------------------------------------

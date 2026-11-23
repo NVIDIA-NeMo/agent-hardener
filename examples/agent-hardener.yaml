@@ -18,18 +18,26 @@
 # 3. You own the image and the launch command. Agent Hardener hardens the agent you ship rather than
 #    building a variant of it.
 
+# The example is the LangGraph victim bundled in examples/langgraph-victim/: two tools that run inside the
+# sandbox, so it needs no backends and nothing outside this repo. Relative paths (project_dir, a backend's
+# compose_file) resolve from THIS FILE's directory, not from the shell's.
 agent:
-  name: finance
-  project_dir: ../agents-lab                              # your agent project
-  dockerfile: deploy/finance/Dockerfile                   # your image
-  start_command: /app/.venv/bin/python -m finance.serve   # how it is launched in the sandbox
-  binaries: ["/app/.venv/bin/**"]                         # processes allowed to egress
+  name: langgraph-victim
+  project_dir: langgraph-victim                           # your agent project (the image's build context)
+  dockerfile: Dockerfile                                  # your image, relative to project_dir
+  start_command: /usr/local/bin/python /app/server.py     # how it is launched in the sandbox
+  binaries: ["/usr/local/bin/python*"]                    # processes allowed to egress
+  harness: langgraph
   port: 8000
   relay_artifacts: artifacts/relay                        # where it writes events.atof.jsonl
   secrets:                                                # env-var names defined in --env-file
   - INFERENCE_API_KEY     # pragma: allowlist secret      # the first secret is used as the inference API key
-  env:
-    FINANCE_BACKEND_URL: http://host.docker.internal:8086
+  # Image ENV and your shell's variables do not reach the sandbox; only this block does (and, of
+  # --env-file, only the names under `secrets`). The example agent reads its own model from it, and
+  # left unset calls nvidia/nemotron-3.5-lightning-30b-a3b on https://integrate.api.nvidia.com/v1.
+  # env:
+  #   INFERENCE_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b
+  #   INFERENCE_BASE_URL: https://integrate.api.nvidia.com/v1
 
   # Your image must carry a 'sandbox' user/group, iproute2, a writable /etc/nemo-relay/ (Agent Hardener
   # uploads each round's guardrails there as the sandbox user), and whatever start_command needs on
@@ -38,7 +46,7 @@ agent:
   # so a symlink misses pyvenv.cfg and falls back to the system site-packages. Agent Hardener appends an
   # aiohttp egress shim and the guardrail plugin itself, so your traffic honours the sandbox proxy
   # and the guardrails a round generates can actually run.
-  # See examples/relay-victim/ for a worked image.
+  # See examples/langgraph-victim/ for a worked image.
 
   # Egress: Agent Hardener scans your project's code and config for the hosts your agent calls and
   # allowlists them. Add any it can't infer (runtime/SDK URLs) here:
@@ -46,14 +54,16 @@ agent:
   # discover_egress: false   # turn off the automatic scan and rely only on `egress`
 
   # Optional: enable the guardrails defender for a specific tool.
-  # guardrails_tool: transfer_funds
+  # guardrails_tool: bash_executor
 
-backends:
-- name: finance
-  compose_file: ../agents-lab/services/finance_backend/docker-compose.yaml
-  health_url: http://127.0.0.1:8086/health   # optional: wait for this URL before starting the swarm
-  ports: [8086]
-  # compose_project: my-project               # optional: docker compose -p project name
+# Host services your agent's tools call: Agent Hardener starts them before the swarm and opens the
+# sandbox route to their ports. The bundled victim needs none; an agent with an HTTP backend would add:
+# backends:
+# - name: ledger
+#   compose_file: services/ledger/docker-compose.yaml   # relative to this file
+#   health_url: http://127.0.0.1:8086/health            # optional: wait for this URL before starting the swarm
+#   ports: [8086]
+#   # compose_project: my-project                       # optional: docker compose -p project name
 
 # ─── Choosing models ────────────────────────────────────────────────────────────────────────────
 # Agent Hardener has three model groups; each keeps its built-in default unless you override it.
