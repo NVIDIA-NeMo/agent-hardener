@@ -15,6 +15,7 @@ import pytest
 
 from agent_hardener.agents.validators.replay_http import ReplayResult, contract_from, replay_prompt
 from agent_hardener.endpoint import SESSION_ID_HEADER
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.rate_limits import RateLimitError
 
 pytestmark = pytest.mark.unit
@@ -92,13 +93,13 @@ def test_empty_replay_url_is_rejected_before_any_request() -> None:
 
 def test_http_error_status_raises_with_truncated_excerpt() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(500, json={"error": "x" * 200})
+        return httpx.Response(400, json={"error": "x" * 200})
 
     with pytest.raises(httpx.HTTPStatusError) as excinfo:
         _replay(_Config(), handler)
 
     message = str(excinfo.value)
-    assert "HTTP 500" in message
+    assert "HTTP 400" in message
     assert "x" * 100 not in message  # excerpt callback bounds what leaks into the error
 
 
@@ -118,3 +119,14 @@ def test_contract_from_maps_unknown_replay_mode_to_field_mode() -> None:
     assert contract_from(_Config(replay_mode="openai_chat")).mode == "openai_chat"
     assert contract_from(_Config(replay_mode="json")).mode == "field"
     assert contract_from(_Config(replay_mode="anything-else")).mode == "field"
+
+
+def test_victim_5xx_is_unavailable_not_a_verdict() -> None:
+    with pytest.raises(VictimUnavailableError) as exc_info:
+        _replay(_Config(), lambda _request: httpx.Response(503, text="upstream down"))
+    assert exc_info.value.category == "victim_unavailable"
+
+
+def test_victim_4xx_stays_a_normal_http_error() -> None:
+    with pytest.raises(httpx.HTTPStatusError):
+        _replay(_Config(), lambda _request: httpx.Response(404, text="no route"))

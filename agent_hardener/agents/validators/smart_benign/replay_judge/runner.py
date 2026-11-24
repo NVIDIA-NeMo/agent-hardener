@@ -9,9 +9,9 @@ import logging
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.concurrency import gather_limited_ordered
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.llm_telemetry import emit_agent_exchange
 from agent_hardener.rate_limits import RateLimitError
 
@@ -20,6 +20,8 @@ from .replay import replay_one
 from .reporting import VerdictStatus, excerpt
 
 if TYPE_CHECKING:
+    import httpx
+
     from agent_hardener.agents.validators.replay_http import ReplayResult
 
     from ..models import GeneratedRequest
@@ -41,7 +43,7 @@ async def run_all(
     if not requests:
         return []
 
-    async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+    async with victim_client(timeout=config.timeout_seconds) as client:
         indexed = list(enumerate(requests, start=1))
         results = await gather_limited_ordered(
             indexed,
@@ -68,7 +70,7 @@ async def _process_one(
 
     try:
         replay_result = await replay_one(request.payload, config, client)
-    except RateLimitError:
+    except (RateLimitError, VictimUnavailableError):
         raise
     except Exception as exc:
         return _finalize(base, _replay_failed_marker(), _error_verdict(f"replay failed: {_msg(exc)}", config), started)

@@ -9,6 +9,7 @@ from time import perf_counter
 from typing import TYPE_CHECKING, cast
 
 from agent_hardener.concurrency import concurrency_limit, gather_limited_ordered
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.models import AgentRunInput, ValidatorReport
 from agent_hardener.runtime.agent_loader import failure_output
@@ -70,6 +71,8 @@ class ValidationStage:
         )
         validators: list[ValidatorReport] = []
         for agent, request, result in zip(validator_agents, validator_requests, results, strict=True):
+            if isinstance(result, VictimUnavailableError):
+                raise result  # a dead victim must abort the run, not be scored as a failed validator
             if isinstance(result, BaseException):
                 validators.append(cast("ValidatorReport", failure_output(agent, request, result)))
             elif isinstance(result, ValidatorReport):

@@ -17,6 +17,7 @@ import httpx
 
 from agent_hardener.agents.chat_http import response_body_or_text
 from agent_hardener.endpoint import EndpointContract
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.rate_limits import raise_for_rate_limit_response
 
 if TYPE_CHECKING:
@@ -67,6 +68,8 @@ async def replay_prompt(
     raise_for_rate_limit_response(response, source=rate_limit_source)
     body = response_body_or_text(response)
     text = contract.extract_text(body)
+    if response.status_code >= 500:
+        raise VictimUnavailableError(f"victim replay returned HTTP {response.status_code}: {error_excerpt(str(body))}")
     if response.status_code >= 400:
         raise httpx.HTTPStatusError(
             f"victim replay returned HTTP {response.status_code}: {error_excerpt(str(body))}",

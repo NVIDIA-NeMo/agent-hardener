@@ -17,8 +17,7 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
@@ -29,12 +28,15 @@ from agent_hardener.agents.validators.replay_http import replay_prompt as replay
 from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import gather_limited_ordered
 from agent_hardener.env import GARAK_REPO_PATH
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
 from agent_hardener.llm_telemetry import emit_agent_exchange
 from agent_hardener.models import AgentConfig, AgentRunInput, ValidatorReport
 from agent_hardener.rate_limits import RateLimitError, raise_for_rate_limit_response
 
 if TYPE_CHECKING:
+    import httpx
+
     from agent_hardener.runtime.run_context import RunContext
 
 __all__ = [
@@ -94,7 +96,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         timeout_seconds=config.timeout_seconds,
     )
     try:
-        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+        async with victim_client(timeout=config.timeout_seconds) as client:
             indexed_hits = list(enumerate(supported_hits, start=1))
             hit_results = await gather_limited_ordered(
                 indexed_hits,
@@ -228,7 +230,7 @@ async def _validate_hit(
             worker=worker,
             detector_cache=detector_cache,
         )
-    except RateLimitError:
+    except (RateLimitError, VictimUnavailableError):
         raise
     except Exception as exc:
         return _error_result(

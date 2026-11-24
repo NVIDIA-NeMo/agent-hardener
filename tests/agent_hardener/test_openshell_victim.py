@@ -77,3 +77,16 @@ def test_normal_response_returns_victim_result(monkeypatch: pytest.MonkeyPatch) 
     result = asyncio.run(ov.run(_request(), _agent()))
     assert isinstance(result, VictimResult)
     assert result.ok is True  # a real response is still a normal result, not an abort
+
+
+def test_victim_5xx_raises_victim_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = httpx.Response(502, text="bad gateway", request=httpx.Request("POST", _URL))
+    _patch_client(monkeypatch, _FakeClient(response=response))
+    with pytest.raises(VictimUnavailableError, match="HTTP 502"):
+        asyncio.run(ov.run(_request(), _agent()))
+
+
+def test_victim_4xx_is_a_soft_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = httpx.Response(400, text="bad request", request=httpx.Request("POST", _URL))
+    _patch_client(monkeypatch, _FakeClient(response=response))
+    assert asyncio.run(ov.run(_request(), _agent())).ok is False
