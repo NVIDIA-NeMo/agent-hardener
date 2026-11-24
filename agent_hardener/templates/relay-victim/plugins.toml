@@ -2,7 +2,7 @@
 #
 # Uploaded to /etc/nemo-relay/plugins.toml inside the sandbox — the one layer NeMo Fabric accepts
 # plugin config from, so the same delivery works for a BYO image and a packaged Fabric agent. The
-# victim applies it by calling nemo_relay.plugin.initialize(), which every Relay-connected agent
+# victim applies it by holding nemo_relay.plugin.activate() open, which every Relay-connected agent
 # does anyway; nothing Agent-Hardener-specific is required of the agent's code.
 #
 # Two components live here.

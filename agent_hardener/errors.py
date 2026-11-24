@@ -95,7 +95,7 @@ class VictimNotInstrumentedError(AgentHardenerError):
 
     category = "victim_not_instrumented"
     default_remediation = (
-        "Attach NeMo Relay to the agent (middleware + nemo_relay.plugin.initialize() at startup) "
+        "Attach NeMo Relay to the agent (middleware + nemo_relay.plugin.activate() held open for the process's life) "
         "and confirm it writes events.atof.jsonl to the configured artifacts directory."
     )
 

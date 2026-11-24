@@ -22,7 +22,7 @@ a failed command also writes its classified error there.
 | Run fails saying Relay saw no tool calls | Tool calls bypass Relay | Route tools through Relay (middleware, or `create_tool_node` for a hand-built LangGraph graph). |
 | No guardrails written, or the agent keeps going after a refusal (hand-built LangGraph) | Model calls bypass Relay | Send the model node through `nemo_relay.llm.execute` — see relay-connection.md. |
 | Agent never starts in the sandbox | `start_command` relies on `PATH`, or the image lacks the `sandbox` user | Use full paths; follow the image contract. |
-| `mkdir: cannot create directory '/etc/nemo-relay'` | Directory not created in the image | `mkdir -p /etc/nemo-relay` and `chown` it to `sandbox` in the Dockerfile. |
+| `mkdir: cannot create directory '/etc/nemo-relay'` | The image was built outside `agent-hardener stage`, which creates it | Build from `agent-hardener stage` output, or `mkdir -p /etc/nemo-relay` and `chown` it to `sandbox` in the Dockerfile. |
 | Tool calls fail with connection errors | Host not allowed by the sandbox | Add it to `egress`, or a `backends` entry for local services. |
 | `--dockerfile requires at least one --binary` | `init` needs both | Pass `--binary '<glob>'`. |
 | New API key ignored | The sandbox kept the old provider | Run without `--reuse` so the sandbox is rebuilt. |

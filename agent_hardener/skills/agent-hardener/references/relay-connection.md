@@ -105,10 +105,11 @@ The agent's Dockerfile must provide:
 - a `sandbox` user and group, and `iproute2`;
 - every binary the start command needs at a full path (OpenShell replaces `PATH`; symlink venv binaries into
   `/usr/local/bin` if needed);
-- `/etc/nemo-relay` and the trace directory created and owned by `sandbox` before start. A missing
-  `/etc/nemo-relay` fails at deploy with `Permission denied`.
+- the agent serving `GET /health` and OpenAI-style `POST /v1/chat/completions` on the manifest `port`.
 
-Agent Hardener appends its own egress shim to your Dockerfile when it stages the build; do not add it yourself.
+When Agent Hardener stages the build it appends its egress shim and creates `/etc/nemo-relay` and the trace
+directory, writable by the runtime user; do not add these yourself. An image built outside `agent-hardener stage`
+misses them.
 
 Then set in the manifest:
 

@@ -509,7 +509,8 @@ def render_manifest_yaml(manifest: dict) -> str:
         "  # Agent Hardener appends the aiohttp egress shim to your Dockerfile.\n"
         "  #\n"
         "  # The agent must be NeMo Relay-connected: attach NemoRelayMiddleware AND call\n"
-        "  # nemo_relay.plugin.initialize() at startup, or delivered guardrails never activate.\n"
+        "  # hold nemo_relay.plugin.activate(PluginConfig()) open for the process's life, or delivered\n"
+        "  # guardrails never activate.\n"
     )
     base = base.replace("\nbackends:", "\n" + agent_stubs + "\nbackends:", 1)
 
