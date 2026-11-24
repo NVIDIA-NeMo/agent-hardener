@@ -41,6 +41,8 @@ DEFAULT_POLICY_PATH = _TEMPLATES / "openshell-policy-permissive.yaml"
 # The victim starts unguarded so attackers establish a baseline; the guardrails defender appends to
 # this, and the deploy stage uploads the result to RELAY_PLUGINS_UPLOAD_DEST.
 DEFAULT_RELAY_PLUGINS_PATH = _TEMPLATES / "plugins.toml"
+AGENT_BREAKER_IMPLEMENTATION = "agent_hardener.agents.attackers.agent_breaker:run"
+GUARDRAILS_DEFENDER_IMPLEMENTATION = "agent_hardener.agents.defenders.guardrails_defender:run"
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +258,7 @@ def _default_attackers(garak: GarakSettings) -> list[dict[str, Any]]:
     return [
         {
             "name": "garak-agent-breaker",
-            "implementation": "agent_hardener.agents.attackers.agent_breaker:run",
+            "implementation": AGENT_BREAKER_IMPLEMENTATION,
             "timeout_seconds": inner_timeout + 300,
             "config": config,
         }
@@ -295,7 +297,7 @@ def _default_defenders(agent: AgentSpec, defenders_settings: DefenderSettings) -
     defenders.append(
         {
             "name": "defender-guardrails",
-            "implementation": "agent_hardener.agents.defenders.guardrails_defender:run",
+            "implementation": GUARDRAILS_DEFENDER_IMPLEMENTATION,
             "timeout_seconds": timeout,
             "capabilities": (
                 "Mitigates prompt injection, unsafe tool invocations, sensitive content disclosure, "

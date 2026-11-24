@@ -1298,6 +1298,8 @@ def _fake_run_session_config() -> SimpleNamespace:
         target=SimpleNamespace(base_url="http://127.0.0.1:8000/v1/chat/completions"),
         benign_suite_path=None,
         benign_validators=[],
+        attackers=[],
+        defenders=[],
     )
 
 

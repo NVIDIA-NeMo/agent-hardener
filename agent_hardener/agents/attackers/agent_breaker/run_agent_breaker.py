@@ -15,7 +15,7 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -105,6 +105,63 @@ def resolve_target_uri(
         auth = parts.username + (f":{parts.password}" if parts.password else "")
         netloc = f"{auth}@{netloc}"
     return urlunsplit((parts.scheme or "http", netloc, parts.path, parts.query, parts.fragment))
+
+
+@dataclass(frozen=True)
+class ScanOptions:
+    """What an agent_breaker attacker's config asks of its scan."""
+
+    target_uri: str
+    config_path: str
+    report_prefix: str
+    overrides: dict[str, Any]
+
+    @classmethod
+    def from_agent(cls, config: Mapping[str, Any], base_url: str | None) -> ScanOptions:
+        """Read the options from the attacker's config, attacking the victim at ``base_url``."""
+        return cls(
+            target_uri=resolve_target_uri(
+                base_url,
+                target_uri=str(config["target_uri"]) if config.get("target_uri") else None,
+                target_port=int(config["target_port"]) if config.get("target_port") is not None else None,
+            ),
+            config_path=str(config.get("config_path", DEFAULT_CONFIG_PATH)),
+            report_prefix=str(config.get("report_prefix", DEFAULT_REPORT_PREFIX)),
+            overrides={key: config[key] for key in OVERRIDE_KEYS if config.get(key) is not None},
+        )
+
+    def garak_config(self, report_dir: str) -> dict[str, Any]:
+        """The garak config the scan will run, writing its reports to ``report_dir``."""
+        return resolve_scan_config(
+            target_uri=self.target_uri,
+            config_path=self.config_path,
+            report_dir=report_dir,
+            report_prefix=self.report_prefix,
+            overrides=self.overrides,
+        )
+
+
+def resolve_scan_config(
+    *, target_uri: str, config_path: str, report_dir: str, report_prefix: str, overrides: dict[str, Any] | None
+) -> dict[str, Any]:
+    """The garak config a scan runs, with the run's target and report fields forced.
+
+    It starts from the scaffold at ``config_path`` when one exists, else from a config built from ``overrides``.
+    """
+    scaffold = Path(config_path)
+    if scaffold.is_file():
+        base = yaml.safe_load(scaffold.read_text(encoding="utf-8")) or {}
+    else:
+        base = build_agent_breaker_config(
+            target_uri=target_uri, report_dir=report_dir, report_prefix=report_prefix, overrides=overrides
+        )
+    return apply_runtime_fields(
+        base,
+        target_uri=target_uri,
+        report_dir=str(Path(report_dir).resolve()),
+        report_prefix=report_prefix,
+        model_timeout=resolve_model_timeout(overrides),
+    )
 
 
 async def _spawn_garak(
@@ -225,19 +282,12 @@ async def run_agent_breaker_scan(
     report_dir_path = Path(report_dir).resolve()
     report_dir_path.mkdir(parents=True, exist_ok=True)
 
-    scaffold = Path(config_path)
-    if scaffold.is_file():
-        base = yaml.safe_load(scaffold.read_text(encoding="utf-8")) or {}
-    else:
-        base = build_agent_breaker_config(
-            target_uri=target_uri, report_dir=report_dir, report_prefix=report_prefix, overrides=overrides
-        )
-    resolved = apply_runtime_fields(
-        base,
+    resolved = resolve_scan_config(
         target_uri=target_uri,
+        config_path=config_path,
         report_dir=str(report_dir_path),
         report_prefix=report_prefix,
-        model_timeout=resolve_model_timeout(overrides),
+        overrides=overrides,
     )
     if preflight is not None:
         await preflight(resolved)
@@ -271,25 +321,20 @@ async def run_agent_breaker_scan(
 async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
     """Run AgentBreaker as an Agent Hardener attacker."""
     config = agent.config
-    overrides = {key: config[key] for key in OVERRIDE_KEYS if config.get(key) is not None}
+    options = ScanOptions.from_agent(config, request.target.base_url)
     # Precedence: an explicit report_dir override in the agent config wins; otherwise write to the ready
     # run-scoped dir the stage injected; fall back to the shared default only for standalone/CLI use where
     # no run dir is threaded in. No subdir math here — the authority already resolved the directory.
     report_dir = config.get("report_dir") or request.context.get(ARTIFACT_DIR_KEY) or DEFAULT_REPORT_DIR
-    target_uri = resolve_target_uri(
-        request.target.base_url,
-        target_uri=str(config["target_uri"]) if config.get("target_uri") else None,
-        target_port=int(config["target_port"]) if config.get("target_port") is not None else None,
-    )
     retried_after: str | None = None
     for scan in range(1, MAX_SCANS + 1):
         try:
             result = await run_agent_breaker_scan(
-                target_uri=target_uri,
-                config_path=str(config.get("config_path", DEFAULT_CONFIG_PATH)),
+                target_uri=options.target_uri,
+                config_path=options.config_path,
                 report_dir=str(report_dir),
-                report_prefix=str(config.get("report_prefix", DEFAULT_REPORT_PREFIX)),
-                overrides=overrides,
+                report_prefix=options.report_prefix,
+                overrides=options.overrides,
                 timeout_s=float(config["timeout_s"]) if config.get("timeout_s") is not None else None,
                 preflight=check_model_endpoints if scan == 1 else None,  # models were checked before the first scan
             )
@@ -306,7 +351,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         evidence = read_scan_evidence(Path(result.report_path) if result.report_path else None)
         stdout_log = Path(report_dir).resolve() / STDOUT_LOG_NAME
         garak_log = detail_log_path(stdout_log) or stdout_log
-        failure = diagnose_scan(evidence, _read_text(garak_log), target_uri=target_uri)
+        failure = diagnose_scan(evidence, _read_text(garak_log), target_uri=options.target_uri)
         if failure is None or not failure.retryable or scan == MAX_SCANS:
             break
         logger.warning("garak scan %d produced no attacks (%s); running it once more", scan, failure.code)
@@ -356,7 +401,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
             "garak_report_path": result.report_path,
             "garak_config_path": result.config_path,
             "target": request.target.name,
-            "target_uri": target_uri,
+            "target_uri": options.target_uri,
         },
     )
 

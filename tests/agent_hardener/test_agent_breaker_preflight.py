@@ -26,7 +26,7 @@ def _record_probes(monkeypatch: pytest.MonkeyPatch, verdict: model_check.Validat
         probes.append({"model": model, "uri": uri, "api_key": api_key, **kwargs})
         return verdict
 
-    monkeypatch.setattr(preflight, "probe_generation", fake_probe)
+    monkeypatch.setattr(model_check, "probe_generation", fake_probe)
     monkeypatch.setenv("NIM_API_KEY", "nim-key")
     return probes
 

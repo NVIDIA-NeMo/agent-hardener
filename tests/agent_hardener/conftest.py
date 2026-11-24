@@ -15,6 +15,7 @@ from typing import Any, cast
 
 import pytest
 
+from agent_hardener import model_check
 from agent_hardener.models import TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
@@ -44,6 +45,38 @@ def _isolated_cli_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
         lg.setLevel(level)
         lg.propagate = propagate
     console.set_debug(False)
+
+
+@pytest.fixture(autouse=True)
+def _offline_model_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the pre-run model check off the network: CLI tests would otherwise send it a real request."""
+    monkeypatch.setattr(model_check, "probe_generation", lambda *_a, **_k: model_check.Validation(ok=True))
+
+
+#: A one-token model check as sent: model, endpoint and key.
+ModelProbe = tuple[str, str, str | None]
+
+
+@pytest.fixture
+def model_probes(monkeypatch: pytest.MonkeyPatch) -> list[ModelProbe]:
+    """Answer every one-token model check with ok and record it, starting from an env with only the run's key."""
+    sent: list[ModelProbe] = []
+
+    def probe(model: str, base_url: str, api_key: str | None, **_kwargs: object) -> model_check.Validation:
+        sent.append((model, base_url, api_key))
+        return model_check.Validation(ok=True)
+
+    for name in (
+        "AGENT_HARDENER_MODEL",
+        "AGENT_HARDENER_BASE_URL",
+        "AGENT_HARDENER_SAFETY_BASE_URL",
+        "AGENT_HARDENER_SAFETY_API_KEY",
+        "NIM_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("INFERENCE_API_KEY", "run-key")
+    monkeypatch.setattr(model_check, "probe_generation", probe)
+    return sent
 
 
 def command_result(output: str = "", *, ok: bool = True) -> OpenShellCommandResult:

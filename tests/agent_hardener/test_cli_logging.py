@@ -302,7 +302,7 @@ def test_run_reuse_says_whether_the_sandbox_is_reused(monkeypatch: pytest.Monkey
     monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: "cfg")
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _c: ready)
-    monkeypatch.setattr("agent_hardener.model_check.preflight_configured_models", lambda: None)
+    monkeypatch.setattr("agent_hardener.preflight.models.preflight_run_models", lambda _session: None)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: session)
     monkeypatch.setattr("agent_hardener.runtime.runner.run_mission", lambda *_a, **_kw: SimpleNamespace(success=True))
 

@@ -82,8 +82,23 @@ __all__ = [
     "is_transient_start_failure",
     "is_transient_transport_failure",
     "read_env_file",
+    "sandbox_credentials",
     "wait_for_http_health",
 ]
+
+
+def provider_credentials(config: OpenShellConfig) -> dict[str, str]:
+    """The victim's own ``NAME -> value`` secrets: ``provider_env_file``'s, else the named ones from the env."""
+    if config.provider_env_file:
+        env_values = read_env_file(config.provider_env_file)
+        names = config.provider_credentials or sorted(env_values)
+        return {name: env_values[name] for name in names if env_values.get(name)}
+    return {name: os.environ[name] for name in config.provider_credentials if os.environ.get(name)}
+
+
+def sandbox_credentials(config: OpenShellConfig) -> dict[str, str]:
+    """Every credential the sandbox is given: the victim's secrets plus the safety judge's own key."""
+    return {**provider_credentials(config), **judge_credentials()}
 
 
 class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
@@ -503,20 +518,18 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
 
     def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
         """The ``NAME -> value`` credentials: ``provider_env_file``'s, plus the safety judge's own key."""
-        judge = judge_credentials()
         if not self.config.provider_env_file:
-            credentials = {name: os.environ[name] for name in self.config.provider_credentials if os.environ.get(name)}
-            return {**credentials, **judge}, None
+            return sandbox_credentials(self.config), None
         command = [self.config.openshell_bin, "provider", "create"]
         try:
-            credentials = self._provider_credentials_from_env_file()
+            credentials = provider_credentials(self.config)
         except OSError as exc:
             message = f"failed to read provider_env_file {self.config.provider_env_file}: {exc}"
             return {}, OpenShellCommandResult(ok=False, command=command, output=message)
         if not credentials:
             message = f"no configured provider credentials found in {self.config.provider_env_file}"
             return {}, OpenShellCommandResult(ok=False, command=command, output=message)
-        return {**credentials, **judge}, None
+        return {**credentials, **judge_credentials()}, None
 
     def _ensure_generic_profile(self, credential_names: list[str]) -> OpenShellCommandResult:
         """Import (or update) the credentials-only provider profile named after the provider."""
@@ -733,8 +746,3 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
                         )
                     )
         return results[-1]
-
-    def _provider_credentials_from_env_file(self) -> dict[str, str]:
-        env_values = read_env_file(self.config.provider_env_file)
-        credential_names = self.config.provider_credentials or sorted(env_values)
-        return {name: env_values[name] for name in credential_names if env_values.get(name)}

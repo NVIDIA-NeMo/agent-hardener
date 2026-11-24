@@ -23,6 +23,7 @@ from agent_hardener.relay_plugin.config import (
     DEFAULT_GUARDRAIL_THRESHOLD,
     PLUGIN_KIND,
     GuardrailsComponentConfig,
+    JudgeModel,
     judge_api_key_env,
     judge_endpoint,
 )
@@ -108,6 +109,11 @@ def append_guardrail(
         if target is not None:
             target.write_text(rendered, encoding="utf-8")
     return name, rendered
+
+
+def planned_judge(relay_plugins: Path | None, safety_llm: str | None) -> JudgeModel:
+    """The judge the victim will call: the one already in ``relay_plugins``, else the one a rail would write."""
+    return JudgeModel.model_validate(_component_config(_load(relay_plugins), safety_llm)["model"])
 
 
 def _load(target: Path | None) -> dict[str, Any]:

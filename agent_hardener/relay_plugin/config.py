@@ -58,9 +58,14 @@ def judge_api_key_env() -> str:
     return SAFETY_API_KEY_ENV if judge_credentials() else DEFAULT_JUDGE_API_KEY_ENV
 
 
+def judge_api_key() -> str | None:
+    """The judge's key: its own when set, else the inherited inference key."""
+    return os.environ.get(SAFETY_API_KEY_ENV) or os.environ.get(DEFAULT_JUDGE_API_KEY_ENV) or None
+
+
 def judge_credentials() -> dict[str, str]:
     """Forward the explicit or inherited judge key under its own sandbox credential name."""
-    value = os.environ.get(SAFETY_API_KEY_ENV) or os.environ.get(DEFAULT_JUDGE_API_KEY_ENV)
+    value = judge_api_key()
     return {SAFETY_API_KEY_ENV: value} if value else {}
 
 
