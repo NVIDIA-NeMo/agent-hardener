@@ -206,6 +206,11 @@ _ATTEMPTS_NOT_RECORDED = ScanFailure(
 )
 #: Logged once per attack conversation, so its presence means attacks were under way.
 _ATTACK_STARTED = "Starting NEW conversation"
+#: garak 0.17's REST generator, the one that calls the victim, does not catch a read timeout, so a single
+#: victim turn that outruns ``request_timeout`` kills the whole scan with this traceback on stdout. The
+#: traceback names the cap garak actually used, wherever it was set (manifest, env or scaffold).
+_VICTIM_TURN_TIMEOUT = re.compile(r"\bReadTimeout\b(?:.*\(read timeout=(?P<seconds>[\d.]+)\))?")
+_REST_GENERATOR_FRAME = "generators/rest.py"
 
 
 def diagnose_scan(evidence: ScanEvidence, log_text: str, *, target_uri: str) -> ScanFailure | None:
@@ -232,6 +237,32 @@ def diagnose_scan(evidence: ScanEvidence, log_text: str, *, target_uri: str) -> 
             "request timeout (garak.request_timeout).",
         )
     return None
+
+
+def diagnose_crash(stdout_text: str, *, return_code: int, attempts: int) -> ScanFailure:
+    """Explain a garak process that exited non-zero without a hit.
+
+    Args:
+        stdout_text: garak's stdout log, which carries the traceback of whatever killed it.
+        return_code: garak's exit code.
+        attempts: Attacks the report says were sent before the crash.
+    """
+    timeout = _VICTIM_TURN_TIMEOUT.search(stdout_text)
+    if timeout and _REST_GENERATOR_FRAME in stdout_text:
+        cap = f"{timeout['seconds']}s" if timeout["seconds"] else "its request timeout"
+        return ScanFailure(
+            "victim_turn_timeout",
+            f"garak stopped after {attempts} attack(s): the victim took longer than {cap} "
+            "(garak.request_timeout) to answer one attack, and garak ends the whole scan when that happens",
+            "Check the victim's log for what its last turn was doing (a hung model or tool call, or a loop). "
+            "If its turns are legitimately that long, raise garak.request_timeout.",
+        )
+    tail = "\n".join(stdout_text.splitlines()[-_TAIL_LINES:])
+    return ScanFailure(
+        "garak_crashed",
+        f"garak exited {return_code} after {attempts} attack(s); last log lines:\n{tail}",
+        "Read garak's log for the exception.",
+    )
 
 
 def _model_auth_failure(lines: list[str], target_uri: str) -> ScanFailure | None:

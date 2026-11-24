@@ -32,6 +32,7 @@ from agent_hardener.agents.attackers.agent_breaker.config import (
 from agent_hardener.agents.attackers.agent_breaker.diagnosis import (
     ScanFailure,
     detail_log_path,
+    diagnose_crash,
     diagnose_scan,
     read_scan_evidence,
 )
@@ -317,11 +318,10 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
     if hits and evidence.attempts == 0 and failure is not None and failure.code != ATTACKER_LLM_UNAVAILABLE:
         failure = None
     if failure is None and result.return_code != 0 and not hits:
-        failure = ScanFailure(
-            "garak_crashed",
-            f"garak exited {result.return_code} after {evidence.attempts} attack(s); last log lines:\n"
-            + _tail(stdout_log),
-            "Read garak's log for the exception.",
+        failure = diagnose_crash(
+            _read_text(stdout_log),
+            return_code=result.return_code,
+            attempts=evidence.attempts,
         )
     # A non-zero exit with hits stays ok: a mid-run crash (e.g. the victim returning 422 on a later
     # attempt) should not discard earlier findings.
@@ -363,10 +363,6 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
 
 def _read_text(path: Path) -> str:
     return path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
-
-
-def _tail(path: Path, lines: int = 20) -> str:
-    return "\n".join(_read_text(path).splitlines()[-lines:])
 
 
 def _summary(hit_count: int, *, partial: bool = False) -> str:
