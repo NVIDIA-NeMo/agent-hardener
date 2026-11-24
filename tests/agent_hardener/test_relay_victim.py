@@ -365,6 +365,22 @@ def test_inject_backend_egress_is_idempotent(tmp_path: Path) -> None:
     assert len(policy["network_policies"]["relay_victim_backends"]["endpoints"]) == 1
 
 
+def test_backend_deny_rules_sit_beside_full_access_in_the_egress_block() -> None:
+    deny = [{"method": "*", "path": "/apis/secrets/**"}]
+    block = build_backend_egress_block([BackendEndpoint(port=9000, deny_rules=deny)], ["/x/**"])
+    endpoint = block["endpoints"][0]
+    assert endpoint["deny_rules"] == deny
+    assert endpoint["access"] == "full"
+    assert endpoint["enforcement"] == "enforce"
+
+
+def test_backend_deny_rules_are_rejected_when_malformed_or_on_tcp() -> None:
+    with pytest.raises(ValidationError):
+        BackendEndpoint(port=9000, deny_rules=[{"verb": "GET"}])
+    with pytest.raises(ValidationError, match="tcp"):
+        BackendEndpoint(port=9000, protocol="tcp", deny_rules=[{"method": "GET"}])
+
+
 def test_build_backend_egress_block_omits_empty_allowed_ips() -> None:
     block = build_backend_egress_block([BackendEndpoint(port=9000)], ["/x/**"])
     assert "allowed_ips" not in block["endpoints"][0]

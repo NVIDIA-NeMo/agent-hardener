@@ -20,6 +20,7 @@ from typing import Any, Literal
 import yaml  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
+from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import DenyRule
 from agent_hardener.config import parse_config_data
 from agent_hardener.models import (
     AgentHardenerModel,
@@ -59,6 +60,8 @@ class BackendManifest(AgentHardenerModel):
     host: str | None = None
     # OpenShell blocks private addresses (e.g. a cluster service IP) unless they are listed here.
     allowed_ips: list[str] = Field(default_factory=list)
+    # Requests the agent may not make on any port, e.g. {method: "*", path: "/apis/secrets/**"}.
+    deny_rules: list[DenyRule] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
@@ -141,6 +144,8 @@ def _backend_endpoint(backend: BackendManifest, port: int) -> dict[str, Any]:
         endpoint["host"] = backend.host
     if backend.allowed_ips:
         endpoint["allowed_ips"] = backend.allowed_ips
+    if backend.deny_rules:
+        endpoint["deny_rules"] = [rule.model_dump(exclude_none=True) for rule in backend.deny_rules]
     return endpoint
 
 
@@ -515,6 +520,7 @@ def render_manifest_yaml(manifest: dict) -> str:
             "#   compose_project: my-project               # optional\n"
             "#   host: my-service.ns.svc                   # optional: reach a service that is not on this host\n"
             "#   allowed_ips: [10.96.0.0/12]               # optional: private ranges OpenShell may otherwise block\n"
+            "#   deny_rules: [{method: '*', path: /admin/**}]  # optional: requests to block ('*' = any method)\n"
         )
         base = base.replace("backends: []\n", "backends: []\n" + backend_stubs, 1)
 
