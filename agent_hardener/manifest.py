@@ -393,7 +393,8 @@ def expand(
                 "provider_type": "generic",
                 "provider_env_file": agent.secrets_file,
                 "provider_credentials": list(agent.secrets),
-                "forward": f"0.0.0.0:{agent.port}",
+                # Loopback only: the victim chat is unauthenticated and runs commands in the sandbox.
+                "forward": f"127.0.0.1:{agent.port}",
                 "start_command": _start_command(agent),
                 "health_url": f"http://127.0.0.1:{agent.port}/health",
                 "health_timeout": 120,

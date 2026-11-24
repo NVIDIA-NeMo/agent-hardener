@@ -131,7 +131,7 @@ def test_expand_builds_relay_victim_and_backends() -> None:
     assert osc.sandbox == sandbox_name("finance")
     assert osc.provider == provider_name("finance")
     assert osc.provider_credentials == ["INFERENCE_API_KEY"]
-    assert osc.forward == "0.0.0.0:8000"
+    assert osc.forward == "127.0.0.1:8000"
     assert osc.relay_victim is not None
     assert osc.relay_victim.agent_env == {"FINANCE_BACKEND_URL": "http://host.docker.internal:8086"}
     assert [b.name for b in osc.relay_victim.backends] == ["finance"]
