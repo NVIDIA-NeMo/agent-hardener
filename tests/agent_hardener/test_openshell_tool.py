@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
-from agent_hardener.errors import VictimBuildError, VictimPortInUseError, VictimUnavailableError
+from agent_hardener.errors import ConfigError, VictimBuildError, VictimPortInUseError, VictimUnavailableError
 from agent_hardener.models import VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
@@ -188,6 +188,11 @@ def test_loading_a_missing_env_file_changes_nothing(
     tool.load_local_env(path)
 
     assert dict(tool.os.environ) == before
+
+
+def test_a_missing_env_file_the_operator_named_raises(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"absent\.env does not exist"):
+        tool.load_local_env(tmp_path / "absent.env", explicit=True)
 
 
 def test_env_file_values_never_override_the_existing_environment(

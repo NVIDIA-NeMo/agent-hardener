@@ -39,7 +39,7 @@ from agent_hardener.agents.attackers.agent_breaker.diagnosis import (
 from agent_hardener.agents.attackers.agent_breaker.preflight import check_model_endpoints
 from agent_hardener.agents.attackers.hits import normalize_hit_record
 from agent_hardener.env import garak_command
-from agent_hardener.errors import ATTACKER_LLM_UNAVAILABLE, ModelUnavailableError
+from agent_hardener.errors import ATTACKER_LLM_UNAVAILABLE, ConfigError, ModelUnavailableError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
 from agent_hardener.models import ARTIFACT_DIR_KEY, AgentConfig, AgentRunInput, Artifact, AttackRecord
 
@@ -61,23 +61,23 @@ GarakRunner = Callable[[list[str], Path, float | None, dict[str, str] | None], A
 Preflight = Callable[[dict[str, Any]], Awaitable[None]]
 
 
-def _garak_command() -> list[str]:
+def garak_base_command() -> list[str]:
     """The base garak invocation.
 
     ``GARAK_COMMAND`` (via ``agent_hardener.env.garak_command``) is an explicit full override
     (e.g. ``garak`` or ``python -m garak``). Otherwise garak is run from its dedicated venv
     interpreter (see :func:`agent_hardener.garak_venv.resolve_garak_python`); a missing interpreter
-    raises with instructions to provision it.
+    raises :class:`~agent_hardener.errors.ConfigError` with instructions to provision it.
     """
     raw = garak_command()
     if raw:
         return raw.split()
     garak_python = resolve_garak_python()
     if not Path(garak_python).exists():
-        raise FileNotFoundError(
-            f"garak interpreter not found at {garak_python}. Provision the dedicated garak venv "
-            f"(`agent-hardener setup`) or set ${GARAK_PYTHON_ENVVAR} to an existing interpreter that "
-            "has garak installed."
+        raise ConfigError(
+            f"garak interpreter not found at {garak_python}.",
+            remediation=f"Run `agent-hardener setup` to provision the garak venv, or set ${GARAK_PYTHON_ENVVAR} "
+            "to an existing interpreter that has garak installed.",
         )
     return [garak_python, "-m", "garak"]
 
@@ -272,7 +272,7 @@ async def run_agent_breaker_scan(
         overrides: Per-setting overrides forwarded to the config builder.
         timeout_s: Max seconds to wait for garak; ``None`` waits indefinitely.
         garak_command: Base garak invocation; defaults to ``GARAK_COMMAND`` or the dedicated
-            garak venv interpreter (see ``_garak_command`` / ``AGENT_HARDENER_GARAK_PYTHON``).
+            garak venv interpreter (see ``garak_base_command`` / ``AGENT_HARDENER_GARAK_PYTHON``).
         runner: Injectable subprocess runner (return code) for testing.
         preflight: Check run on the resolved config before garak starts; raises to abort the scan.
 
@@ -298,7 +298,7 @@ async def run_agent_breaker_scan(
     resolved_path = report_dir_path / "garak-agent-breaker.resolved.yaml"
     resolved_path.write_text(yaml.safe_dump(resolved, sort_keys=False), encoding="utf-8")
 
-    command = [*(garak_command or _garak_command()), "--config", str(resolved_path)]
+    command = [*(garak_command or garak_base_command()), "--config", str(resolved_path)]
     # Whole seconds: some filesystems store mtimes at that resolution, and a file garak writes within
     # the same second as the scan starts must still count as this scan's.
     started = float(int(time.time()))

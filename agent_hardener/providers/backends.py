@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
+from agent_hardener.errors import SandboxProvisioningError
 from agent_hardener.openshell.lifecycle import (
     CommandRunner,
     OpenShellCommandResult,
@@ -28,6 +29,9 @@ if TYPE_CHECKING:
 
     from agent_hardener.models import BackendServiceSpec
 
+#: Bound on ``docker compose version``: a wedged Docker CLI must not hang the run before it starts.
+COMPOSE_PROBE_TIMEOUT_S = 15.0
+
 
 def _docker_compose_works() -> bool:
     """Return True if the ``docker compose`` (v2 plugin) subcommand is actually available."""
@@ -36,8 +40,9 @@ def _docker_compose_works() -> bool:
             ["docker", "compose", "version"],
             capture_output=True,
             check=False,
+            timeout=COMPOSE_PROBE_TIMEOUT_S,
         )
-    except OSError:
+    except (OSError, subprocess.TimeoutExpired):
         return False
     return result.returncode == 0
 
@@ -46,13 +51,25 @@ def resolve_compose_command() -> list[str]:
     """Return a working Docker Compose invocation.
 
     Prefers the ``docker compose`` v2 plugin, but only if it actually works; otherwise falls back to
-    the standalone ``docker-compose`` v1 binary (common on Homebrew/Colima setups).
+    the standalone ``docker-compose`` v1 binary (common on Homebrew/Colima setups). Raises
+    :class:`~agent_hardener.errors.SandboxProvisioningError` when neither works.
     """
     if shutil.which("docker") and _docker_compose_works():
         return ["docker", "compose"]
     if shutil.which("docker-compose"):
         return ["docker-compose"]
-    return ["docker", "compose"]
+    raise SandboxProvisioningError(
+        "Docker Compose not found: neither `docker compose` nor `docker-compose` works on this host.",
+        remediation="Install the Docker Compose plugin (or the standalone docker-compose), then retry.",
+    )
+
+
+def compose_file_path(spec: BackendServiceSpec, cwd: Path) -> Path:
+    """The backend's compose file; a relative ``compose_file`` is taken from ``cwd``."""
+    compose_file = spec.compose_file
+    if compose_file is None:
+        raise ValueError(f"backend '{spec.name}' has no compose_file")
+    return compose_file if compose_file.is_absolute() else cwd / compose_file
 
 
 class BackendManager:
@@ -64,13 +81,17 @@ class BackendManager:
         compose_command: list[str] | None = None,
     ) -> None:
         self.runner = runner or SubprocessCommandRunner()
-        self.compose_command = compose_command or resolve_compose_command()
+        self._compose_command = compose_command
+
+    @property
+    def compose_command(self) -> list[str]:
+        # Resolved on first use: specs without a compose_file never need Compose installed.
+        if self._compose_command is None:
+            self._compose_command = resolve_compose_command()
+        return self._compose_command
 
     def _compose_args(self, spec: BackendServiceSpec, cwd: Path) -> tuple[list[str], Path]:
-        compose_file = spec.compose_file
-        if compose_file is None:
-            raise ValueError(f"backend '{spec.name}' has no compose_file")
-        compose_path = compose_file if compose_file.is_absolute() else cwd / compose_file
+        compose_path = compose_file_path(spec, cwd)
         args = [*self.compose_command, "-f", str(compose_path)]
         if spec.compose_project:
             args += ["-p", spec.compose_project]

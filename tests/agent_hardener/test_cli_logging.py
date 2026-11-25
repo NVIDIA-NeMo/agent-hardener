@@ -253,7 +253,7 @@ def test_up_failure_shows_the_warnings_and_the_tail_of_the_output(monkeypatch: p
             return _ok_result(blob, ok=False)
 
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: SimpleNamespace(sandbox="sb"))
     monkeypatch.setattr("agent_hardener.tools.openshell.prepare_relay_victim", lambda cfg: cfg)
     monkeypatch.setattr("agent_hardener.tools.openshell.with_victim_image", lambda vc, *_a, **_kw: vc)
@@ -278,7 +278,7 @@ def test_up_names_the_taken_port_instead_of_blaming_docker(monkeypatch: pytest.M
             return _ok_result("Gateway Info\nError: Port 8000 is already in use by another process.", ok=False)
 
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: SimpleNamespace(sandbox="sb"))
     monkeypatch.setattr("agent_hardener.tools.openshell.prepare_relay_victim", lambda cfg: cfg)
     monkeypatch.setattr("agent_hardener.tools.openshell.with_victim_image", lambda vc, *_a, **_kw: vc)
@@ -299,10 +299,10 @@ def test_run_reuse_says_whether_the_sandbox_is_reused(monkeypatch: pytest.Monkey
         victim_control="vc", benign_suite_path=None, benign_validators=[], model_copy=lambda **_kw: session
     )
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: "cfg")
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _c: ready)
-    monkeypatch.setattr("agent_hardener.preflight.models.preflight_run_models", lambda _session: None)
+    monkeypatch.setattr("agent_hardener.preflight.run.preflight_run", lambda _session, **_options: None)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: session)
     monkeypatch.setattr("agent_hardener.runtime.runner.run_mission", lambda *_a, **_kw: SimpleNamespace(success=True))
 

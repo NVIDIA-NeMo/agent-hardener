@@ -12,10 +12,11 @@ import typer
 
 from agent_hardener.cli._app import (
     ALLOW_CONTEXT_DRIFT_OPTION,
-    DEFAULT_ENV_FILE,
     DEFAULT_MANIFEST,
+    ENV_FILE_OPTION,
     VICTIM_IMAGE_OPTION,
     app,
+    load_cli_env_file,
 )
 from agent_hardener.display.console import fail, ok, section, status_factory
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
@@ -24,7 +25,7 @@ from agent_hardener.display.interview import auto_answer_provider, tty_answer_pr
 @app.command(name="synth-benign")
 def synth_benign(
     config: Path = typer.Option(DEFAULT_MANIFEST, "--config", "-c", help="Manifest or full session config."),
-    env_file: Path = typer.Option(DEFAULT_ENV_FILE, "--env-file", help="Dotenv file with secrets."),
+    env_file: Path | None = ENV_FILE_OPTION,
     no_interactive: bool = typer.Option(
         False, "--no-interactive", help="Skip the interview entirely (leaner, rules-only suite; use in CI)."
     ),
@@ -63,7 +64,6 @@ def synth_benign(
     from agent_hardener.model_check import preflight_configured_models
     from agent_hardener.tools.openshell import (
         configure_local_docker_host,
-        load_local_env,
         managed_victim_sandbox,
         with_victim_image,
     )
@@ -75,7 +75,7 @@ def synth_benign(
     with cli_error_boundary():
         section("Agent Hardener benign-suite synthesis")
         configure_local_docker_host()
-        load_local_env(env_file)
+        load_cli_env_file(env_file)
         # Synth uses the analysis LLM; fail fast on a missing credential before the (slow) sandbox build.
         preflight_configured_models()
         session = load_config(str(config))

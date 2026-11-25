@@ -19,6 +19,7 @@ from agent_hardener.agents.attackers.agent_breaker.config import (
     build_agent_breaker_config,
 )
 from agent_hardener.endpoint import EndpointContract
+from agent_hardener.errors import ConfigError
 from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
 
 # --- config builder -----------------------------------------------------------------------
@@ -199,7 +200,7 @@ def test_resolve_target_uri_default_passthrough() -> None:
 
 def test_garak_command_explicit_override_wins(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GARAK_COMMAND", "python -m garak")
-    assert run_agent_breaker._garak_command() == ["python", "-m", "garak"]
+    assert run_agent_breaker.garak_base_command() == ["python", "-m", "garak"]
 
 
 def test_garak_command_uses_dedicated_venv_interpreter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -208,14 +209,14 @@ def test_garak_command_uses_dedicated_venv_interpreter(tmp_path: Path, monkeypat
     fake_python.parent.mkdir(parents=True)
     fake_python.touch()
     monkeypatch.setenv("AGENT_HARDENER_GARAK_PYTHON", str(fake_python))
-    assert run_agent_breaker._garak_command() == [str(fake_python), "-m", "garak"]
+    assert run_agent_breaker.garak_base_command() == [str(fake_python), "-m", "garak"]
 
 
 def test_garak_command_missing_interpreter_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("GARAK_COMMAND", raising=False)
     monkeypatch.setenv("AGENT_HARDENER_GARAK_PYTHON", str(tmp_path / "absent" / "python"))
-    with pytest.raises(FileNotFoundError, match="garak interpreter not found"):
-        run_agent_breaker._garak_command()
+    with pytest.raises(ConfigError, match="garak interpreter not found"):
+        run_agent_breaker.garak_base_command()
 
 
 def test_run_agent_breaker_scan_passes_aliased_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

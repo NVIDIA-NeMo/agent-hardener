@@ -14,10 +14,11 @@ import typer
 
 from agent_hardener.cli._app import (
     ALLOW_CONTEXT_DRIFT_OPTION,
-    DEFAULT_ENV_FILE,
     DEFAULT_MANIFEST,
+    ENV_FILE_OPTION,
     VICTIM_IMAGE_OPTION,
     app,
+    load_cli_env_file,
 )
 from agent_hardener.cli._errors import cli_error_boundary
 from agent_hardener.display.console import emit, failure_excerpt, ok, status_factory, warn
@@ -82,7 +83,7 @@ def _simple_lifecycle(config: Path, verb: str) -> None:
 @app.command()
 def up(
     config: Path = typer.Option(DEFAULT_MANIFEST, "--config", "-c"),
-    env_file: Path = typer.Option(DEFAULT_ENV_FILE, "--env-file"),
+    env_file: Path | None = ENV_FILE_OPTION,
     victim_image: str | None = VICTIM_IMAGE_OPTION,
     allow_context_drift: bool = ALLOW_CONTEXT_DRIFT_OPTION,
 ) -> None:
@@ -91,7 +92,6 @@ def up(
     from agent_hardener.openshell.lifecycle import OpenShellLifecycle
     from agent_hardener.tools.openshell import (
         configure_local_docker_host,
-        load_local_env,
         openshell_config,
         prepare_relay_victim,
         with_victim_image,
@@ -99,7 +99,7 @@ def up(
 
     with cli_error_boundary():
         configure_local_docker_host()
-        load_local_env(env_file)
+        load_cli_env_file(env_file)
         victim_control = with_victim_image(
             load_config(str(config)).victim_control, victim_image, allow_context_drift=allow_context_drift
         )

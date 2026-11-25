@@ -23,7 +23,7 @@ import yaml  # type: ignore[import-untyped]
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
 from agent_hardener.display.console import failure_excerpt, hint, warn
-from agent_hardener.errors import SandboxProvisioningError
+from agent_hardener.errors import ConfigError, SandboxProvisioningError
 from agent_hardener.loggers import CLI_LOGS_DIR
 from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.egress import (
@@ -108,16 +108,26 @@ def configure_local_docker_host() -> None:
         os.environ["DOCKER_HOST"] = f"unix://{colima_socket}"
 
 
-def load_local_env(path: Path | str | None) -> None:
+def load_local_env(path: Path | str | None, *, explicit: bool = False) -> None:
     """Load dotenv values into this process without printing secrets.
 
     The file only fills variables that are unset or empty: a value already in the environment (a shell
     ``export``, CI) wins, because ``--env-file`` defaults to ``.env`` and is loaded on every command, so a
     stray file must not override a deliberate export. When the two differ, a warning names the key (never
     the value, which may be a secret) so an ignored file entry is not silent.
+
+    A missing default file is fine; a missing file the operator named (``explicit``) raises
+    :class:`~agent_hardener.errors.ConfigError`, since every key it was meant to supply would be absent.
     """
     env_path = Path(path) if path else None
-    if env_path is None or not env_path.exists():
+    if env_path is None:
+        return
+    if not env_path.exists():
+        if explicit:
+            raise ConfigError(
+                f"--env-file {env_path} does not exist.",
+                remediation="Pass an existing dotenv file, or omit --env-file to load ./.env when present.",
+            )
         return
     for key, value in read_env_file(env_path).items():
         current = os.environ.get(key)

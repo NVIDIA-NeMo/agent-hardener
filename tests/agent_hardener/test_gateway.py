@@ -34,7 +34,9 @@ class FakeRun:
         self.connected = connected
         self.calls: list[list[str]] = []
 
-    def __call__(self, cmd: list[str], *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
+    def __call__(
+        self, cmd: list[str], *, stdin: str | None = None, timeout_s: float | None = None
+    ) -> subprocess.CompletedProcess[str]:
         self.calls.append(cmd)
         if cmd[:2] == ["docker", "info"]:
             return _cp(0)
@@ -151,3 +153,13 @@ def test_write_gateway_config_points_docker_desktop_supervisors_at_the_host_alia
 
     docker = tomllib.loads(path.read_text(encoding="utf-8"))["openshell"]["drivers"]["docker"]
     assert docker["grpc_endpoint"] == gateway.DOCKER_DESKTOP_GRPC_ENDPOINT
+
+
+def test_local_compute_driver_reads_what_setup_wrote(tmp_path: Path) -> None:
+    """The preflight decides whether the local gateway needs this host's Docker from this value."""
+    path = tmp_path / "gateway.toml"
+    assert gateway.local_compute_driver(path) is None
+
+    gateway.write_gateway_config("unix:///var/run/docker.sock", path)
+
+    assert gateway.local_compute_driver(path) == gateway.DRIVER

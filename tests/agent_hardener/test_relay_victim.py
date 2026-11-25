@@ -13,7 +13,7 @@ import yaml
 from pydantic import ValidationError
 
 from agent_hardener.config import load_config
-from agent_hardener.errors import VictimBuildError
+from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
 from agent_hardener.models import BackendEndpoint, BackendServiceSpec, RelayVictimSpec
 from agent_hardener.openshell.egress import DockerfileEnvEgressSource
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult, OpenShellConfig
@@ -478,10 +478,11 @@ def test_resolve_compose_command(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(backends, "_docker_compose_works", lambda: False)
     assert backends.resolve_compose_command() == ["docker-compose"]
 
-    # nothing available -> fallback.
+    # nothing available -> fail with a classified error instead of guessing a command that won't run.
     monkeypatch.setattr(backends.shutil, "which", lambda _name: None)
     monkeypatch.setattr(backends, "_docker_compose_works", lambda: False)
-    assert backends.resolve_compose_command() == ["docker", "compose"]
+    with pytest.raises(SandboxProvisioningError, match="Docker Compose not found"):
+        backends.resolve_compose_command()
 
 
 def test_backend_manager_handles_none_stdout(tmp_path: Path) -> None:

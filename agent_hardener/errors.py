@@ -44,6 +44,17 @@ class AgentHardenerError(RuntimeError):
         self.remediation = self.default_remediation if remediation is None else remediation
 
 
+class ConfigError(AgentHardenerError):
+    """A file or command the run was configured with is missing on this host.
+
+    Raised before the sandbox build (an explicit ``--env-file``, a backend compose file, the garak
+    interpreter), so a typo fails in seconds instead of minutes into a run.
+    """
+
+    category = "config"
+    default_remediation = "Fix the path in the manifest or on the command line, then retry."
+
+
 class SandboxProvisioningError(AgentHardenerError):
     """The OpenShell/Docker sandbox lifecycle (up/down/status) reported a failure."""
 

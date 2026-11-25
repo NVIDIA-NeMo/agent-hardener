@@ -45,12 +45,41 @@ class GatewayResult:
     message: str
 
 
-def _run(cmd: list[str], *, stdin: str | None = None) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False)
+def _run(
+    cmd: list[str], *, stdin: str | None = None, timeout_s: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False, timeout=timeout_s)
 
 
-def _docker_reachable() -> bool:
-    return shutil.which("docker") is not None and _run(["docker", "info"]).returncode == 0
+def docker_reachable(*, timeout_s: float | None = None) -> bool:
+    """True when the docker CLI is installed and its daemon answers ``docker info``."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        return _run(["docker", "info"], timeout_s=timeout_s).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def gateway_connected(
+    gateway: str = GATEWAY_NAME, *, openshell_bin: str = "openshell", timeout_s: float | None = None
+) -> bool:
+    """True when ``openshell status`` reports ``gateway`` as connected."""
+    try:
+        proc = _run([openshell_bin, "status", "--gateway", gateway], timeout_s=timeout_s)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return proc.returncode == 0 and "Connected" in proc.stdout
+
+
+def local_compute_driver(path: Path = GATEWAY_CONFIG) -> str | None:
+    """The compute driver the local gateway service runs sandboxes with, as ``setup`` configured it."""
+    if not path.is_file():
+        return None
+    driver = (
+        tomllib.loads(path.read_text(encoding="utf-8")).get("openshell", {}).get("gateway", {}).get("compute_driver")
+    )
+    return driver if isinstance(driver, str) else None
 
 
 def _docker_socket() -> str | None:
@@ -101,8 +130,7 @@ def _configure_driver_linux(socket: str) -> str | None:
 
 def _wait_connected(timeout_s: int = READY_TIMEOUT_S) -> bool:
     for _ in range(timeout_s):
-        proc = _run(["openshell", "status", "--gateway", GATEWAY_NAME])
-        if proc.returncode == 0 and "Connected" in proc.stdout:
+        if gateway_connected():
             return True
         time.sleep(1)
     return False
@@ -112,7 +140,7 @@ def register_local_gateway(*, wait: bool = True) -> GatewayResult:
     """Configure the Docker driver and register the local ``auto-defender`` gateway (idempotent)."""
     if shutil.which("openshell") is None:
         return GatewayResult(ok=False, message=f"OpenShell CLI not found — install it: {INSTALL_HINT}")
-    if not _docker_reachable():
+    if not docker_reachable():
         return GatewayResult(ok=False, message="Docker daemon not reachable — start Docker, then re-run.")
     socket = _docker_socket()
     if socket is None:

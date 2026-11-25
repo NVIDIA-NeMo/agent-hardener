@@ -128,6 +128,22 @@ def _is_smart_benign(agent: AgentConfig) -> bool:
     return (agent.implementation or "").startswith(SMART_BENIGN_IMPL_PREFIX)
 
 
+def recorded_victim_image(session_config: SessionConfig, config: OpenShellConfig) -> str | None:
+    """The image recorded for this sandbox, when no image is configured and the agent has not changed since.
+
+    A ``--reuse`` of a Ready sandbox adopts it instead of building, so a host without Docker can reuse a
+    sandbox it created from a pre-built image.
+    """
+    if config.image is not None:
+        return None
+    cwd = config.cwd or Path.cwd()
+    recorded = read_victim_image(cwd, config.sandbox)
+    if recorded is None:
+        return None
+    fingerprint = _agent_fingerprint(session_config, replace(config, image=recorded))
+    return recorded if _read_fingerprint(agent_fingerprint_path(cwd, config.sandbox)) == fingerprint else None
+
+
 def _agent_fingerprint(session_config: SessionConfig, openshell_config: OpenShellConfig) -> str:
     """Deterministic identity of the agent a sandbox should be running.
 
@@ -306,19 +322,7 @@ class Mission:
         sandbox down, and fall into a local ``docker build`` on the very host that has no Docker. Adopted only
         while the recorded fingerprint still matches, so a changed agent is rebuilt from the configured source.
         """
-        if self._base_config.image is not None:
-            return None
-        cwd = self._base_config.cwd or Path.cwd()
-        recorded = read_victim_image(cwd, self._base_config.sandbox)
-        if recorded is None:
-            return None
-        adopted = replace(self._base_config, image=recorded)
-        fingerprint = _agent_fingerprint(self.ctx.session_config, adopted)
-        return (
-            recorded
-            if _read_fingerprint(agent_fingerprint_path(cwd, self._base_config.sandbox)) == fingerprint
-            else None
-        )
+        return recorded_victim_image(self.ctx.session_config, self._base_config)
 
     def _open_sinks(self, sinks: contextlib.ExitStack) -> None:
         """Wire the per-run agent-hardener.log capture and the multicast structured-event bus onto *sinks*."""

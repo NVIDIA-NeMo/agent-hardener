@@ -18,6 +18,7 @@ import pytest
 from agent_hardener import model_check
 from agent_hardener.models import TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.preflight import run as preflight_run
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import Mission, MissionResult
 from agent_hardener.swarm_tracker import write_victim_image
@@ -51,6 +52,12 @@ def _isolated_cli_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
 def _offline_model_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep the pre-run model check off the network: CLI tests would otherwise send it a real request."""
     monkeypatch.setattr(model_check, "probe_generation", lambda *_a, **_k: model_check.Validation(ok=True))
+
+
+@pytest.fixture(autouse=True)
+def _offline_host_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the pre-run host check off this machine: CLI tests would otherwise need openshell, Docker and garak."""
+    monkeypatch.setattr(preflight_run, "preflight_host", lambda _session, **_options: None)
 
 
 #: A one-token model check as sent: model, endpoint and key.
