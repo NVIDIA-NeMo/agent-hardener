@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -74,6 +75,34 @@ def test_tool_path_verification_reads_the_synced_log_and_names_the_tools(
     assert checked == [["record-from-events.atof.jsonl"] if atof_exists else []]
     assert "Tool calls reach Relay (bash, read_file)" in harness.lines
     assert harness.lifecycle.fetched[-1] == (f"{runner.SANDBOX_ARTIFACTS_DIR}/events.atof.jsonl", atof)
+
+
+@pytest.mark.usefixtures("relay_probe")
+def test_refusal_warns_that_tool_mediation_remains_unverified(build_mission: BuildMission, tmp_path: Path) -> None:
+    atof = tmp_path / "events.atof.jsonl"
+    telemetry = (
+        json.dumps(
+            {
+                "atof_version": "0.1",
+                "kind": "scope",
+                "category": "llm",
+                "scope_category": "end",
+                "uuid": "refusal",
+                "data": {"text": "I cannot help with that."},
+            }
+        )
+        + "\n"
+    )
+    harness = build_mission(atof_path=atof, no_cleanup=True)
+
+    def attack_finished(kwargs: dict[str, Any]) -> None:
+        atof.write_text(telemetry)
+        kwargs["verify_tool_path"]()
+
+    harness.orchestrator_hook = attack_finished
+    harness.run()
+    assert any("Tool mediation remains unverified" in line for line in harness.lines)
+    assert not any("Tool calls reach Relay" in line for line in harness.lines)
 
 
 @pytest.mark.usefixtures("relay_probe")

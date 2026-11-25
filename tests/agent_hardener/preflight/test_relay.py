@@ -18,7 +18,7 @@ from typing import Any
 
 import pytest
 
-from agent_hardener.errors import AttackerIneffectiveError, VictimNotInstrumentedError, VictimUnavailableError
+from agent_hardener.errors import VictimNotInstrumentedError, VictimUnavailableError
 from agent_hardener.preflight.relay import check_relay_instrumentation, check_tool_path
 
 FIXTURE = Path(__file__).resolve().parents[2] / "fixtures" / "atof" / "concurrent_tool_calls.atof.jsonl"
@@ -168,9 +168,14 @@ def test_no_traced_model_call_after_the_probe_is_not_instrumented() -> None:
         check_tool_path(_model_call("probe"), before={"probe"})
 
 
-def test_model_calls_that_never_ask_for_a_tool_blame_the_attacks_not_relay() -> None:
-    with pytest.raises(AttackerIneffectiveError, match="Relay is working"):
-        check_tool_path(_model_call("u1", {"text": "I can't help with that."}))
+def test_model_refusal_leaves_tool_mediation_unverified_without_aborting() -> None:
+    assert check_tool_path(_model_call("u1", {"text": "I can't help with that."})) == ()
+
+
+@pytest.mark.parametrize("records", [[], [{"unrelated": True}], [{"kind": "mark"}]])
+def test_missing_model_telemetry_still_fails(records: list[dict[str, Any]]) -> None:
+    with pytest.raises(VictimNotInstrumentedError):
+        check_tool_path(records)
 
 
 def test_an_observed_tool_call_satisfies_the_tool_path_check() -> None:
@@ -181,6 +186,9 @@ def test_an_observed_tool_call_satisfies_the_tool_path_check() -> None:
     ]
 
     assert check_tool_path(records) == ("transfer_funds",)
+    with pytest.raises(VictimNotInstrumentedError, match="no model call among them"):
+        check_tool_path(records, before={"u1"})
+    assert check_tool_path(records + _model_call("fresh"), before={"u1"}) == ()
 
 
 def test_a_previous_runs_copy_does_not_seed_the_baseline(tmp_path: Path) -> None:

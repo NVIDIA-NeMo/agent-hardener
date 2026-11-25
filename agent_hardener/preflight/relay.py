@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from agent_hardener.atof import has_quarantined_scopes, load_records, model_scope_ends, requested_tools, tool_calls
-from agent_hardener.errors import AttackerIneffectiveError, VictimNotInstrumentedError, VictimUnavailableError
+from agent_hardener.errors import VictimNotInstrumentedError, VictimUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Collection, Iterable
@@ -47,7 +47,7 @@ class RelayPreflight:
 
 
 def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str] = ()) -> tuple[str, ...]:
-    """The tools Relay saw, raising when it saw none — with the reason it saw none.
+    """Return observed tools; an empty tuple means tool mediation remains unverified.
 
     Separate from the probe check because the evidence arrives much later. A warm-up greeting proves
     Relay is *attached*; only real attack traffic proves tool calls *pass through* it. A victim can
@@ -60,13 +60,12 @@ def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str
     - the model asked for tools and none ran through Relay: the tools bypass it (not instrumented);
     - no model call was traced at all: Relay stopped tracing after the probe (not instrumented);
     - model calls were traced but none asked for a tool: Relay is fine, the attacks never led the
-      model to a tool (:class:`AttackerIneffectiveError`).
+      model to a tool (return an empty tuple, permitting continuation without verifying mediation).
 
     An attacker that sent nothing, or reached a dead victim, has already failed the attack stage.
 
-    Raises rather than warns. The alternative is a run that reports every attack unblocked, which
-    reads as weak defenders, while attribution silently falls back to guessing the tool from the
-    attack prompt.
+    Missing telemetry and requested-but-unobserved tools still raise. A refusal without tool
+    requests is valid attack traffic, but cannot establish that tool guardrails were exercised.
 
     Args:
         records: The victim's whole ATOF stream.
@@ -75,10 +74,10 @@ def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str
             several per-session files joined in directory order, not in time order.
     """
     records = list(records)
-    seen = tuple(sorted({call.name for call in tool_calls(records) if call.name}))
+    traffic = [record for record in records if record.get("uuid") not in before]
+    seen = tuple(sorted({call.name for call in tool_calls(traffic) if call.name}))
     if seen:
         return seen
-    traffic = [record for record in records if record.get("uuid") not in before]
     if requested := requested_tools(traffic):
         asked = ", ".join(f"{name} x{count}" for name, count in Counter(requested).most_common())
         raise VictimNotInstrumentedError(
@@ -103,11 +102,7 @@ def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str
                 "requests calls nemo_relay.plugin.initialize() and runs inside a Relay scope."
             ),
         )
-    raise AttackerIneffectiveError(
-        f"the attacks reached the victim and Relay traced {model_calls} of its model call(s), but the model "
-        "never asked for a tool, so there is no tool traffic to guard. Relay is working; the attacks did not "
-        "steer the agent into its tools."
-    )
+    return ()
 
 
 async def check_relay_instrumentation(
