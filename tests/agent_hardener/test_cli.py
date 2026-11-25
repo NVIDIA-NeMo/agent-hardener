@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from agent_hardener.cli import app
 from agent_hardener.config import load_config
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
+from agent_hardener.errors import SandboxProvisioningError
 from agent_hardener.manifest import build_backend, build_manifest, render_manifest_yaml
 from agent_hardener.models import AgentConfig, SessionConfig, VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
@@ -1342,15 +1343,14 @@ def test_run_command_wires_run_mission(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["kwargs"]["rounds"] == 2  # type: ignore[index]
 
 
-def test_run_command_mission_error_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_hardener.runtime.runner import MissionError  # noqa: PLC0415
+def test_run_command_sandbox_error_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: _fake_run_session_config())
 
     def boom(*_a: object, **_k: object) -> None:
-        raise MissionError("sandbox down")
+        raise SandboxProvisioningError("sandbox down")
 
     monkeypatch.setattr("agent_hardener.runtime.runner.run_mission", boom)
     result = runner.invoke(app, ["run"])

@@ -23,7 +23,7 @@ import yaml  # type: ignore[import-untyped]
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
 from agent_hardener.display.console import failure_excerpt, hint, warn
-from agent_hardener.errors import ConfigError, SandboxProvisioningError
+from agent_hardener.errors import AgentHardenerError, ConfigError, SandboxProvisioningError
 from agent_hardener.loggers import CLI_LOGS_DIR
 from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.egress import (
@@ -365,6 +365,13 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
     )
 
 
+def startup_error(what: str, output: str, *, remediation: str | None = None) -> AgentHardenerError:
+    """The classified error for a failed sandbox/backend start: a taken port, or ``what`` plus the output's error lines."""
+    return port_in_use_error(output) or SandboxProvisioningError(
+        f"{what}:\n{failure_excerpt(output)}", remediation=remediation
+    )
+
+
 @contextlib.contextmanager
 def managed_victim_sandbox(
     config: VictimControlConfig, *, reuse: bool, no_cleanup: bool, base_url: str | None = None
@@ -395,7 +402,7 @@ def managed_victim_sandbox(
     result = lifecycle.ensure_forward() if reused else lifecycle.up()
     if not result.ok:
         what = "the reused sandbox's port forward failed" if reused else "the victim sandbox failed to start"
-        raise port_in_use_error(result.output) or SandboxProvisioningError(f"{what}:\n{failure_excerpt(result.output)}")
+        raise startup_error(what, result.output)
     try:
         drift = lifecycle.image_context_drift()
         if drift:

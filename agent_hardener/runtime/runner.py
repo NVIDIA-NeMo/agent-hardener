@@ -32,17 +32,16 @@ from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
 from agent_hardener.atof import load_records, requested_tools
 from agent_hardener.bundle import write_hardened_bundle
-from agent_hardener.display.console import failure_excerpt, line_text
+from agent_hardener.display.console import line_text
 from agent_hardener.display.final.render_plain import render_final_run_log
 from agent_hardener.display.final.render_rich import print_final_summary
-from agent_hardener.errors import AgentHardenerError, AtofSyncError, BenignSuiteError, VictimUnavailableError
+from agent_hardener.errors import AtofSyncError, BenignSuiteError, VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.final_log.mitigations import build_mitigations
 from agent_hardener.final_log.validation_summary import build_validation
 from agent_hardener.ids import generate_round_id
 from agent_hardener.loggers import FILE_ONLY, EventBus, capture_run_log, emit_event, using_event_sink
 from agent_hardener.models import AgentRunInput, RelayVictimSpec
-from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.lifecycle import OpenShellLifecycle, SubprocessCommandRunner
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.preflight.relay import (
@@ -67,6 +66,7 @@ from agent_hardener.swarm_tracker import (
 from agent_hardener.tools.openshell import (
     openshell_config,
     prepare_relay_victim,
+    startup_error,
     target_health_url,
     wait_for_health,
 )
@@ -80,16 +80,12 @@ if TYPE_CHECKING:
     from agent_hardener.traces import TraceProvider
 
 
+_BACKEND_REMEDIATION = "Check the Docker daemon and the backends' compose services (`docker compose logs`), then retry."
+
+
 async def _no_interview_answers(_questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Default answer provider: supply nothing (non-interactive runs never interrupt anyway)."""
     return []
-
-
-class MissionError(AgentHardenerError):
-    """Raised when an infrastructure step (sandbox/backend) fails mid-run."""
-
-    category = "sandbox"
-    default_remediation = "Check the Docker daemon, the OpenShell gateway, and any host backends, then retry."
 
 
 @dataclass
@@ -372,12 +368,6 @@ class Mission:
             payload["elapsed"] = round(elapsed, 3)
         emit_event(EventType.OUTPUT, payload)
 
-    def _announce_failure_output(self, output: str) -> None:
-        """Show the error lines of a failed build/compose blob (:func:`failure_excerpt`); the log has all of it."""
-        self._detail(output, console=False)
-        if excerpt := failure_excerpt(output):
-            self._announce(excerpt, level="output")
-
     @contextlib.contextmanager
     def _status(self, label: str) -> Iterator[None]:
         """Bracket a blocking step with ``status_started``/``status_completed`` events (a spinner)."""
@@ -402,8 +392,8 @@ class Mission:
         with self._timed() as elapsed, self._status("Starting backends"):
             backend_up = self._backend_manager.up(self._backend_specs, self._backend_cwd)
         if not backend_up.ok:
-            self._announce_failure_output(backend_up.output)  # the real error: shown even by default
-            raise MissionError("backend startup failed")
+            self._detail(backend_up.output, console=False)
+            raise startup_error("backend startup failed", backend_up.output, remediation=_BACKEND_REMEDIATION)
         self._detail(backend_up.output)
         self._announce("Backends ready", level="ok", elapsed=elapsed())
 
@@ -434,8 +424,8 @@ class Mission:
             with self._timed() as elapsed, self._status("Building and starting sandbox"):
                 result = self._lifecycle.up(None)
             if not result.ok:
-                self._announce_failure_output(result.output)  # the real error: shown even by default
-                raise port_in_use_error(result.output) or MissionError("OpenShell sandbox failed to start")
+                self._detail(result.output, console=False)
+                raise startup_error("the victim sandbox failed to start", result.output)
             self._detail(result.output)
             self._announce("Sandbox ready", level="ok", elapsed=elapsed())
             self._announce(f"sandbox {self._base_config.sandbox}", level="detail")
@@ -445,8 +435,8 @@ class Mission:
             # health check and Relay probe below reach whatever else does, and pass or fail on its behalf.
             result = self._lifecycle.ensure_forward()
             if not result.ok:
-                self._announce_failure_output(result.output)
-                raise port_in_use_error(result.output) or MissionError("the reused sandbox's port forward failed")
+                self._detail(result.output, console=False)
+                raise startup_error("the reused sandbox's port forward failed", result.output)
             self._announce("Reusing the running sandbox (agent fingerprint matches)", level="ok")
         drift = self._lifecycle.image_context_drift()
         if drift:

@@ -16,9 +16,10 @@ from typing import TYPE_CHECKING
 
 from agent_hardener.agents.attackers.agent_breaker.run_agent_breaker import garak_base_command
 from agent_hardener.env import GARAK_COMMAND
-from agent_hardener.errors import ConfigError, SandboxProvisioningError
+from agent_hardener.errors import SETUP_HINT, ConfigError, SandboxProvisioningError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR
 from agent_hardener.manifest import AGENT_BREAKER_IMPLEMENTATION
+from agent_hardener.openshell.command import openshell_not_found
 from agent_hardener.openshell.gateway import DRIVER as DOCKER_DRIVER
 from agent_hardener.openshell.gateway import GATEWAY_NAME, docker_reachable, gateway_connected, local_compute_driver
 from agent_hardener.providers.backends import compose_file_path, resolve_compose_command
@@ -32,7 +33,6 @@ if TYPE_CHECKING:
 #: Bound on each host probe (``docker info``, ``openshell status``): a wedged daemon must fail the
 #: preflight, not hang it.
 PROBE_TIMEOUT_S = 15.0
-SETUP_HINT = "Run `agent-hardener setup`, then retry."
 
 
 def preflight_host(session: SessionConfig, *, reuse: bool = False) -> None:
@@ -48,10 +48,7 @@ def preflight_host(session: SessionConfig, *, reuse: bool = False) -> None:
 
 def _require_openshell(session: SessionConfig, config: OpenShellConfig, *, reuse: bool) -> None:
     if shutil.which(config.openshell_bin) is None:
-        raise SandboxProvisioningError(
-            f"OpenShell CLI not found: {config.openshell_bin!r} is not on PATH.",
-            remediation=f"Install the OpenShell CLI, or set openshell_bin to its path. {SETUP_HINT}",
-        )
+        raise openshell_not_found(config.openshell_bin)
     if not gateway_connected(config.gateway, openshell_bin=config.openshell_bin, timeout_s=PROBE_TIMEOUT_S):
         raise SandboxProvisioningError(
             f"OpenShell gateway '{config.gateway}' is not connected.",

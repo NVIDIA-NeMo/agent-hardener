@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Path the caller sets for a structured failure dump; unset for an interactive run.
 ERROR_FILE_ENVVAR = "AGENT_HARDENER_ERROR_FILE"
 
+#: The remediation tail for a host prerequisite that ``agent-hardener setup`` provisions or checks.
+SETUP_HINT = "Run `agent-hardener setup`, then retry."
+
 
 class AgentHardenerError(RuntimeError):
     """Base for a classified, operator-facing war-game failure.
@@ -53,6 +56,15 @@ class ConfigError(AgentHardenerError):
 
     category = "config"
     default_remediation = "Fix the path in the manifest or on the command line, then retry."
+
+
+class SetupError(AgentHardenerError):
+    """``agent-hardener setup`` could not provision a prerequisite (the garak venv)."""
+
+    category = "setup"
+    default_remediation = (
+        "Fix the cause above (often network or proxy access to PyPI), then run `agent-hardener setup --force`."
+    )
 
 
 class SandboxProvisioningError(AgentHardenerError):

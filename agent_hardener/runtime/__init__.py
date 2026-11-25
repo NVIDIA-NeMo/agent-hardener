@@ -5,10 +5,9 @@
 
 from __future__ import annotations
 
-from agent_hardener.runtime.runner import MissionError, MissionResult, run_mission
+from agent_hardener.runtime.runner import MissionResult, run_mission
 
 __all__ = [
-    "MissionError",
     "MissionResult",
     "run_mission",
 ]

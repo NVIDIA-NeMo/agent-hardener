@@ -296,7 +296,7 @@ def run(
                 warn("No Ready sandbox to reuse; building a fresh one")
 
         # One subscriber renders all one-way presentation (output lines, spinners, phase banners); the
-        # runner emits everything as events. MissionError/VictimUnavailableError propagate to the boundary.
+        # runner emits everything as events. Its AgentHardenerErrors propagate to the boundary.
         result = run_mission(
             session_config,
             rounds=rounds,

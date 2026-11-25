@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.errors import BenignSuiteError
+from agent_hardener.errors import BenignSuiteError, SandboxProvisioningError
 from agent_hardener.models import TargetInput, TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult, SubprocessCommandRunner
 from agent_hardener.runtime import runner as runner_module
-from agent_hardener.runtime.runner import Mission, MissionError, run_mission
+from agent_hardener.runtime.runner import Mission, run_mission
 
 if TYPE_CHECKING:
     from conftest import BuildMission
@@ -428,7 +428,7 @@ def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
 
-    with pytest.raises(MissionError, match="failed to start"):
+    with pytest.raises(SandboxProvisioningError, match="failed to start:\nup-failed"):
         run_mission(_session())
     assert downs  # lifecycle.down called in cleanup
 
@@ -467,7 +467,7 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
     monkeypatch.setattr("agent_hardener.runtime.runner.BackendManager", FakeBackendManager)
-    with pytest.raises(MissionError, match="backend startup failed"):
+    with pytest.raises(SandboxProvisioningError, match="backend startup failed:\nbackend-boom"):
         run_mission(_session())
 
 
@@ -546,37 +546,6 @@ def test_run_mission_tees_detail_to_log_and_surfaces_errors(monkeypatch: pytest.
     assert "UP-BLOB" in log_text  # success blob teed to the log file, never inline
     assert "UP-BLOB" not in highlights
     assert "Sandbox ready" in highlights  # explicit highlight shown even when quiet
-
-
-def test_run_mission_failure_output_surfaced_to_highlights(monkeypatch: pytest.MonkeyPatch) -> None:
-    base_config = _base_config()
-    _patch_common(monkeypatch, base_config)
-    _patch_orchestrator(monkeypatch)
-
-    class FakeLifecycle:
-        def credentials_drift(self) -> str | None:
-            return None
-
-        def image_context_drift(self) -> None:
-            return None
-
-        def __init__(
-            self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
-        ) -> None:
-            pass
-
-        def down(self) -> OpenShellCommandResult:
-            return _ok("down")
-
-        def up(self, _policy: object) -> OpenShellCommandResult:
-            return _fail("BOOM")
-
-    monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
-
-    highlights: list[str] = []
-    with pytest.raises(MissionError, match="failed to start"):
-        run_mission(_session(), on_event=_collect_output(highlights))
-    assert "BOOM" in highlights  # a real failure surfaces inline even in quiet mode
 
 
 def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:

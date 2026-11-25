@@ -14,7 +14,7 @@ import yaml
 
 from agent_hardener.agents.victims.openshell_victim import build_payload
 from agent_hardener.config import parse_config_data
-from agent_hardener.errors import VictimBuildError
+from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
 from agent_hardener.models import (
     AgentConfig,
     AgentRunInput,
@@ -230,21 +230,33 @@ def test_lifecycle_restart_tolerates_missing_sandbox_delete(tmp_path: Path) -> N
     assert lifecycle.restart(wait_for_health=False).ok is True
 
 
-def test_lifecycle_reports_missing_openshell_binary(tmp_path: Path) -> None:
-    class MissingBinaryRunner:
-        def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-            raise FileNotFoundError("openshell")
-
+def test_a_missing_openshell_binary_fails_with_the_setup_remediation(tmp_path: Path) -> None:
+    missing = str(tmp_path / "openshell")
     lifecycle = OpenShellLifecycle(
-        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin="openshell"),
-        runner=MissingBinaryRunner(),
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin=missing)
+    )
+
+    with pytest.raises(SandboxProvisioningError, match="OpenShell CLI not found") as caught:
+        lifecycle.status()
+
+    assert "agent-hardener setup" in caught.value.remediation
+
+
+def test_a_missing_cwd_is_a_failed_command_not_a_missing_binary(tmp_path: Path) -> None:
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(
+            gateway="gw",
+            sandbox="sb",
+            policy_path=tmp_path / "policy.yaml",
+            openshell_bin=shutil.which("true") or "/usr/bin/true",
+            cwd=tmp_path / "gone",
+        )
     )
 
     result = lifecycle.status()
 
     assert result.ok is False
-    assert result.command == ["openshell", "sandbox", "get", "sb", "--gateway", "gw"]
-    assert "openshell" in result.output
+    assert str(tmp_path / "gone") in result.output
 
 
 @pytest.mark.unit

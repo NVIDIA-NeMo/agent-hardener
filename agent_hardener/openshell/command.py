@@ -19,6 +19,7 @@ import tempfile
 import time
 from typing import TYPE_CHECKING
 
+from agent_hardener.errors import SETUP_HINT, SandboxProvisioningError
 from agent_hardener.openshell.config import (
     OpenShellCommandResult,
     SubprocessCommandRunner,
@@ -33,6 +34,20 @@ if TYPE_CHECKING:
     from agent_hardener.openshell.config import CommandRunner, OpenShellConfig
 
 logger = logging.getLogger("agent_hardener.session")
+
+
+def openshell_not_found(openshell_bin: str) -> SandboxProvisioningError:
+    """The classified error for an OpenShell CLI that is not installed where ``openshell_bin`` points."""
+    return SandboxProvisioningError(
+        f"OpenShell CLI not found: {openshell_bin!r} is not an executable on PATH.",
+        remediation=f"Install the OpenShell CLI, or set openshell_bin to its path. {SETUP_HINT}",
+    )
+
+
+def _raise_if_missing_binary(exc: OSError, command: list[str]) -> None:
+    # A missing cwd raises FileNotFoundError too; only the executable's own name means "not installed".
+    if isinstance(exc, FileNotFoundError) and exc.filename == command[0]:
+        raise openshell_not_found(command[0]) from exc
 
 
 class OpenShellCommandExecutor:
@@ -71,6 +86,7 @@ class OpenShellCommandExecutor:
                 else self.runner.run(command, cwd=self.config.cwd)
             )
         except OSError as exc:
+            _raise_if_missing_binary(exc, command)
             return OpenShellCommandResult(ok=False, command=command, output=str(exc))
         return OpenShellCommandResult.from_completed(command, completed)
 
@@ -158,6 +174,7 @@ class OpenShellCommandExecutor:
                     stream.seek(0)
                     captured = stream.read()
         except OSError as exc:
+            _raise_if_missing_binary(exc, command)
             return None, "", time.monotonic() - started_at, str(exc)
         except subprocess.TimeoutExpired:
             return None, "", time.monotonic() - started_at, timeout_message(command, self.config.command_timeout_s)
