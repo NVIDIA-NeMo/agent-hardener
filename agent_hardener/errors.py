@@ -139,6 +139,33 @@ class AttackerIneffectiveError(AgentHardenerError):
     )
 
 
+class DefendersFailedError(AgentHardenerError):
+    """No defender produced a mitigation, so there is nothing new to deploy or validate.
+
+    Validating the unchanged victim would report the attacks still landing, which reads as weak
+    defenders rather than defenders that never ran.
+    """
+
+    category = "defenders_failed"
+    default_remediation = (
+        "Check the defenders' model endpoint and key, and the per-defender errors in the round log, then retry."
+    )
+
+
+class GuardrailJudgeError(AgentHardenerError):
+    """The guardrails' safety judge failed on most of the calls it should have scored.
+
+    A guardrail allows a call its judge cannot score, so a dead judge lets every attack through and
+    the round reads as guardrails that do not work rather than a judge that was never reached.
+    """
+
+    category = "guardrail_judge_failed"
+    default_remediation = (
+        "Check AGENT_HARDENER_SAFETY_API_KEY and AGENT_HARDENER_SAFETY_BASE_URL (or the inference key and "
+        "endpoint they fall back to), and that the sandbox can reach that endpoint."
+    )
+
+
 class AtofSyncError(AgentHardenerError):
     """The victim's Relay event stream could not be copied out of its sandbox.
 

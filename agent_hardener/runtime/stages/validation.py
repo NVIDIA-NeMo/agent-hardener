@@ -8,17 +8,29 @@ from __future__ import annotations
 from time import perf_counter
 from typing import TYPE_CHECKING, cast
 
+from agent_hardener.agents.validators.trace_step import open_window
 from agent_hardener.concurrency import concurrency_limit, gather_limited_ordered
-from agent_hardener.errors import VictimUnavailableError
+from agent_hardener.errors import GuardrailJudgeError, VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.models import AgentRunInput, ValidatorReport
+from agent_hardener.relay_plugin.config import guarded_tools, read_plugins_document
 from agent_hardener.runtime.agent_loader import failure_output
 from agent_hardener.runtime.stages.agent_invoker import all_ok
+from agent_hardener.traces.inspect import same_tool
 
 if TYPE_CHECKING:
+    import logging
+
     from agent_hardener.models import AgentConfig, SessionConfig, ValidatorKind, VictimResult
     from agent_hardener.runtime.stages.agent_invoker import AgentInvoker
     from agent_hardener.runtime.stages.context import DefenseResult, IterationContext
+    from agent_hardener.traces import AgentTrace
+
+#: Above this share of judged calls failing, the judge is down rather than flaky: a timeout or a rate
+#: limit hits a few calls, a bad key or an unreachable endpoint hits them all.
+JUDGE_ERROR_RATE_LIMIT = 0.5
+#: Fewer failures than this never fail a round, so one blip in a small round is not read as a dead judge.
+JUDGE_ERROR_MIN_COUNT = 3
 
 
 class ValidationStage:
@@ -34,6 +46,8 @@ class ValidationStage:
             *[(agent, "attack") for agent in self.config.attack_validators],
             *[(agent, "benign") for agent in self.config.benign_validators],
         ]
+        # Opened before any validator runs, so it holds exactly the validators' traffic.
+        window = await open_window(self.invoker.trace_provider)
         phase_started_at = perf_counter()
         recorder.emit(
             EventType.PHASE_STARTED,
@@ -81,6 +95,8 @@ class ValidationStage:
                 recorder.logger.warning("expected ValidatorReport from validator agent, got %s", type(result).__name__)
                 err = TypeError(f"validator agent returned {type(result).__name__}, expected ValidatorReport")
                 validators.append(cast("ValidatorReport", failure_output(agent, request, err)))
+        guarded = guarded_tools(read_plugins_document(self.config.target.agent_relay_plugins))
+        unscored, judged = judge_failures(await window.traces(), guarded) if window is not None else (0, 0)
         phase_duration = perf_counter() - phase_started_at
         recorder.emit(
             EventType.PHASE_COMPLETED,
@@ -89,8 +105,33 @@ class ValidationStage:
             count=len(validators),
             ok=all_ok(validators),
             duration_seconds=round(phase_duration, 6),
+            judge_errors=unscored,
+            judged_calls=judged,
         )
         if ctx.iteration_dir is not None:
             for report in validators:
                 ctx.store.write_component(ctx.iteration_dir, "validator", report.agent_name, report)
+        _check_judge(unscored, judged, recorder.logger)
         return validators
+
+
+def judge_failures(traces: list[AgentTrace], guarded: set[str]) -> tuple[int, int]:
+    """How many calls the guardrails' judge could not score, out of the calls it was asked to score.
+
+    Every call to a guarded tool is judged, so the run's guardrail set gives the exact denominator.
+    """
+    unscored = sum(len(trace.judge_error_tools) for trace in traces)
+    judged = sum(
+        1 for trace in traces for call in trace.tool_calls if any(same_tool(call.name, tool) for tool in guarded)
+    )
+    return unscored, max(judged, unscored)
+
+
+def _check_judge(unscored: int, judged: int, logger: logging.Logger) -> None:
+    """Fail the round when the judge is down; otherwise say how many calls it let through unscored."""
+    if not unscored:
+        return
+    message = f"guardrail safety judge failed on {unscored}/{judged} guarded tool calls, which were allowed unscored"
+    if unscored >= JUDGE_ERROR_MIN_COUNT and unscored / judged > JUDGE_ERROR_RATE_LIMIT:
+        raise GuardrailJudgeError(message)
+    logger.warning(message)

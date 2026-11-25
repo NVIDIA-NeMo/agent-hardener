@@ -11,9 +11,13 @@ victim, so it is a schema rather than a convention: a malformed guardrail must b
 from __future__ import annotations
 
 import os
-from typing import Any, Literal
+import tomllib
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 #: Nemotron reasons by default and can spend its whole token budget thinking, which leaves callers an
 #: empty or very slow reply. Other providers may reject this field, so only Nemotron gets it.
@@ -141,3 +145,16 @@ def configured_guardrails(document: dict[str, Any]) -> list[dict[str, Any]]:
         for rail in entry["config"].get("guardrails", [])
         if isinstance(rail, dict)
     ]
+
+
+def read_plugins_document(path: Path | None) -> dict[str, Any]:
+    """A Relay plugins.toml as a document; an empty one when the run has none yet."""
+    if path is None or not path.exists():
+        return {"version": 1}
+    with path.open("rb") as handle:
+        return tomllib.load(handle)
+
+
+def guarded_tools(document: dict[str, Any]) -> set[str]:
+    """The tools a Relay plugins.toml document puts a guardrail on: every call to one is judged."""
+    return {str(rail["target_tool"]) for rail in configured_guardrails(document) if rail.get("target_tool")}

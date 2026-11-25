@@ -276,6 +276,35 @@ def test_worker_error_becomes_error_verdict(monkeypatch: pytest.MonkeyPatch) -> 
     assert report.metadata["attack_results"][0]["verdict"]["status"] == "error"
 
 
+def test_a_repeated_worker_error_stops_the_replay(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A setup fault fails every hit the same way; after the streak the rest are skipped, not retried."""
+    calls: list[int] = []
+
+    async def fake_replay(prompt, request, config, client):
+        return validator.ReplayResult(ok=True, status_code=200, text="response")
+
+    def boom(self, *_a, **_k):
+        calls.append(1)
+        raise RuntimeError("garak detector worker timed out after 30s")
+
+    monkeypatch.setattr(validator, "_replay_prompt", fake_replay)
+    monkeypatch.setattr(validator._PersistentGarakWorker, "verify", boom)
+    hits = [
+        {"source": "garak-agent-breaker", "probe": "agent_breaker.AgentBreaker", "prompt": f"Use bash_executor {n}"}
+        for n in range(8)
+    ]
+    agent = _agent()
+    agent.config["attack_validator_hits_concurrency"] = 1
+
+    report = asyncio.run(validator.run(_request(hits), agent))
+
+    assert len(calls) == 5
+    assert report.ok is False
+    assert report.error == "stopped after 5 hits in a row failed with: garak detector worker timed out after 30s"
+    assert report.metadata["error_count"] == 8
+    assert report.metadata["attack_results"][-1]["error"] == report.error
+
+
 def test_victim_unavailable_aborts_instead_of_scoring_an_error_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     async def fake_replay(prompt, request, config, client):
         raise VictimUnavailableError("victim replay returned HTTP 503")

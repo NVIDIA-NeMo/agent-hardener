@@ -22,6 +22,7 @@ from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
+from agent_hardener.agents.validators.garak_replay.error_streak import ErrorStreak
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
 from agent_hardener.agents.validators.replay_http import ReplayResult
 from agent_hardener.agents.validators.replay_http import replay_prompt as replay_http_prompt
@@ -91,6 +92,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     # Opened before any replay so the window excludes everything the victim did earlier.
     window = await open_trace_window(ctx)
     detector_cache: dict[AttackType, Any] = {}
+    streak = ErrorStreak()
     worker = PersistentGarakWorker(
         repo_path=str(config.garak_repo_path) if config.garak_repo_path else os.getenv(GARAK_REPO_PATH),
         timeout_seconds=config.timeout_seconds,
@@ -101,7 +103,9 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
             hit_results = await gather_limited_ordered(
                 indexed_hits,
                 config.concurrency,
-                lambda item: _validate_hit_timed(item[0], item[1], request, config, client, worker, detector_cache),
+                lambda item: _validate_hit_timed(
+                    item[0], item[1], request, config, client, worker, detector_cache, streak
+                ),
             )
             attack_results = [cast("dict[str, Any]", result) for result in hit_results]
             traced = window is not None and await trace_section.apply_traces(
@@ -148,6 +152,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         summary=f"blocked {blocked_count}/{len(attack_results)} original Garak attack hits",
         findings=findings,
         false_negatives=false_negatives,
+        error=streak.abort_reason,
         metadata={
             "total_attacks": len(attack_results),
             "blocked_count": blocked_count,
@@ -168,6 +173,7 @@ async def _validate_hit_timed(
     client: httpx.AsyncClient,
     worker: PersistentGarakWorker,
     detector_cache: dict[AttackType, Any],
+    streak: ErrorStreak,
 ) -> dict[str, Any]:
     started_at = perf_counter()
     result = await _validate_hit(
@@ -178,6 +184,7 @@ async def _validate_hit_timed(
         client=client,
         worker=worker,
         detector_cache=detector_cache,
+        streak=streak,
     )
     result["duration_seconds"] = round(perf_counter() - started_at, 6)
     logger.info(
@@ -207,21 +214,21 @@ async def _validate_hit(
     client: httpx.AsyncClient,
     worker: PersistentGarakWorker,
     detector_cache: dict[AttackType, Any],
+    streak: ErrorStreak,
 ) -> dict[str, Any]:
     hit = hit_context["hit"]
-    attack_type = cast("AttackType", hit_context["attack_type"])
+    if streak.abort_reason is not None:
+        return _error_result(
+            hit_context=hit_context,
+            aggregate_index=aggregate_index,
+            config=config,
+            error=streak.abort_reason,
+            prompt=parsing.extract_prompt(hit),
+        )
+    direct = cast("AttackType", hit_context["attack_type"]) == "direct_prompt_injection"
+    validate = _validate_direct_hit if direct else _validate_indirect_hit
     try:
-        if attack_type == "direct_prompt_injection":
-            return await _validate_direct_hit(
-                hit_context=hit_context,
-                aggregate_index=aggregate_index,
-                request=request,
-                config=config,
-                client=client,
-                worker=worker,
-                detector_cache=detector_cache,
-            )
-        return await _validate_indirect_hit(
+        result = await validate(
             hit_context=hit_context,
             aggregate_index=aggregate_index,
             request=request,
@@ -233,13 +240,17 @@ async def _validate_hit(
     except (RateLimitError, VictimUnavailableError):
         raise
     except Exception as exc:
+        error = str(exc) or exc.__class__.__name__
+        streak.record_error(error)
         return _error_result(
             hit_context=hit_context,
             aggregate_index=aggregate_index,
             config=config,
-            error=str(exc) or exc.__class__.__name__,
+            error=error,
             prompt=parsing.extract_prompt(hit),
         )
+    streak.record_success()
+    return result
 
 
 async def _validate_direct_hit(

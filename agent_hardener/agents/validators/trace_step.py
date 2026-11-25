@@ -53,7 +53,11 @@ async def open_trace_window(ctx: RunContext | None) -> TraceWindow | None:
     ``None`` when the validator was given no provider, and when reading the anchor fails: without an
     anchor older traffic cannot be told apart, so the whole run falls back rather than guess.
     """
-    provider = ctx.trace_provider if ctx is not None else None
+    return await open_window(ctx.trace_provider if ctx is not None else None)
+
+
+async def open_window(provider: TraceProvider | None) -> TraceWindow | None:
+    """:func:`open_trace_window` for a caller that holds the provider rather than a run context."""
     if provider is None:
         return None
     try:

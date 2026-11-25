@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 from agent_hardener.agents.defenders.defenders_manager import DefendersManager
 from agent_hardener.agents.validators.smart_benign.validator import load_requests
+from agent_hardener.errors import DefendersFailedError
 from agent_hardener.events import EventType
 from agent_hardener.loggers import using_current_agent
 from agent_hardener.models import (
@@ -167,6 +168,7 @@ class DefenseStage:
             ctx.store.write_component(ctx.iteration_dir, "defenders_manager", "manager", manager_output)
             for analysis in defenders:
                 ctx.store.write_component(ctx.iteration_dir, "defender", analysis.agent_name, analysis)
+        _require_mitigation(manager_output, ctx)
         return DefenseResult(analyses=defenders, policy_patches=policy_patches)
 
     def _policy_seed(self, run_dir: Path | None) -> Path | None:
@@ -263,3 +265,16 @@ class DefenseStage:
             error=output.error_message,
         )
         return output
+
+
+def _require_mitigation(manager_output: DefendersManagerOutput, ctx: IterationContext) -> None:
+    """Stop before deploy and validation when no defender produced anything for this round's attacks.
+
+    A retry is exempt: the attempt before it already deployed and validated mitigations, and failing
+    here would discard that attempt's report.
+    """
+    if manager_output.ok or not ctx.attacks or ctx.validation_feedback:
+        return
+    # One line per distinct failure: every attack record repeats its defender's error.
+    errors = " | ".join(dict.fromkeys((manager_output.error or "no error reported").split(" | ")))
+    raise DefendersFailedError(f"no defender produced a mitigation: {errors}")

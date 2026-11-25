@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 from agent_hardener.relay_plugin.config import PLUGIN_KIND
 from agent_hardener.relay_plugin.plugin import AgentHardenerGuardrailPlugin, _record_judge_error
+from agent_hardener.traces.signals import JUDGE_ERROR_EVENT
 
 nemo_relay = pytest.importorskip("nemo_relay")
 
@@ -148,7 +149,8 @@ def test_an_unscored_call_runs_and_is_marked(
 
     assert called == [{"amount": 9999}]
     [(name, data)] = marks
-    assert name == "agent_hardener.judge_error"
+    assert name == JUDGE_ERROR_EVENT  # the name and tool_name the trace reader counts judge failures by
+    assert data["tool_name"] == "transfer_funds"
     assert data["guardrail"] == "custom_guardrail_1"
     assert "BLOCK" in data["error"]
 

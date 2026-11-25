@@ -158,7 +158,7 @@ def _round(config: SessionConfig, provider: FakeTraceProvider | None) -> bool:
 def test_the_round_records_the_attack_traces_and_hands_each_defender_its_trace(tmp_path: Path) -> None:
     provider = _provider()
     assert _round(_config(tmp_path), provider)
-    assert provider.calls == 2
+    assert provider.calls == 4  # the attack window's two reads, then the validation stage's two
     (entry,) = load_recording(tmp_path / ATTACK_TRACES_FILENAME)
     assert entry.trace.trace_id == "live"  # the stale attempt before the anchor is not picked
     assert [inp.attack_trace.trace_id for inp in CAPTURED] == ["live"]
@@ -172,7 +172,7 @@ def test_no_provider_or_no_live_attackers_records_nothing(tmp_path: Path) -> Non
     provider = _provider()
     (tmp_path / "replay").mkdir()
     _round(_config(tmp_path / "replay", live=False), provider)
-    assert provider.calls == 0
+    assert provider.calls == 2  # only the validation stage's window: no attack traces are recorded
 
 
 class BrokenProvider(FakeTraceProvider):

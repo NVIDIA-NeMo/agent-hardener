@@ -65,6 +65,8 @@ class AgentTrace(AgentHardenerModel):
     ended_at: datetime
     steps: list[TraceStep] = Field(default_factory=list)
     guardrail_latched: bool = False
+    #: The tool of each call a guardrail's judge could not score, which the guardrail then allowed.
+    judge_error_tools: list[str] = Field(default_factory=list)
 
     @property
     def tool_calls(self) -> list[ToolCall]:
