@@ -152,7 +152,36 @@ def test_write_gateway_config_points_docker_desktop_supervisors_at_the_host_alia
     gateway.write_gateway_config("unix:///var/run/docker.sock", path)
 
     docker = tomllib.loads(path.read_text(encoding="utf-8"))["openshell"]["drivers"]["docker"]
-    assert docker["grpc_endpoint"] == gateway.DOCKER_DESKTOP_GRPC_ENDPOINT
+    assert docker["grpc_endpoint"] == "https://host.docker.internal:17670"
+
+
+@pytest.mark.parametrize(
+    ("getent", "alias"),
+    [
+        ("192.168.5.2     host.docker.internal\n192.168.5.2     host.lima.internal\n", "host.docker.internal"),
+        ("192.168.5.2     host.lima.internal\n", "host.lima.internal"),
+    ],
+    ids=["both-resolve", "only-lima"],
+)
+def test_colima_supervisors_use_the_first_host_alias_its_vm_resolves(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, getent: str, alias: str
+) -> None:
+    """Older Colima releases resolve only host.lima.internal inside the VM."""
+    monkeypatch.setattr(gateway.sys, "platform", "darwin")
+    calls: list[list[str]] = []
+
+    def run(cmd: list[str], **_kw: object) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, stdout=getent, stderr="")
+
+    monkeypatch.setattr(gateway, "_run", run)
+    path = tmp_path / "gateway.toml"
+
+    gateway.write_gateway_config("unix:///Users/me/.colima/work/docker.sock", path)
+
+    docker = tomllib.loads(path.read_text(encoding="utf-8"))["openshell"]["drivers"]["docker"]
+    assert docker["grpc_endpoint"] == f"https://{alias}:17670"
+    assert calls[0][:4] == ["colima", "ssh", "--profile", "work"]
 
 
 def test_local_compute_driver_reads_what_setup_wrote(tmp_path: Path) -> None:

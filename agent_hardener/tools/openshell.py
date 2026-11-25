@@ -33,6 +33,7 @@ from agent_hardener.openshell.egress import (
     EgressSource,
     ManualEgressSource,
 )
+from agent_hardener.openshell.gateway import docker_endpoint
 from agent_hardener.openshell.lifecycle import OpenShellConfig, OpenShellLifecycle, read_env_file, wait_for_http_health
 from agent_hardener.openshell.policy_egress import (
     apply_victim_binaries,
@@ -99,13 +100,21 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.ok else 1
 
 
+#: Bound on resolving the docker endpoint: a wedged docker CLI must not hang the command before it starts.
+DOCKER_ENDPOINT_TIMEOUT_S = 15.0
+
+
 def configure_local_docker_host() -> None:
-    """Use the common Colima Docker socket when DOCKER_HOST is unset."""
+    """Pin ``DOCKER_HOST`` to the daemon of the active ``docker context`` when it is unset.
+
+    Follows whichever runtime the operator selected rather than guessing one, so a leftover socket of a
+    stopped runtime (e.g. Colima's next to a running Docker Desktop) is never picked over the live one.
+    """
     if os.environ.get("DOCKER_HOST"):
         return
-    colima_socket = Path.home() / ".colima/default/docker.sock"
-    if colima_socket.exists():
-        os.environ["DOCKER_HOST"] = f"unix://{colima_socket}"
+    endpoint = docker_endpoint(timeout_s=DOCKER_ENDPOINT_TIMEOUT_S)
+    if endpoint:
+        os.environ["DOCKER_HOST"] = endpoint
 
 
 def load_local_env(path: Path | str | None, *, explicit: bool = False) -> None:

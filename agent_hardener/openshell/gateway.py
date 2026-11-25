@@ -10,6 +10,7 @@ OpenShell CLI/service itself stays out of scope (needs brew/sudo).
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import sys
@@ -34,7 +35,14 @@ INSTALL_HINT = (
 #: First file the gateway service reads (before the Homebrew/package default). Schema v2.
 GATEWAY_CONFIG = Path.home() / ".config" / "openshell" / "gateway.toml"
 BREW_SERVICE = "nvidia/openshell/openshell"
-DOCKER_DESKTOP_GRPC_ENDPOINT = "https://host.docker.internal:17670"
+GATEWAY_PORT = 17670
+#: Names a sandbox's control supervisor can reach the macOS host by, in preference order. Docker Desktop
+#: and OrbStack serve the first; Lima-based runtimes (Colima, Rancher Desktop) always serve the second
+#: and only some releases the first.
+HOST_ALIASES = ("host.docker.internal", "host.lima.internal")
+_COLIMA_SOCKET = re.compile(r"/\.colima/(?P<profile>[^/]+)/docker\.sock$")
+#: Bound on asking the Colima VM which host alias it resolves.
+ALIAS_PROBE_TIMEOUT_S = 30.0
 SYSTEMD_USER_SERVICE = "openshell-gateway"
 READY_TIMEOUT_S = 30
 
@@ -82,9 +90,37 @@ def local_compute_driver(path: Path = GATEWAY_CONFIG) -> str | None:
     return driver if isinstance(driver, str) else None
 
 
-def _docker_socket() -> str | None:
-    sock = _run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"]).stdout.strip()
-    return sock or None
+def docker_endpoint(*, timeout_s: float | None = None) -> str | None:
+    """The daemon the docker CLI talks to now: ``DOCKER_HOST``, else the active ``docker context``.
+
+    Runtime-agnostic: Docker Desktop, Colima (any profile), OrbStack, Rancher Desktop or a Linux dockerd
+    each register their socket as a context.
+    """
+    if shutil.which("docker") is None:
+        return None
+    try:
+        proc = _run(["docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"], timeout_s=timeout_s)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() or None if proc.returncode == 0 else None
+
+
+def host_alias(socket: str) -> str:
+    """The host alias the runtime behind ``socket`` resolves, for sandboxes to reach the gateway by.
+
+    Colima is asked from inside its VM (the first alias that resolves wins); other runtimes serve
+    ``host.docker.internal``.
+    """
+    match = _COLIMA_SOCKET.search(socket)
+    if match is None:
+        return HOST_ALIASES[0]
+    command = ["colima", "ssh", "--profile", match["profile"], "--", "getent", "hosts", *HOST_ALIASES]
+    try:
+        proc = _run(command, timeout_s=ALIAS_PROBE_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired):
+        return HOST_ALIASES[0]
+    resolved = {name for line in proc.stdout.splitlines() for name in line.split()[1:]}
+    return next((alias for alias in HOST_ALIASES if alias in resolved), HOST_ALIASES[0])
 
 
 def write_gateway_config(socket: str, path: Path = GATEWAY_CONFIG) -> None:
@@ -103,7 +139,7 @@ def write_gateway_config(socket: str, path: Path = GATEWAY_CONFIG) -> None:
         # (without its opt-in host networking) "host" is the Linux VM, so the gateway's 127.0.0.1
         # listener is unreachable and every sandbox fails with ControlSupervisorStartFailed; the
         # Desktop-provided host alias does reach it.
-        docker["grpc_endpoint"] = DOCKER_DESKTOP_GRPC_ENDPOINT
+        docker["grpc_endpoint"] = f"https://{host_alias(socket)}:{GATEWAY_PORT}"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(tomli_w.dumps(config), encoding="utf-8")
 
@@ -142,7 +178,7 @@ def register_local_gateway(*, wait: bool = True) -> GatewayResult:
         return GatewayResult(ok=False, message=f"OpenShell CLI not found — install it: {INSTALL_HINT}")
     if not docker_reachable():
         return GatewayResult(ok=False, message="Docker daemon not reachable — start Docker, then re-run.")
-    socket = _docker_socket()
+    socket = docker_endpoint()
     if socket is None:
         return GatewayResult(ok=False, message="Could not resolve the Docker socket via `docker context inspect`.")
 

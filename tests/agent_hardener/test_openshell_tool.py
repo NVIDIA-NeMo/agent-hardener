@@ -146,32 +146,36 @@ def test_unknown_commands_are_rejected() -> None:
 # --- host environment --------------------------------------------------------------------------------------
 
 
-def test_docker_host_is_left_alone_when_already_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_docker_host_is_left_alone_when_already_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCKER_HOST", "tcp://remote:2375")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    (tmp_path / ".colima/default").mkdir(parents=True)
-    (tmp_path / ".colima/default/docker.sock").touch()
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: pytest.fail("an explicit DOCKER_HOST wins"))
 
     tool.configure_local_docker_host()
 
     assert tool.os.environ["DOCKER_HOST"] == "tcp://remote:2375"
 
 
-def test_docker_host_falls_back_to_the_colima_socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "unix:///Users/me/.colima/work/docker.sock",
+        "unix:///Users/me/.docker/run/docker.sock",
+        "unix:///Users/me/.orbstack/run/docker.sock",
+    ],
+    ids=["colima-profile", "docker-desktop", "orbstack"],
+)
+def test_docker_host_follows_the_active_docker_context(monkeypatch: pytest.MonkeyPatch, endpoint: str) -> None:
     monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    socket = tmp_path / ".colima/default/docker.sock"
-    socket.parent.mkdir(parents=True)
-    socket.touch()
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: endpoint)
 
     tool.configure_local_docker_host()
 
-    assert tool.os.environ["DOCKER_HOST"] == f"unix://{socket}"
+    assert tool.os.environ["DOCKER_HOST"] == endpoint
 
 
-def test_docker_host_stays_unset_without_a_colima_socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_docker_host_stays_unset_without_a_docker_context(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: None)
 
     tool.configure_local_docker_host()
 

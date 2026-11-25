@@ -62,7 +62,10 @@ def _require_openshell(session: SessionConfig, config: OpenShellConfig, *, reuse
     if needs_docker and not docker_reachable(timeout_s=PROBE_TIMEOUT_S):
         raise SandboxProvisioningError(
             "Docker daemon not reachable: `docker info` failed.",
-            remediation="Start Docker (or point DOCKER_HOST at a running daemon), then retry.",
+            remediation=(
+                "Start your Docker runtime (Docker Desktop, Colima, OrbStack, ...) or select a running one with "
+                "`docker context use`, then retry."
+            ),
         )
     if composed:
         _require_compose(composed, config.cwd or Path.cwd())
