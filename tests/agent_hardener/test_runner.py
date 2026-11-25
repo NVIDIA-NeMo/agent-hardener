@@ -20,7 +20,7 @@ import pytest
 
 from agent_hardener.errors import BenignSuiteError
 from agent_hardener.models import TargetInput, TracesConfig
-from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.openshell.lifecycle import OpenShellCommandResult, SubprocessCommandRunner
 from agent_hardener.runtime import runner as runner_module
 from agent_hardener.runtime.runner import Mission, MissionError, run_mission
 
@@ -71,6 +71,7 @@ def _base_config(relay_victim: object = None) -> SimpleNamespace:
         relay_victim=relay_victim,
         cwd=None,
         health_timeout=120.0,
+        command_timeout_s=1800.0,
         sandbox="agent-hardener-test",
         start_command="run",
         build_context=None,
@@ -375,7 +376,12 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
             restarts.append((policy, wait_for_health))
             return _ok("restart")
 
+    backend_runners: list[SubprocessCommandRunner] = []
+
     class FakeBackendManager:
+        def __init__(self, runner: SubprocessCommandRunner) -> None:
+            backend_runners.append(runner)
+
         def up(self, _specs: object, _cwd: object) -> OpenShellCommandResult:
             return _ok("backends-up")
 
@@ -391,6 +397,8 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Backends ready" in outputs  # the "backends-up" blob is teed to the log, not an output event
     assert captured["rounds"] == 2  # rounds flows to a single run_rounds as the round count
     assert restarts == []  # the runner no longer restarts between rounds — the orchestrator owns the loop
+    # `compose up --build` is bounded by the victim's command timeout, like the image build.
+    assert [r.timeout_s for r in backend_runners] == [base_config.command_timeout_s]
 
 
 def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -448,6 +456,9 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
             return _ok("down")
 
     class FakeBackendManager:
+        def __init__(self, _runner: object) -> None:
+            pass
+
         def up(self, _specs: object, _cwd: object) -> OpenShellCommandResult:
             return _fail("backend-boom")
 

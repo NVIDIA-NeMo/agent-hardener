@@ -112,7 +112,7 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         active_state_dir: Path | None = None,
     ) -> None:
         self.config = config
-        self.runner = runner or SubprocessCommandRunner()
+        self.runner = runner or SubprocessCommandRunner(config.command_timeout_s)
         # Where background command logs are written. The composition root (runner/UI) injects the run's
         # ``run-logs/<run_id>/openshell-logs`` here; when unset (standalone/CLI-direct) we fall back to the
         # shared ``.agent-hardener/openshell-logs`` under cwd.

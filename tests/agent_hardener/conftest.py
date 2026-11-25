@@ -102,6 +102,7 @@ class FakeOpenShellConfig:
     image: str | None
     policy_path: Path | None
     health_timeout: float = 5.0
+    command_timeout_s: float = 1800.0
 
 
 class FakeLifecycle:
@@ -278,7 +279,7 @@ def build_mission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuildMissi
         monkeypatch.setattr(
             runner, "build_uploaders", lambda _vc, lifecycle: (("shell", lifecycle), ("relay", lifecycle))
         )
-        monkeypatch.setattr(runner, "BackendManager", lambda: fake_backends)
+        monkeypatch.setattr(runner, "BackendManager", lambda _runner: fake_backends)
         monkeypatch.setattr(runner, "target_health_url", lambda _url: health_url)
         monkeypatch.setattr(runner, "wait_for_health", lambda url, timeout: health_waits.append((url, timeout)))
         monkeypatch.setattr(runner, "Orchestrator", FakeOrchestrator)

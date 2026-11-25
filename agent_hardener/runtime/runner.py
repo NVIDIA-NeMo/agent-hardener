@@ -43,7 +43,7 @@ from agent_hardener.ids import generate_round_id
 from agent_hardener.loggers import FILE_ONLY, EventBus, capture_run_log, emit_event, using_event_sink
 from agent_hardener.models import AgentRunInput, RelayVictimSpec
 from agent_hardener.openshell._forward import port_in_use_error
-from agent_hardener.openshell.lifecycle import OpenShellLifecycle
+from agent_hardener.openshell.lifecycle import OpenShellLifecycle, SubprocessCommandRunner
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.preflight.relay import (
     RELAY_PROBE_PROMPT,
@@ -313,7 +313,12 @@ class Mission:
         self._openshell_uploader, self._relay_uploader = build_uploaders(cfg.victim_control, self._lifecycle)
         self._backend_specs = list(self._base_config.relay_victim.backends) if self._base_config.relay_victim else []
         self._backend_cwd = self._base_config.cwd or Path.cwd()
-        self._backend_manager = BackendManager() if self._backend_specs else None
+        # `compose up --build` is bounded by the same command_timeout_s as the sandbox image build.
+        self._backend_manager = (
+            BackendManager(SubprocessCommandRunner(self._base_config.command_timeout_s))
+            if self._backend_specs
+            else None
+        )
 
     def _recorded_victim_image(self) -> str | None:
         """The pre-built image the running sandbox was created from, when ``--victim-image`` is not repeated.

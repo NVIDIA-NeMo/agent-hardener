@@ -29,22 +29,51 @@ class CommandRunner(Protocol):
         """Run a command and return the completed process."""
 
 
+#: Bound on each OpenShell/Docker command; sized for a cold victim image build.
+DEFAULT_COMMAND_TIMEOUT_S = 1800.0
+#: Exit status reported for a command killed at its timeout (GNU ``timeout`` convention).
+TIMEOUT_EXIT_CODE = 124
+
+
+def command_label(args: list[str]) -> str:
+    """Return a short non-secret command label for timing logs."""
+    return " ".join(args[:3]) if args else "<empty>"
+
+
+def timeout_message(command: list[str], timeout_s: float) -> str:
+    """Name what timed out and the setting that raises the bound."""
+    return (
+        f"`{command_label(command)}` timed out after {timeout_s:g}s; "
+        "raise victim_control.config.command_timeout_s if it needs longer"
+    )
+
+
 class SubprocessCommandRunner:
-    """Subprocess-backed command runner."""
+    """Subprocess-backed command runner; a command past ``timeout_s`` is killed and reported as failed."""
+
+    def __init__(self, timeout_s: float = DEFAULT_COMMAND_TIMEOUT_S) -> None:
+        self.timeout_s = timeout_s
 
     def run(
         self, args: list[str], cwd: Path | None = None, *, env: dict[str, str] | None = None
     ) -> subprocess.CompletedProcess[str]:
         """Run a command and capture output."""
-        return subprocess.run(  # noqa: S603 - command arguments are explicit lists built by lifecycle callers.
-            args,
-            cwd=cwd,
-            env=env,
-            check=False,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-        )
+        try:
+            return subprocess.run(  # noqa: S603 - command arguments are explicit lists built by lifecycle callers.
+                args,
+                cwd=cwd,
+                env=env,
+                check=False,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=self.timeout_s,
+            )
+        except subprocess.TimeoutExpired as exc:
+            # TimeoutExpired carries bytes even under text=True.
+            partial = exc.output.decode(errors="replace") if isinstance(exc.output, bytes) else exc.output or ""
+            message = timeout_message(args, self.timeout_s)
+            return subprocess.CompletedProcess(args, TIMEOUT_EXIT_CODE, stdout=f"{partial}{message}")
 
 
 #: The sandbox's canonical main process (see ``OpenShellConfig.create_command``).
@@ -80,6 +109,7 @@ class OpenShellConfig:
     health_timeout: float = 120.0
     sandbox_timeout: float = 180.0
     policy_wait_timeout: float = 60.0
+    command_timeout_s: float = DEFAULT_COMMAND_TIMEOUT_S
     cwd: Path | None = None
     relay_victim: RelayVictimSpec | None = None
 
@@ -115,6 +145,7 @@ class OpenShellConfig:
             health_timeout=float(data.get("health_timeout", 120.0)),
             sandbox_timeout=float(data.get("sandbox_timeout", 180.0)),
             policy_wait_timeout=float(data.get("policy_wait_timeout", 60.0)),
+            command_timeout_s=float(data.get("command_timeout_s", DEFAULT_COMMAND_TIMEOUT_S)),
             cwd=cwd,
             relay_victim=relay_victim,
         )

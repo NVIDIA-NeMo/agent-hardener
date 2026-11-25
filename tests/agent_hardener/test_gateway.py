@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agent_hardener.cli import app
-from agent_hardener.openshell import gateway
+from agent_hardener.openshell import gateway, support
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -23,21 +23,32 @@ pytestmark = pytest.mark.unit
 runner = CliRunner()
 
 
-def _cp(returncode: int = 0, stdout: str = "") -> subprocess.CompletedProcess[str]:
-    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr="")
+def _cp(returncode: int = 0, stdout: str = "", stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(args=[], returncode=returncode, stdout=stdout, stderr=stderr)
 
 
 class FakeRun:
     """Records commands and scripts responses for the module-level `_run` seam."""
 
-    def __init__(self, *, connected: bool = True) -> None:
+    def __init__(
+        self,
+        *,
+        connected: bool = True,
+        overrides: dict[tuple[str, ...], subprocess.CompletedProcess[str] | Exception] | None = None,
+    ) -> None:
         self.connected = connected
+        self.overrides = overrides or {}
         self.calls: list[list[str]] = []
 
     def __call__(
         self, cmd: list[str], *, stdin: str | None = None, timeout_s: float | None = None
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append(cmd)
+        override = self.overrides.get(tuple(cmd[:3]))
+        if isinstance(override, Exception):
+            raise override
+        if override is not None:
+            return override
         if cmd[:2] == ["docker", "info"]:
             return _cp(0)
         if cmd[:3] == ["docker", "context", "inspect"]:
@@ -48,8 +59,15 @@ class FakeRun:
 
 
 @pytest.fixture(autouse=True)
-def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(gateway.time, "sleep", lambda _s: None)
+def _instant_clock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sleeping advances a fake clock, so the connect wait times out without real waiting."""
+    now = [0.0]
+
+    def sleep(seconds: float) -> None:
+        now[0] += seconds
+
+    monkeypatch.setattr(support.time, "sleep", sleep)
+    monkeypatch.setattr(support.time, "monotonic", lambda: now[0])
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +129,50 @@ def test_not_connected_returns_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     result = gateway.register_local_gateway()
 
     assert not result.ok
+    assert "not connected" in result.message
+
+
+def test_linux_network_create_failure_fails_with_docker_stderr(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gateway.sys, "platform", "linux")
+    monkeypatch.setattr(gateway.shutil, "which", _which({"openshell", "docker", "systemctl"}))
+    fake = FakeRun(
+        overrides={
+            ("docker", "network", "inspect"): _cp(1, stderr="No such network"),
+            ("docker", "network", "create"): _cp(1, stderr="permission denied on docker.sock"),
+        }
+    )
+    monkeypatch.setattr(gateway, "_run", fake)
+
+    result = gateway.register_local_gateway()
+
+    assert not result.ok
+    assert "permission denied on docker.sock" in result.message
+    assert not any(cmd[:3] == ["openshell", "gateway", "add"] for cmd in fake.calls)  # stops before registering
+
+
+def test_restart_timeout_is_named_even_when_the_gateway_connects(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gateway.sys, "platform", "darwin")
+    monkeypatch.setattr(gateway.shutil, "which", _which({"openshell", "docker"}))
+    hung = subprocess.TimeoutExpired(["brew"], gateway.SETUP_COMMAND_TIMEOUT_S)
+    monkeypatch.setattr(gateway, "_run", FakeRun(overrides={("brew", "services", "restart"): hung}))
+
+    result = gateway.register_local_gateway()
+
+    # Connected, but possibly on the old config: the stale restart must not be silent.
+    assert result.ok
+    assert f"restarting {gateway.BREW_SERVICE} timed out after 30s" in result.message
+
+
+def test_gateway_add_failure_explains_a_gateway_that_never_connects(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gateway.sys, "platform", "darwin")
+    monkeypatch.setattr(gateway.shutil, "which", _which({"openshell", "docker"}))
+    fake = FakeRun(connected=False, overrides={("openshell", "gateway", "add"): _cp(2, stderr="invalid endpoint")})
+    monkeypatch.setattr(gateway, "_run", fake)
+
+    result = gateway.register_local_gateway()
+
+    assert not result.ok
+    assert "registering gateway 'auto-defender' failed (exit 2): invalid endpoint" in result.message
     assert "not connected" in result.message
 
 

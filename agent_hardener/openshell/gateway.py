@@ -14,12 +14,13 @@ import re
 import shutil
 import subprocess
 import sys
-import time
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
 import tomli_w
+
+from agent_hardener.openshell.support import _poll_until
 
 # GATEWAY_NAME matches OpenShellConfig.gateway's default so `run` finds the same gateway.
 GATEWAY_ENDPOINT = "https://127.0.0.1:17670"
@@ -41,8 +42,8 @@ GATEWAY_PORT = 17670
 #: and only some releases the first.
 HOST_ALIASES = ("host.docker.internal", "host.lima.internal")
 _COLIMA_SOCKET = re.compile(r"/\.colima/(?P<profile>[^/]+)/docker\.sock$")
-#: Bound on asking the Colima VM which host alias it resolves.
-ALIAS_PROBE_TIMEOUT_S = 30.0
+#: Bound on each setup/probe command, so a wedged Docker, brew or systemd never hangs `setup`.
+SETUP_COMMAND_TIMEOUT_S = 30.0
 SYSTEMD_USER_SERVICE = "openshell-gateway"
 READY_TIMEOUT_S = 30
 
@@ -54,12 +55,12 @@ class GatewayResult:
 
 
 def _run(
-    cmd: list[str], *, stdin: str | None = None, timeout_s: float | None = None
+    cmd: list[str], *, stdin: str | None = None, timeout_s: float = SETUP_COMMAND_TIMEOUT_S
 ) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, input=stdin, capture_output=True, text=True, check=False, timeout=timeout_s)
 
 
-def docker_reachable(*, timeout_s: float | None = None) -> bool:
+def docker_reachable(*, timeout_s: float = SETUP_COMMAND_TIMEOUT_S) -> bool:
     """True when the docker CLI is installed and its daemon answers ``docker info``."""
     if shutil.which("docker") is None:
         return False
@@ -70,7 +71,7 @@ def docker_reachable(*, timeout_s: float | None = None) -> bool:
 
 
 def gateway_connected(
-    gateway: str = GATEWAY_NAME, *, openshell_bin: str = "openshell", timeout_s: float | None = None
+    gateway: str = GATEWAY_NAME, *, openshell_bin: str = "openshell", timeout_s: float = SETUP_COMMAND_TIMEOUT_S
 ) -> bool:
     """True when ``openshell status`` reports ``gateway`` as connected."""
     try:
@@ -90,7 +91,7 @@ def local_compute_driver(path: Path = GATEWAY_CONFIG) -> str | None:
     return driver if isinstance(driver, str) else None
 
 
-def docker_endpoint(*, timeout_s: float | None = None) -> str | None:
+def docker_endpoint(*, timeout_s: float = SETUP_COMMAND_TIMEOUT_S) -> str | None:
     """The daemon the docker CLI talks to now: ``DOCKER_HOST``, else the active ``docker context``.
 
     Runtime-agnostic: Docker Desktop, Colima (any profile), OrbStack, Rancher Desktop or a Linux dockerd
@@ -116,7 +117,7 @@ def host_alias(socket: str) -> str:
         return HOST_ALIASES[0]
     command = ["colima", "ssh", "--profile", match["profile"], "--", "getent", "hosts", *HOST_ALIASES]
     try:
-        proc = _run(command, timeout_s=ALIAS_PROBE_TIMEOUT_S)
+        proc = _run(command)
     except (OSError, subprocess.TimeoutExpired):
         return HOST_ALIASES[0]
     resolved = {name for line in proc.stdout.splitlines() for name in line.split()[1:]}
@@ -144,32 +145,43 @@ def write_gateway_config(socket: str, path: Path = GATEWAY_CONFIG) -> None:
     path.write_text(tomli_w.dumps(config), encoding="utf-8")
 
 
-def _configure_driver_macos(socket: str) -> str | None:
-    write_gateway_config(socket)
-    _run(["brew", "services", "restart", BREW_SERVICE])
-    return None
+def _step_error(cmd: list[str], what: str) -> str | None:
+    """Run one setup step; ``None`` on success, else why it failed (with the command's stderr)."""
+    try:
+        proc = _run(cmd)
+    except OSError as exc:
+        return f"{what} failed: {exc}"
+    except subprocess.TimeoutExpired:
+        return f"{what} timed out after {SETUP_COMMAND_TIMEOUT_S:g}s"
+    if proc.returncode == 0:
+        return None
+    detail = (proc.stderr or proc.stdout).strip()
+    return f"{what} failed (exit {proc.returncode}){': ' + detail if detail else ''}"
 
 
-def _configure_driver_linux(socket: str) -> str | None:
-    write_gateway_config(socket)
-    warning: str | None = None
-    if shutil.which("systemctl") is not None:
-        restart = _run(["systemctl", "--user", "restart", SYSTEMD_USER_SERVICE])
-        if restart.returncode != 0:
-            warning = f"could not restart the {SYSTEMD_USER_SERVICE} user service — restart it, then re-run."
+def _restart_gateway_service() -> str | None:
+    """Restart the gateway service so it reads the new config; a warning when that could not be done."""
+    if sys.platform == "darwin":
+        error = _step_error(["brew", "services", "restart", BREW_SERVICE], f"restarting {BREW_SERVICE}")
+    elif shutil.which("systemctl") is not None:
+        error = _step_error(
+            ["systemctl", "--user", "restart", SYSTEMD_USER_SERVICE],
+            f"restarting the {SYSTEMD_USER_SERVICE} user service",
+        )
     else:
-        warning = f"systemd not found — restart the OpenShell gateway so it picks up {GATEWAY_CONFIG}, then re-run."
-    if _run(["docker", "network", "inspect", DOCKER_NETWORK]).returncode != 0:
-        _run(["docker", "network", "create", DOCKER_NETWORK])
-    return warning
+        return f"systemd not found — restart the OpenShell gateway so it picks up {GATEWAY_CONFIG}, then re-run."
+    return f"{error} — restart it, then re-run." if error else None
+
+
+def _ensure_docker_network() -> str | None:
+    """Create the sandbox network the Linux Docker driver attaches to; why not, when that fails."""
+    if _step_error(["docker", "network", "inspect", DOCKER_NETWORK], "inspecting the Docker network") is None:
+        return None
+    return _step_error(["docker", "network", "create", DOCKER_NETWORK], f"creating Docker network {DOCKER_NETWORK}")
 
 
 def _wait_connected(timeout_s: int = READY_TIMEOUT_S) -> bool:
-    for _ in range(timeout_s):
-        if gateway_connected():
-            return True
-        time.sleep(1)
-    return False
+    return _poll_until(gateway_connected, timeout=timeout_s, interval=1.0)
 
 
 def register_local_gateway(*, wait: bool = True) -> GatewayResult:
@@ -182,12 +194,18 @@ def register_local_gateway(*, wait: bool = True) -> GatewayResult:
     if socket is None:
         return GatewayResult(ok=False, message="Could not resolve the Docker socket via `docker context inspect`.")
 
-    configure = _configure_driver_macos if sys.platform == "darwin" else _configure_driver_linux
-    warning = configure(socket)
-
-    _run(["openshell", "gateway", "add", GATEWAY_ENDPOINT, "--local", "--name", GATEWAY_NAME])
-
+    write_gateway_config(socket)
+    restart_warning = _restart_gateway_service()
+    if sys.platform != "darwin" and (network_error := _ensure_docker_network()):
+        return GatewayResult(ok=False, message=network_error)
+    # Non-fatal: re-adding an already registered gateway fails, and the connect check below decides.
+    add_warning = _step_error(
+        ["openshell", "gateway", "add", GATEWAY_ENDPOINT, "--local", "--name", GATEWAY_NAME],
+        f"registering gateway '{GATEWAY_NAME}'",
+    )
     if wait and not _wait_connected():
         hint = f"Gateway not connected yet — check: openshell status --gateway {GATEWAY_NAME}"
-        return GatewayResult(ok=False, message=f"{warning} {hint}" if warning else hint)
-    return GatewayResult(ok=True, message=f"OpenShell gateway '{GATEWAY_NAME}' ready.")
+        return GatewayResult(ok=False, message=" ".join(w for w in (restart_warning, add_warning, hint) if w))
+    # A connected gateway proves the registration; a failed restart may still leave it on the old config.
+    ready = f"OpenShell gateway '{GATEWAY_NAME}' ready."
+    return GatewayResult(ok=True, message=f"{ready} {restart_warning}" if restart_warning else ready)
