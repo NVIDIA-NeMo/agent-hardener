@@ -32,6 +32,7 @@ from agent_hardener.models import (
     VictimResult,
 )
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.preflight.relay import check_tool_path
 from agent_hardener.runtime.orchestrator import Orchestrator
 from agent_hardener.runtime.stages.agent_invoker import short_summary
 from agent_hardener.storage import find_latest_hitlog, read_json
@@ -547,6 +548,34 @@ def test_the_tool_path_is_verified_when_an_attacker_ran(tmp_path: Path) -> None:
     asyncio.run(orchestrator.run_round())
 
     assert calls == [1]
+
+
+def test_refusal_telemetry_reaches_defenders_and_validation(tmp_path: Path) -> None:
+    adapter = ScenarioAdapter()
+    records = [
+        {
+            "atof_version": "0.1",
+            "kind": "scope",
+            "category": "llm",
+            "scope_category": "end",
+            "uuid": "attack",
+            "data": {"text": "I cannot help with that."},
+        }
+    ]
+
+    def verify(_attacks: list[AttackRecord] | None) -> None:
+        assert check_tool_path(records) == ()
+
+    orchestrator = Orchestrator(
+        _config(tmp_path),
+        agent_adapter=adapter,
+        verify_tool_path=verify,
+    )
+    report = asyncio.run(orchestrator.run_round())
+    assert report.success
+    assert report.iterations[0].defenders
+    assert {role for role, _iteration in adapter.calls} >= {"victim", "validator"}
+    assert {validator.kind for validator in report.iterations[0].validators} == {"attack", "benign"}
 
 
 def test_a_replay_does_not_verify_the_tool_path(tmp_path: Path) -> None:
