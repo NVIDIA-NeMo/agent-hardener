@@ -180,3 +180,55 @@ def test_a_re_included_file_inside_an_excluded_directory_is_kept(tmp_path: Path)
     )
     assert (bundle / "docs" / "keep.md").is_file()
     assert not (bundle / "docs" / "drop.md").exists()
+
+
+def _readme_for(tmp_path: Path, plugins_text: str) -> str:
+    plugins = tmp_path / "plugins.toml"
+    plugins.write_text(plugins_text, encoding="utf-8")
+    bundle = write_hardened_bundle(
+        build_root=None, plugins_toml=plugins, destination=tmp_path / "out", agent="a", run_id="r", image="img:1"
+    )
+    return (bundle / "README.md").read_text()
+
+
+_JUDGE_COMPONENT = """\
+[[components]]
+kind = "agent_hardener.pre_tool_verifier"
+[components.config.model]
+model = "judge"
+api_key_env = "AGENT_HARDENER_SAFETY_API_KEY"
+{base_url}
+"""
+
+
+def test_the_readme_names_the_judge_key_and_endpoint_plugins_toml_configures(tmp_path: Path) -> None:
+    """A real run writes the safety key name; naming INFERENCE_API_KEY instead ships an agent that fails open."""
+    readme = _readme_for(tmp_path, _JUDGE_COMPONENT.format(base_url='base_url = "https://judge.example.com/v1"'))
+
+    assert "- `AGENT_HARDENER_SAFETY_API_KEY`, set to the judge's API key" in readme
+    assert "- network reach to `https://judge.example.com/v1`" in readme
+    assert "Setting only `INFERENCE_API_KEY` in the container is not enough." in readme
+
+
+def test_the_readme_explains_where_the_judge_goes_without_a_base_url(tmp_path: Path) -> None:
+    readme = _readme_for(tmp_path, _JUDGE_COMPONENT.format(base_url=""))
+
+    assert "`AGENT_HARDENER_SAFETY_BASE_URL`, else `AGENT_HARDENER_BASE_URL`" in readme
+
+
+@pytest.mark.parametrize(
+    ("plugins_text", "expected"),
+    [
+        ("version = 1\n", "needs no\njudge key"),
+        ('[[components]]\nkind = "agent_hardener.pre_tool_verifier"\nenabled = false\n', "needs no\njudge key"),
+        ('[[components]]\nkind = "agent_hardener.pre_tool_verifier"\n', "named by `api_key_env`"),
+        ("not [valid toml", "named by `api_key_env`"),
+    ],
+    ids=["no-guardrail", "disabled", "no-model-table", "malformed"],
+)
+def test_the_readme_never_names_a_key_it_could_not_read(tmp_path: Path, plugins_text: str, expected: str) -> None:
+    """A packaging failure would cost the whole bundle, so an unreadable file gets generic wording instead."""
+    readme = _readme_for(tmp_path, plugins_text)
+
+    assert expected in readme
+    assert "INFERENCE_API_KEY" not in readme

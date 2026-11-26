@@ -5,12 +5,14 @@ from __future__ import annotations
 
 import io
 import json
+import re
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
 from agent_hardener.display.final import build_summary_renderable, print_final_summary, render_final_run_log
+from agent_hardener.display.final._summary_data import defender_rows, format_duration, session_overview
 from agent_hardener.final_log import collect_attempt_transcripts
 from agent_hardener.final_log.collect import _collect_final_log_data
 
@@ -41,7 +43,7 @@ def test_build_summary_renderable_tables_and_red_hits() -> None:
     assert "1;31" in out  # non-zero exploit hits styled bold red
 
 
-def test_build_summary_defender_and_validator_tables() -> None:
+def test_build_summary_defender_table_and_no_validator_table() -> None:
     report = {
         "round_id": "s",
         "success": False,
@@ -84,28 +86,36 @@ def test_build_summary_defender_and_validator_tables() -> None:
     assert "openshell-policy-defender" in out
     assert "TimeoutError" in out
     assert "defender-guardrails" in out
-    assert "Validator results" in out
-    assert "attack" in out
-    assert "blocked 0/21" in out
+    assert "Validator results" not in out  # their numbers are the overview's Blocked / Benign OK columns
 
 
-def test_build_summary_omits_empty_defender_validator_tables() -> None:
-    # Attack-only run (no attempts) -> no defender/validator tables.
+def test_build_summary_omits_empty_defender_table() -> None:
+    # Attack-only run (no attempts) -> no defender table.
     out = _render_summary([{"round_id": "s", "success": True, "iterations": [], "attacks": []}])
     assert "Defender results" not in out
-    assert "Validator results" not in out
 
 
-def test_build_summary_success_glyphs() -> None:
+def test_build_summary_result_is_completed_failed_or_error() -> None:
+    insufficient = {"agent_name": "replay", "kind": "attack", "ok": False, "summary": "blocked 0/2"}
     reports = [
-        {"round_id": "a", "success": True, "iterations": []},
-        {"round_id": "b", "success": False, "iterations": []},
-        {"round_id": "c", "success": None, "iterations": []},
+        # A validator that ran and judged the defense insufficient is a failed round, not an error.
+        {"round_id": "a", "success": False, "iterations": [{"validators": [insufficient]}]},
+        {"round_id": "c", "success": True, "iterations": []},
+        {
+            "round_id": "b",
+            "attacks": [{"agent_name": "agent_breaker", "ok": False, "error": "garak crashed"}],
+            "iterations": [{"victim_control": {"ok": False}, "victim": {"agent_name": "victim", "ok": True}}],
+        },
     ]
-    out = _render_summary(reports)
-    assert "✓" in out
-    assert "✗" in out
-    assert "?" in out
+    out = _render_summary(reports, terminal=False)
+    assert re.search(r"│ a +│ ✗ failed", out)
+    assert re.search(r"│ c +│ ✓ completed", out)
+    assert "✗ error" in out
+    assert "agent_breaker: garak crashed (+1 more)" in out
+    assert "3 rounds (1 with errors)" in out
+    assert "Iterations" not in out
+    assert "Duration" not in out
+    assert "errors: agent_breaker: garak crashed; deploy: failed" in render_final_run_log(reports)
 
 
 def test_build_summary_handles_no_reports() -> None:
@@ -327,11 +337,8 @@ def test_print_final_summary_rich(monkeypatch: Any) -> None:
     assert "Agent Hardener — Final Report" in con.file.getvalue()
 
 
-def test_validator_section_rich_and_plain_share_the_same_facts() -> None:
-    """The Rich table and the plain lines are built from one view model, so they carry the same facts."""
-    from agent_hardener.display.final._summary_data import collect_validators  # noqa: PLC0415
+def test_validator_section_plain_lists_each_validator_and_tallies() -> None:
     from agent_hardener.display.final.render_plain import render_validator_results  # noqa: PLC0415
-    from agent_hardener.display.final.render_rich import _validator_table  # noqa: PLC0415
 
     report = {
         "round_id": "s",
@@ -347,20 +354,12 @@ def test_validator_section_rich_and_plain_share_the_same_facts() -> None:
     }
 
     plain = "\n".join(render_validator_results([report]))
-    con = Console(file=io.StringIO(), force_terminal=True, width=200)
-    con.print(_validator_table(collect_validators([report])))
-    rich = con.file.getvalue()
 
-    # Same rows and per-kind caption tallies appear in both renderings.
     for name in ("garak-replay", "garak-replay-2", "smart-benign"):
         assert name in plain
-        assert name in rich
     for tally in ("attack: failed=1, ok=1", "benign: ok=1"):
         assert tally in plain
-        assert tally in rich
-    # The failing validator is flagged in both (word in plain, glyph in the Rich status column).
     assert "FAILED" in plain
-    assert "✗" in rich
 
 
 def test_final_log_aggregates_garak_counts_and_policy_contents(tmp_path: Path) -> None:
@@ -1068,3 +1067,90 @@ def test_collect_attempt_transcripts_skips_non_report_files_and_rescopes_scanner
 
 def test_collect_attempt_transcripts_missing_file_yields_nothing(tmp_path: Path) -> None:
     assert collect_attempt_transcripts([tmp_path / "absent.report.jsonl"]) == []
+
+
+def test_summary_groups_defenders_and_says_what_they_added() -> None:
+    def guardrail(name: str, tool: str) -> dict[str, Any]:
+        return {
+            "agent_name": "defender-guardrails",
+            "metadata": {"guardrail_name": name, "attacked_tool": tool, "resource_type": "relay_guardrail_component"},
+            "policy_patches": [{"type": "relay_plugins_candidate", "changed": True}],
+        }
+
+    policy = {
+        "agent_name": "openshell-defender",
+        "metadata": {"resource_type": "l7_deny_rule"},
+        "policy_patches": [{"type": "openshell_policy_candidate", "changed": True}],
+    }
+    failed = {"agent_name": "openshell-defender", "ok": False, "error": "TimeoutError", "policy_patches": []}
+    report = {
+        "round_id": "round-0001",
+        "success": True,
+        "started_at": "2026-11-23T12:00:00Z",
+        "ended_at": "2026-11-23T12:04:12Z",
+        "storage_dir": "/runs/mission/round_1",
+        "attacks": [{"agent_name": "agent_breaker", "ok": True, "records": [{"probe": "p"}]}],
+        "iterations": [
+            {"defenders": [guardrail("g1", "run_diagnostic"), guardrail("g2", "get_config"), policy, failed]}
+        ],
+    }
+    out = _render_summary([report], terminal=False)
+    assert out.count("defender-guardrails") == 1
+    assert "2 guardrails" in out
+    assert "get_config, run_diagnostic" in out
+    assert "1 policy rule (l7_deny_rule)" in out
+    assert "1/2" in out
+    assert "TimeoutError" in out
+    assert "no change" not in out
+    assert "4m 12s" in out
+    assert "logs: /runs/mission" in out
+    assert "indirect" not in out  # a scanner that did not run gets no row
+
+    plain = render_final_run_log([report])
+    assert "total duration: 4m 12s" in plain
+    assert "indirect:" not in plain
+
+
+def test_summary_without_attacks_or_timestamps() -> None:
+    out = _render_summary([{"round_id": "s", "success": None, "attacks": [], "iterations": []}], terminal=False)
+    assert "no attacks ran" in out
+    assert "total" not in out
+    assert "no attacks ran" in render_final_run_log([{"round_id": "s", "attacks": [], "iterations": []}])
+
+
+def test_summary_data_durations_logs_dir_and_other_changes() -> None:
+    assert [format_duration(s) for s in (None, 38, 252, 3780)] == ["", "38s", "4m 12s", "1h 03m"]
+    reports = [
+        {"storage_dir": "/a/round_1", "started_at": "not-a-time", "ended_at": "2026-11-23T12:00:00Z"},
+        {"storage_dir": "/b/round_2"},
+    ]
+    overview = session_overview(reports, None)
+    assert overview.duration == ""
+    assert overview.logs_dir == "/b/round_2"  # rounds in different dirs: point at the latest
+    assert session_overview([], None).logs_dir is None
+    rows = defender_rows([{"agent_name": "d", "policy_patches": [{"type": "x"}]}, {"agent_name": "e"}])
+    assert [row.defenses for row in rows] == ["1 other change", "none"]
+
+
+def test_overview_outcome_columns() -> None:
+    def validator(kind: str, **metadata: int) -> dict[str, Any]:
+        return {"agent_name": kind, "kind": kind, "metadata": metadata}
+
+    report = {
+        "round_id": "r",
+        "attacks": [{"agent_name": "agent_breaker", "records": [{"probe": "p"}, {"probe": "p"}]}],
+        "iterations": [
+            {
+                "validators": [
+                    validator("attack", blocked_count=1, total_attacks=2, not_blocked_count=1),
+                    validator("benign", complied_count=11, total=16, refused_count=3, error_count=2),
+                ]
+            }
+        ],
+    }
+    out = _render_summary([report], terminal=False)
+    assert re.search(r"│ r +│ ✓ completed +│ +2 │ 1/2 \(1 not blocked\) │ 11/16 \(3 refused, 2 errors\) │", out)
+    no_validators = _render_summary([{"round_id": "r", "iterations": [{"validators": [{"kind": "x"}]}]}])
+    assert "—" in no_validators
+    full = {**report, "iterations": [{"validators": [validator("attack", blocked_count=2, total_attacks=2)]}]}
+    assert "2/2 (" not in _render_summary([full], terminal=False)  # no breakdown when nothing failed

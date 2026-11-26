@@ -74,3 +74,31 @@ def test_env_overrides_run_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     peak, prompts = _max_in_flight({"run_concurrency": {"defenders": 4}})
     assert peak == 1
     assert prompts == [f"Use the bash tool to run attack {i}." for i in range(HITS)]
+
+
+def test_run_records_failed_defenders() -> None:
+    """A defender that fails or raises is kept as an ``ok=False`` analysis, so the report can count it."""
+
+    async def defender(_agent: AgentConfig, input_data: DefenderInput) -> DefenderOutput:
+        if input_data.attack_prompt.endswith("0."):
+            raise RuntimeError("boom")
+        return DefenderOutput(ok=input_data.attack_prompt.endswith("1."), error_message="no patch")
+
+    manager_input = DefendersManagerInput(
+        round_id="round-0001",
+        target=TargetInput(name="victim"),
+        context={},
+        attacks=[
+            AttackRecord(
+                agent_id="hit",
+                agent_name="garak-agent-breaker",
+                records=[{"prompt": f"Use the bash tool to run attack {i}."} for i in range(3)],
+            )
+        ],
+        available_defenders=[AgentConfig(name="defender", role="defender", capabilities="protects tool calls")],
+    )
+    output = asyncio.run(DefendersManager().run(manager_input, defender))
+    assert [analysis.ok for analysis in output.analyses] == [False, True, False]
+    assert [analysis.error for analysis in output.analyses] == ["raised exception: boom", None, "failed: no patch"]
+    assert output.ok is True
+    assert "Generated 1 analyses" in output.summary
