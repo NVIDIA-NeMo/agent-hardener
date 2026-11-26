@@ -74,20 +74,6 @@ Agent Hardener builds your agent's image into an OpenShell sandbox, starts any h
 policy updates, uploads guardrails, and restarts the agent between stages. Only your agent runs inside the
 OpenShell sandbox; backends stay on the host.
 
-## Prerequisites
-
-| Requirement | Notes |
-|---|---|
-| macOS (Apple silicon) or Linux | |
-| Docker | Docker Desktop, or Colima on macOS |
-| [OpenShell](https://github.com/NVIDIA/OpenShell) v0.1.4 | 0.0.x is not supported |
-| Python 3.11–3.13 | |
-| An API key for an OpenAI-compatible model provider | NVIDIA Build, NVIDIA Inference and OpenRouter are tested; see [Model providers](#model-providers) |
-| An agent connected to NeMo Relay, with an HTTP endpoint | Or use the bundled example agent |
-| Free port 8000 | The agent's port; change it with `agent.port` |
-
-To work on Agent Hardener itself you also need `uv`, `just` and `git`.
-
 ## Setup
 
 Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summary, you need:
