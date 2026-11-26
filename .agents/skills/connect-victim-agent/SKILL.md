@@ -101,7 +101,8 @@ uv run agent-hardener init --project-dir ../my-agent --name my-agent \
 
 `--dockerfile` without `--binary` is rejected up front. `--yes` takes egress and backends from the
 flags; without it, `init` prompts (answer `?` at a prompt for its help). It also writes
-`garak-scan.yaml` and refuses to overwrite an existing manifest unless you pass `--force`.
+`garak-scan.yaml`. Run on an existing manifest, it updates it in place and keeps your settings and
+comments (it prints what changed; a failed update leaves the file untouched); `--force` starts over.
 
 Then edit the fields `init` doesn't set:
 
