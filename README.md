@@ -1,7 +1,7 @@
 # Agent Hardener
 
-Agent Hardener is a swarm of attacker and defender agents that finds vulnerabilities in a given agent and
-patches them dynamically. Attacker agents probe your agent's tools and record every attack that lands. Defender
+Agent Hardener is a swarm of attacker and defender agents that find vulnerabilities in a given agent and
+patch them dynamically. Attacker agents probe your agent's tools and record every attack that lands. Defender
 agents turn each landed attack into a fix, either a guardrail on the tool call that did the harm or a tighter
 OpenShell sandbox policy, and apply it to the running agent. Validator agents then replay the same attacks to confirm
 they are blocked and check that normal requests still work. At the end you get a report and a hardened copy of
