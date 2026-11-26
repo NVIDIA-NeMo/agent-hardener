@@ -76,7 +76,7 @@ OpenShell sandbox; backends stay on the host.
 
 ## Setup
 
-Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summary, you need:
+Follow the [setup guide](docs/SETUP.md) for step-by-step instructions. In summary, you need:
 
 - **Docker:** runs the OpenShell sandbox that holds your agent. Docker Desktop, or Colima on macOS.
 - **OpenShell:** creates and controls the OpenShell sandbox.
@@ -348,7 +348,7 @@ Every classified failure prints a category, a message and a suggested fix. Commo
 |---|---|---|
 | `model_unavailable` before the OpenShell sandbox builds | Wrong model name, base URL or key | Check the values against [Model providers](#model-providers) |
 | HTTP 401 or 403 from a model during the run | A stale `NIM_API_KEY` or `AGENT_HARDENER_SAFETY_API_KEY`, or a Build key that cannot call chat models | Unset the stale variable, or use a key that can call chat models |
-| `unrecognized subcommand`, or gRPC `UNIMPLEMENTED` from OpenShell | OpenShell older than v0.1.4 | Upgrade OpenShell; see the [setup guide](docs/setup.md) |
+| `unrecognized subcommand`, or gRPC `UNIMPLEMENTED` from OpenShell | OpenShell older than v0.1.4 | Upgrade OpenShell; see the [setup guide](docs/SETUP.md) |
 | `sandbox` error, gateway not connected | Docker is not running, or the gateway was not set up | Start Docker, then rerun `agent-hardener setup` |
 | `victim_unavailable` at build | Wrong `project_dir` or Dockerfile, or the image is missing what the OpenShell sandbox needs | See [What your agent needs](#what-your-agent-needs) |
 | `victim_not_instrumented` | The agent is not connected to NeMo Relay | Attach the Relay middleware and activate the Relay plugin |

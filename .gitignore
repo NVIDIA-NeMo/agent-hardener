@@ -263,5 +263,6 @@ Desktop.ini
 # War-game run output from the example victim.
 examples/*/artifacts/
 
-# Architecture notes are kept locally, not in the repo.
-docs/
+# Architecture notes are kept locally, not in the repo; only the setup guide is tracked.
+docs/*
+!docs/SETUP.md
