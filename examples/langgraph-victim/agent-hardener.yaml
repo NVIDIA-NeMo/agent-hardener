@@ -39,3 +39,9 @@ agent:
   - INFERENCE_API_KEY     # pragma: allowlist secret
   # No guardrails_tool: the defender targets whatever tool each attack actually reached, so both
   # bash_executor and python_executor get guarded as attacks land on them.
+
+# Hand the attackers this agent's tools from recon.yaml instead of having garak ask the agent for them.
+# garak:
+#   recon:
+#     source: static
+#     file: recon.yaml

@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from agent_hardener.agents.attackers.garak_probes import AGENT_BREAKER, GarakProbe
 from agent_hardener.errors import ATTACKER_LLM_UNAVAILABLE
 
 #: garak prints where it writes its detailed log; stdout carries none of the probe's warnings.
@@ -193,10 +194,17 @@ _NO_ATTACKS_GENERATED = ScanFailure(
     "Check garak.max_attempts_per_tool (it must be at least 1) and garak's log for why the attacker model's "
     "exploit prompts were empty.",
 )
-#: Logged once the analysis has picked its targets, just before the first attack is built.
-_TARGETS_CHOSEN = re.compile(r"AgentBreaker # Attacking (\d+) tools")
-#: Lines that say what garak did; DEBUG transport noise is left out of an unexplained failure's excerpt.
-_NOTEWORTHY = re.compile(r"\b(WARNING|ERROR)\b|AgentBreaker #")
+
+
+def _targets_chosen(probe: GarakProbe) -> re.Pattern[str]:
+    """Logged once the analysis has picked its targets, just before the first attack is built."""
+    return re.compile(rf"{re.escape(probe.probe_class)} # Attacking (\d+) tools")
+
+
+def _noteworthy(probe: GarakProbe) -> re.Pattern[str]:
+    """Lines that say what garak did; DEBUG transport noise is left out of an unexplained failure's excerpt."""
+    return re.compile(rf"\b(WARNING|ERROR)\b|{re.escape(probe.probe_class)} #")
+
 
 _ATTEMPTS_NOT_RECORDED = ScanFailure(
     "attempts_not_recorded",
@@ -208,7 +216,9 @@ _ATTEMPTS_NOT_RECORDED = ScanFailure(
 _ATTACK_STARTED = "Starting NEW conversation"
 
 
-def diagnose_scan(evidence: ScanEvidence, log_text: str, *, target_uri: str) -> ScanFailure | None:
+def diagnose_scan(
+    evidence: ScanEvidence, log_text: str, *, target_uri: str, probe: GarakProbe = AGENT_BREAKER
+) -> ScanFailure | None:
     """Explain a scan that produced no usable attacks, or ``None`` when it did.
 
     Checked in causal order, so the most upstream cause wins: rejected model credentials explain an
@@ -218,12 +228,13 @@ def diagnose_scan(evidence: ScanEvidence, log_text: str, *, target_uri: str) -> 
         evidence: What the report says was sent and answered.
         log_text: garak's detailed log (stdout's when the detailed one is missing).
         target_uri: The victim's endpoint, so its own responses are not read as the attacker's.
+        probe: The probe that ran, whose class name marks its own log lines.
     """
     lines = _current_run(log_text.splitlines())
     if (auth := _model_auth_failure(lines, target_uri)) is not None:
         return auth
     if evidence.attempts == 0:
-        return _zero_attempts(lines)
+        return _zero_attempts(lines, probe)
     if evidence.answered == 0:
         return ScanFailure(
             "victim_unreachable",
@@ -270,10 +281,11 @@ def _model_auth_failure(lines: list[str], target_uri: str) -> ScanFailure | None
     )
 
 
-def _zero_attempts(lines: list[str]) -> ScanFailure:
+def _zero_attempts(lines: list[str], probe: GarakProbe) -> ScanFailure:
     if any(_ATTACK_STARTED in line for line in lines):
         return _ATTEMPTS_NOT_RECORDED
-    chosen = [match for line in lines if (match := _TARGETS_CHOSEN.search(line))]
+    targets_chosen = _targets_chosen(probe)
+    chosen = [match for line in lines if (match := targets_chosen.search(line))]
     if chosen:
         targets = f"{chosen[-1].group(1)} tool(s)"
         return replace(_NO_ATTACKS_GENERATED, message=_NO_ATTACKS_GENERATED.message.format(targets=targets))
@@ -287,7 +299,8 @@ def _zero_attempts(lines: list[str]) -> ScanFailure:
         if cause is not None:
             detail = lines[cause].split(rule.preceding, 1)[-1].strip(" :")
             return replace(rule.failure, message=f"{rule.failure.message} ({detail})") if detail else rule.failure
-    noteworthy = [line for line in lines if _NOTEWORTHY.search(line)] or lines
+    marker = _noteworthy(probe)
+    noteworthy = [line for line in lines if marker.search(line)] or lines
     tail = "\n".join(noteworthy[-_TAIL_LINES:])
     return ScanFailure(
         "zero_attempts",

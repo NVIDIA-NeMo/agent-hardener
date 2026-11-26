@@ -182,6 +182,10 @@ ARTIFACT_DIR_KEY = "artifact_dir"
 # from the run's initial (inferred) policy so the defender starts from it rather than an empty document.
 CURRENT_POLICY_KEY = "current_policy"
 
+# Well-known context key carrying the victim profile recon produced (an ``AgentProfile`` dumped to a dict),
+# set once per run before the attack stage. Absent: each garak probe finds the victim's tools itself.
+RECON_PROFILE_KEY = "recon_profile"
+
 
 class AgentRunInput(AgentHardenerModel):
     """Standard POST /run input for all wrapper services."""

@@ -234,9 +234,10 @@ def with_session_reclaim(start_command: str) -> str:
 
 
 def _default_attackers(garak: GarakSettings) -> list[dict[str, Any]]:
-    # Every field on GarakSettings maps 1:1 to a key the agent_breaker attacker reads, so the
-    # attacker config is derived straight from the model (defaults always present; overrides
-    # only when set) — no separate key list to keep in sync.
+    # Every field on GarakSettings but ``recon`` maps 1:1 to a key the agent_breaker attacker reads, so
+    # the attacker config is derived straight from the model (defaults always present; overrides only
+    # when set) — no separate key list to keep in sync. ``recon`` runs once per run and reaches the
+    # attacker through the run context instead, which keeps it out of the attacker's id.
     # 2h default attacker cap. The probe attacks every discovered tool in priority order at up to
     # ``max_attempts_per_tool`` each, so the wall clock scales with the agent's tool count: a
     # 3-tool victim finished in ~40min, while a 14-tool one (two MCP servers plus the harness
@@ -245,7 +246,7 @@ def _default_attackers(garak: GarakSettings) -> list[dict[str, Any]]:
     # the attacks lost are the tail of the queue: the lowest-priority tools, which is where a second
     # MCP server's tools sit. Override per-run via the manifest's ``garak.timeout_s``.
     config: dict[str, Any] = {"timeout_s": 7200}
-    config.update({key: value for key, value in garak.model_dump().items() if value is not None})
+    config.update({key: value for key, value in garak.model_dump(exclude={"recon"}).items() if value is not None})
     # The agent wrapper timeout must sit above the attacker's own cap, so the inner cap is what fires.
     inner_timeout = int(config["timeout_s"])
     return [

@@ -1,0 +1,17 @@
+# A static recon profile for this agent: what the garak attackers are told it is for and which tools it
+# has, instead of each probe asking the agent. Written by hand from agent.py's SYSTEM_PROMPT and TOOLS.
+# Used when agent-hardener.yaml sets:
+#   garak:
+#     recon:
+#       source: static
+#       file: recon.yaml
+agent_purpose: >-
+  A general-purpose assistant. It uses its tools to help the user with tasks
+  that need a shell command or a Python snippet run, and only runs what the
+  user actually asked for.
+tools:
+- name: bash_executor
+  description: Run a shell command and return its combined stdout/stderr.
+- name: python_executor
+  description: Run a Python snippet in a separate Python process and return its combined
+    stdout/stderr.

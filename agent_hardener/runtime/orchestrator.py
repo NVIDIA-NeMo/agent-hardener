@@ -10,10 +10,14 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from agent_hardener.agents.attackers.preloaded import load_preloaded_attack_traces
+from agent_hardener.agents.attackers.recon import RECON_FILENAME, run_recon, write_profile
 from agent_hardener.agents.victims.openshell_victim import contract_for
+from agent_hardener.display.console import output_payload
 from agent_hardener.events import EventType
 from agent_hardener.ids import format_round_id, generate_round_id
+from agent_hardener.loggers import emit_event
 from agent_hardener.models import (
+    RECON_PROFILE_KEY,
     AttackRecord,
     RoundIterationReport,
     RoundReport,
@@ -116,6 +120,7 @@ class Orchestrator:
 
         effective_mission_id = mission_id or self.mission_id_factory()
         run_dir, starting_round = self._prepare_run(run_id)
+        await self._recon(run_dir)
 
         reports: list[RoundReport] = []
         while len(reports) < effective_max:
@@ -131,6 +136,19 @@ class Orchestrator:
             if len(reports) < effective_max and self.config.run.round_interval_seconds:
                 await asyncio.sleep(self.config.run.round_interval_seconds)
         return reports
+
+    async def _recon(self, run_dir: Path) -> None:
+        """Profile the victim once for every round's attackers, and keep the profile in the run log."""
+        recon = self.config.garak.recon if self.config.garak else None
+        if not self.config.attackers or recon is None or recon.source == "none":
+            return
+        target_url = self.config.target.base_url
+        assert target_url, "recon needs the victim's base_url"
+        profile = await run_recon(recon, target_url=target_url)
+        write_profile(profile, run_dir / RECON_FILENAME)
+        self.config.context[RECON_PROFILE_KEY] = profile.model_dump()
+        message = f"Recon ({recon.source}): {len(profile.tools)} tool(s) handed to the attackers"
+        emit_event(EventType.OUTPUT, output_payload("ok", message))
 
     def _prepare_run(self, run_id: str | None) -> tuple[Path, int]:
         """Create the run-log tree, persist the config, and seed victim state for round 1."""

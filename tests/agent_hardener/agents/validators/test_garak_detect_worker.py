@@ -20,8 +20,8 @@ import pytest
 
 from agent_hardener.agents.validators import _garak_detect_worker as worker
 
-_DIRECT = "direct_prompt_injection"
-_INDIRECT = "indirect_prompt_injection"
+_DIRECT = ["garak.detectors.agent_breaker", "AgentBreakerResult"]
+_INDIRECT = ["garak.detectors.indirect_injection", "IndirectInjectionResult"]
 
 
 class _Detector:
@@ -61,13 +61,13 @@ def fake_garak(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _request(
-    attack_type: str = _DIRECT,
+    detector: list[str] = _DIRECT,
     config_root: dict[str, Any] | None = None,
     repo_path: str | None = None,
     **verify: Any,
 ) -> dict[str, Any]:
     return {
-        "attack_type": attack_type,
+        "detector": detector,
         "config_root": config_root if config_root is not None else {"model": "m"},
         "verify_kwargs": verify,
         "repo_path": repo_path,
@@ -93,7 +93,7 @@ def _serve_requests(monkeypatch: pytest.MonkeyPatch, *requests: dict[str, Any]) 
 # --- detector construction and caching ---------------------------------------------------------------------
 
 
-def test_each_attack_type_loads_its_own_detector_class_with_the_config_root(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_each_named_detector_loads_its_own_class_with_the_config_root(monkeypatch: pytest.MonkeyPatch) -> None:
     _serve_requests(monkeypatch, _request(_DIRECT, {"k": "v"}), _request(_INDIRECT, {"k": "v"}))
 
     assert [(type(d).__name__, d.config_root) for d in _Detector.instances] == [
@@ -110,14 +110,14 @@ def test_an_identical_config_reuses_the_detector_regardless_of_key_order(monkeyp
 
 
 @pytest.mark.parametrize(
-    ("other_type", "other_config"),
+    ("other_detector", "other_config"),
     [(_DIRECT, {"a": 2}), (_INDIRECT, {"a": 1})],
-    ids=["different-config", "different-attack-type"],
+    ids=["different-config", "different-detector"],
 )
-def test_a_different_config_or_attack_type_gets_a_new_detector(
-    monkeypatch: pytest.MonkeyPatch, other_type: str, other_config: dict[str, Any]
+def test_a_different_config_or_detector_gets_a_new_detector(
+    monkeypatch: pytest.MonkeyPatch, other_detector: list[str], other_config: dict[str, Any]
 ) -> None:
-    _serve_requests(monkeypatch, _request(config_root={"a": 1}), _request(other_type, other_config))
+    _serve_requests(monkeypatch, _request(config_root={"a": 1}), _request(other_detector, other_config))
 
     assert len(_Detector.instances) == 2
 
@@ -186,10 +186,11 @@ def test_blank_lines_are_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
     [
         ("{not json", "JSONDecodeError"),
         (json.dumps({"config_root": {}, "verify_kwargs": {}}), "KeyError"),
-        (json.dumps(_request("sql_injection")), "KeyError"),
+        (json.dumps(_request(["garak.detectors.sql_injection", "SqlResult"])), "ModuleNotFoundError"),
+        (json.dumps(_request(["os", "system"])), "ValueError: not a garak detector module"),
         (json.dumps(_request(explode=True)), "ValueError: detector blew up"),
     ],
-    ids=["bad-json", "missing-field", "unknown-attack", "detector-error"],
+    ids=["bad-json", "missing-field", "unknown-detector", "not-a-detector", "detector-error"],
 )
 def test_a_bad_request_gets_an_error_reply_and_the_worker_keeps_serving(
     monkeypatch: pytest.MonkeyPatch, line: str, error_prefix: str

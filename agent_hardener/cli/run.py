@@ -108,7 +108,6 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
                 PreloadedAttackConfig(
                     name=preload_name,
                     path=hitlog_path.resolve(),
-                    source="garak-agent-breaker",
                     traces_path=traces_path,
                 )
             ],

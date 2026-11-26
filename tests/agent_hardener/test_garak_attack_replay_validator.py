@@ -201,7 +201,7 @@ def test_persistent_worker_parses_output_and_sends_request(tmp_path: Path, monke
     worker.close()
 
     assert result == (True, 0.88, "leaked")
-    assert sent["attack_type"] == "direct_prompt_injection"
+    assert sent["detector"] == ["garak.detectors.agent_breaker", "AgentBreakerResult"]
     assert sent["verify_kwargs"]["target_tool"] == "bash"
 
 

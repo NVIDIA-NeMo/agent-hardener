@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from typing import Any
 
 from agent_hardener.agents.attackers.agent_breaker.config import DEFAULT_MODEL_TIMEOUT_SECONDS
+from agent_hardener.agents.attackers.garak_probes import AGENT_BREAKER, GarakProbe
 from agent_hardener.env import NIM_API_KEY
 from agent_hardener.garak_venv import garak_subprocess_env
 from agent_hardener.model_check import probe_generation, raise_if_unavailable
@@ -29,9 +30,9 @@ class _ModelCall:
     extra_body: dict[str, Any] | None
 
 
-async def check_model_endpoints(config: dict[str, Any]) -> None:
+async def check_model_endpoints(config: dict[str, Any], probe: GarakProbe = AGENT_BREAKER) -> None:
     """Raise :class:`~agent_hardener.errors.ModelUnavailableError` when a garak NIM model won't answer."""
-    calls = _model_calls(config)
+    calls = _model_calls(config, probe)
     api_key = garak_subprocess_env().get(NIM_API_KEY)
     verdicts = await asyncio.gather(
         *(
@@ -45,16 +46,16 @@ async def check_model_endpoints(config: dict[str, Any]) -> None:
         raise_if_unavailable(call.label, call.model, call.uri, verdict)
 
 
-def _model_calls(config: dict[str, Any]) -> list[_ModelCall]:
+def _model_calls(config: dict[str, Any], probe: GarakProbe) -> list[_ModelCall]:
     plugins = config.get("plugins") or {}
-    probe = ((plugins.get("probes") or {}).get("agent_breaker") or {}).get("AgentBreaker") or {}
-    detector = ((plugins.get("detectors") or {}).get("agent_breaker") or {}).get("AgentBreakerResult") or {}
+    red_team = probe.plugin_config(plugins, "probes")
+    detector = probe.plugin_config(plugins, "detectors")
     roles = (
         (
             "red-team",
-            probe.get("red_team_model_type"),
-            probe.get("red_team_model_name"),
-            probe.get("red_team_model_config"),
+            red_team.get("red_team_model_type"),
+            red_team.get("red_team_model_name"),
+            red_team.get("red_team_model_config"),
         ),
         (
             "detector",

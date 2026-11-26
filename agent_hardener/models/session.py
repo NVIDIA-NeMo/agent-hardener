@@ -28,6 +28,9 @@ class StorageConfig(AgentHardenerModel):
 class RunConcurrencySettings(AgentHardenerModel):
     """Concurrency caps for orchestration phases and per-agent item work."""
 
+    #: Attackers run at once against the victim; unset runs them all together. Set ``1`` for a victim or a
+    #: model key that cannot take two scans at the same time.
+    attackers: int | None = Field(default=None, ge=1)
     defenders: int = Field(default=2, ge=1)
     validators: int = Field(default=2, ge=1)
     guardrails_findings: int = Field(default=2, ge=1)
@@ -160,6 +163,15 @@ class SessionConfig(AgentHardenerModel):
         if value is None or base_dir is None or value.is_absolute():
             return value
         return Path(base_dir) / value
+
+    @field_validator("garak")
+    @classmethod
+    def resolve_recon_file(cls, value: GarakSettings | None, info: ValidationInfo) -> GarakSettings | None:
+        base_dir = info.context.get("base_dir") if info.context else None
+        recon_file = value.recon.file if value is not None else None
+        if value is None or recon_file is None or base_dir is None or recon_file.is_absolute():
+            return value
+        return value.model_copy(update={"recon": value.recon.model_copy(update={"file": Path(base_dir) / recon_file})})
 
 
 def _validate_agent_roles(agents: list[AgentConfig], role: AgentRole, section: str) -> list[AgentConfig]:

@@ -69,6 +69,8 @@ class EventType(StrEnum):
     # Attack stage
     PRELOADED_ATTACKS_LOADED = ("preloaded_attacks_loaded", EventCategory.ATTACK)
     ATTACKERS_COMPLETED = ("attackers_completed", EventCategory.ATTACK)
+    #: An attacker with ``required=False`` failed; the round goes on with the other attackers' hits.
+    ATTACKER_FAILURE_TOLERATED = ("attacker_failure_tolerated", EventCategory.ATTACK)
     ATTACK_SUMMARY = ("attack_summary", EventCategory.ATTACK)
     ARTIFACT_WRITTEN = ("artifact_written", EventCategory.ATTACK)
 

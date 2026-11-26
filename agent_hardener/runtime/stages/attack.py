@@ -24,7 +24,7 @@ from agent_hardener.storage import to_jsonable
 from agent_hardener.swarm_tracker import GARAK
 
 if TYPE_CHECKING:
-    from agent_hardener.models import SessionConfig
+    from agent_hardener.models import AgentConfig, SessionConfig
     from agent_hardener.runtime.round_store import RoundStore
     from agent_hardener.runtime.run_recorder import RunRecorder
     from agent_hardener.runtime.stages.agent_invoker import AgentInvoker
@@ -96,7 +96,7 @@ class AttackStage:
         recorder.emit(EventType.PHASE_STARTED, phase="attackers", count=len(self.config.attackers))
         results = await gather_limited_ordered(
             self.config.attackers,
-            len(self.config.attackers) or 1,
+            self.config.run.concurrency.attackers or len(self.config.attackers) or 1,
             lambda agent: self.invoker.run_agent(
                 agent, request, "attackers", recorder.mission_id, recorder.logger, recorder.events
             ),
@@ -133,6 +133,16 @@ class AttackStage:
         for agent, output in zip(self.config.attackers, live_outputs, strict=False):
             store.write_component(store.round_dir, "attacker", agent.name, output)
 
+        for agent, output in zip(self.config.attackers, live_outputs, strict=True):
+            if not agent.required and not output.ok:
+                recorder.logger.warning("optional attacker %s did not complete: %s", agent.name, output.error)
+                recorder.emit(
+                    EventType.ATTACKER_FAILURE_TOLERATED,
+                    agent_name=agent.name,
+                    agent_id=agent.agent_id,
+                    error=str(output.error or "did not complete"),
+                    failure_code=output.metadata.get("failure_code"),
+                )
         # A live attacker that failed (e.g. timed out) leaves no valid attack corpus — surface it as a
         # hard error rather than a spurious "0 hits". Artifacts above are already written for post-mortem.
         raise_on_attacker_failure(self.config.attackers, live_outputs)
@@ -147,19 +157,22 @@ _FAILURE_ERRORS: dict[str, type[AgentHardenerError]] = {
 }
 
 
-def raise_on_attacker_failure(attackers: list[Any], live_outputs: list[AttackRecord]) -> None:
-    """Raise if any live attacker did not complete (``ok=False``), classified by its failure code.
+def raise_on_attacker_failure(attackers: list[AgentConfig], live_outputs: list[AttackRecord]) -> None:
+    """Raise if any required live attacker did not complete (``ok=False``), classified by its failure code.
 
     A failed/partial attacker produces no scored hits, so a run that continued would report "0 hits" —
     a false negative that reads as "the victim resisted" when the scan never finished. Replay/preloaded
-    runs empty ``config.attackers``, so this is a no-op for them.
+    runs empty ``config.attackers``, so this is a no-op for them. An attacker with ``required=False`` is
+    left out: the stage has already warned about it, and the round keeps the required attackers' hits.
 
     An attacker that knows why it failed names it in ``metadata["failure_code"]`` and says what to do in
     ``metadata["remediation"]``. The first failure's code picks the error class, so a dead model endpoint
     is reported as a model problem, and a victim that never answered as a victim problem, rather than as
     an attacker timeout.
     """
-    failed = [(agent, out) for agent, out in zip(attackers, live_outputs, strict=False) if not out.ok]
+    failed = [
+        (agent, out) for agent, out in zip(attackers, live_outputs, strict=False) if not out.ok and agent.required
+    ]
     if not failed:
         return
     names = ", ".join(agent.name for agent, _ in failed)

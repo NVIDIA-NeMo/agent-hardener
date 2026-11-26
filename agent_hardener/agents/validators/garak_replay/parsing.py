@@ -11,17 +11,23 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
+
+from agent_hardener.agents.attackers.garak_probes import (
+    DETECTORS,
+    INDIRECT_PROBE,
+    PROBES,
+    AttackType,
+    probe_for_hit,
+    split_plugin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from agent_hardener.models import AttackRecord
 
-AttackType = Literal["direct_prompt_injection", "indirect_prompt_injection"]
-
-DIRECT_PROBE_KEYWORD = "agent_breaker"
-INDIRECT_PROBE_KEYWORD = "indirect_injection"
+INDIRECT_PROBE_KEYWORD = split_plugin(INDIRECT_PROBE)[0]
 
 
 @dataclass(frozen=True)
@@ -55,6 +61,16 @@ def iter_supported_hits(attacks: Iterable[AttackRecord]) -> Iterable[dict[str, A
 
 
 def identify_attack_type(hit: dict[str, Any]) -> AttackType | None:
+    """The attack type of ``hit``: by its garak ``probe`` when that is a known one, else by keywords.
+
+    The probe garak wrote wins over the ``source``, which a replay of preloaded hits may stamp with a
+    default that is not theirs.
+    """
+    probe = probe_for_hit(hit.get("probe"))
+    if probe is not None:
+        return probe.attack_type
+    if hit.get("probe") == INDIRECT_PROBE:
+        return "indirect_prompt_injection"
     haystack = " ".join(
         str(value or "")
         for value in (
@@ -63,8 +79,9 @@ def identify_attack_type(hit: dict[str, Any]) -> AttackType | None:
             hit.get("detector"),
         )
     ).lower()
-    if DIRECT_PROBE_KEYWORD in haystack or "agent-breaker" in haystack:
-        return "direct_prompt_injection"
+    for probe in PROBES.values():
+        if probe.key in haystack or probe.report_prefix in haystack:
+            return probe.attack_type
     if INDIRECT_PROBE_KEYWORD in haystack or "indirect-injection" in haystack:
         return "indirect_prompt_injection"
     return None
@@ -101,9 +118,8 @@ def parse_target_tool(prompt: str) -> str:
 
 
 def detector_namespace_and_class(attack_type: AttackType) -> tuple[str, str]:
-    if attack_type == "direct_prompt_injection":
-        return "agent_breaker", "AgentBreakerResult"
-    return "indirect_injection", "IndirectInjectionResult"
+    """The garak detector judging ``attack_type``, as the ``(<module>, <Class>)`` its config nests under."""
+    return split_plugin(DETECTORS[attack_type])
 
 
 def watched_github_targets(injection_location: str, injected_payload: str) -> list[GitHubIssueTarget]:

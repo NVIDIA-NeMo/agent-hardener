@@ -15,6 +15,7 @@ from agent_hardener.models.base import AgentHardenerModel, AgentRole, ValidatorK
 from agent_hardener.models.contracts import (
     ARTIFACT_DIR_KEY,
     CURRENT_POLICY_KEY,
+    RECON_PROFILE_KEY,
     AgentRunInput,
     AgentRunOutput,
     Artifact,
@@ -31,11 +32,14 @@ from agent_hardener.models.contracts import (
     VictimResult,
 )
 from agent_hardener.models.infra import (
+    AgentProfile,
     BackendEndpoint,
     BackendServiceSpec,
     DefenderSettings,
     GarakSettings,
     PreloadedAttackConfig,
+    ReconSettings,
+    ReconTool,
     RelayVictimSpec,
     VictimControlConfig,
 )
@@ -51,8 +55,10 @@ from agent_hardener.models.session import (
 __all__ = [
     "ARTIFACT_DIR_KEY",
     "CURRENT_POLICY_KEY",
+    "RECON_PROFILE_KEY",
     "AgentConfig",
     "AgentHardenerModel",
+    "AgentProfile",
     "AgentRole",
     "AgentRunInput",
     "AgentRunOutput",
@@ -69,6 +75,8 @@ __all__ = [
     "DefendersManagerOutput",
     "GarakSettings",
     "PreloadedAttackConfig",
+    "ReconSettings",
+    "ReconTool",
     "RelayVictimSpec",
     "RoundIterationReport",
     "RoundReport",

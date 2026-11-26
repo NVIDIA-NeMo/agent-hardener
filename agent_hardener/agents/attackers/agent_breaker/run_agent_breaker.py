@@ -12,11 +12,13 @@ overridden via ``target_uri`` (whole URL) or ``target_port`` (swap the port only
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
@@ -36,21 +38,31 @@ from agent_hardener.agents.attackers.agent_breaker.diagnosis import (
     read_scan_evidence,
 )
 from agent_hardener.agents.attackers.agent_breaker.preflight import check_model_endpoints
+from agent_hardener.agents.attackers.garak_probes import AGENT_BREAKER, GarakProbe
 from agent_hardener.agents.attackers.hits import normalize_hit_record
+from agent_hardener.agents.attackers.recon import staged_for_garak
 from agent_hardener.env import garak_command
 from agent_hardener.errors import ATTACKER_LLM_UNAVAILABLE, ModelUnavailableError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
-from agent_hardener.models import ARTIFACT_DIR_KEY, AgentConfig, AgentRunInput, Artifact, AttackRecord
+from agent_hardener.models import (
+    ARTIFACT_DIR_KEY,
+    RECON_PROFILE_KEY,
+    AgentConfig,
+    AgentProfile,
+    AgentRunInput,
+    Artifact,
+    AttackRecord,
+)
 
 DEFAULT_CONFIG_PATH = "garak-scan.yaml"
 DEFAULT_REPORT_DIR = ".agent-hardener/garak_runs"
-DEFAULT_REPORT_PREFIX = "agent-breaker"
+DEFAULT_REPORT_PREFIX = AGENT_BREAKER.report_prefix
 DEFAULT_TARGET_URI = "http://127.0.0.1:8000/v1/chat/completions"
 #: garak's stdout, beside its report; the detailed log it names is read for diagnosis.
-STDOUT_LOG_NAME = "garak-agent-breaker.log"
+STDOUT_LOG_NAME = AGENT_BREAKER.stdout_log_name
 #: garak's detailed log. Without ``GARAK_LOG_FILE`` it appends to one global ``$XDG_DATA_HOME/garak/garak.log``
 #: shared by every garak process on the host, which no single scan can be diagnosed from.
-DETAIL_LOG_NAME = "garak-agent-breaker.detail.log"
+DETAIL_LOG_NAME = AGENT_BREAKER.detail_log_name
 #: A scan whose failure is intermittent (see ``ScanFailure.retryable``) is run once more.
 MAX_SCANS = 2
 
@@ -202,8 +214,10 @@ async def run_agent_breaker_scan(
     garak_command: list[str] | None = None,
     runner: GarakRunner = _spawn_garak,
     preflight: Preflight | None = None,
+    probe: GarakProbe = AGENT_BREAKER,
+    agent_profile: AgentProfile | None = None,
 ) -> ScanResult:
-    """Render the garak config, run the AgentBreaker probe, and collect its hits.
+    """Render the garak config, run ``probe`` (AgentBreaker by default), and collect its hits.
 
     Args:
         target_uri: Victim chat-completions endpoint the probe attacks.
@@ -217,6 +231,9 @@ async def run_agent_breaker_scan(
             garak venv interpreter (see ``_garak_command`` / ``AGENT_HARDENER_GARAK_PYTHON``).
         runner: Injectable subprocess runner (return code) for testing.
         preflight: Check run on the resolved config before garak starts; raises to abort the scan.
+        probe: The garak probe to run; also names the config and log files written to ``report_dir``.
+        agent_profile: The victim's purpose and tools from recon, handed to the probe for the scan;
+            ``None`` lets the probe discover them.
 
     Returns:
         A :class:`ScanResult` with the exit code, hitlog rows, and artifact paths.
@@ -229,32 +246,39 @@ async def run_agent_breaker_scan(
         base = yaml.safe_load(scaffold.read_text(encoding="utf-8")) or {}
     else:
         base = build_agent_breaker_config(
-            target_uri=target_uri, report_dir=report_dir, report_prefix=report_prefix, overrides=overrides
+            target_uri=target_uri,
+            report_dir=report_dir,
+            report_prefix=report_prefix,
+            overrides=overrides,
+            probe=probe,
         )
-    resolved = apply_runtime_fields(
-        base,
-        target_uri=target_uri,
-        report_dir=str(report_dir_path),
-        report_prefix=report_prefix,
-        model_timeout=resolve_model_timeout(overrides),
-    )
-    if preflight is not None:
-        await preflight(resolved)
-
-    # Co-locate the resolved config + garak log with the report/hitlog under report_dir. When the
-    # orchestrator anchors report_dir to the run's iteration dir these become run-scoped; using a
-    # fixed name is safe because each run gets its own dir (no cross-run overwrite).
-    resolved_path = report_dir_path / "garak-agent-breaker.resolved.yaml"
-    resolved_path.write_text(yaml.safe_dump(resolved, sort_keys=False), encoding="utf-8")
-
-    command = [*(garak_command or _garak_command()), "--config", str(resolved_path)]
-    # Whole seconds: some filesystems store mtimes at that resolution, and a file garak writes within
-    # the same second as the scan starts must still count as this scan's.
-    started = float(int(time.time()))
     # A caller that already pins garak's log (agenteval does, per run) keeps it; diagnosis finds either
     # one through the path garak prints on stdout.
-    env = {"GARAK_LOG_FILE": str(report_dir_path / DETAIL_LOG_NAME), **garak_subprocess_env()}
-    return_code = await runner(command, report_dir_path / STDOUT_LOG_NAME, timeout_s, env)
+    env = {"GARAK_LOG_FILE": str(report_dir_path / probe.detail_log_name), **garak_subprocess_env()}
+    with staged_for_garak(agent_profile, env) if agent_profile else contextlib.nullcontext() as agent_config_file:
+        resolved = apply_runtime_fields(
+            base,
+            target_uri=target_uri,
+            report_dir=str(report_dir_path),
+            report_prefix=report_prefix,
+            model_timeout=resolve_model_timeout(overrides),
+            probe=probe,
+            agent_config_file=agent_config_file,
+        )
+        if preflight is not None:
+            await preflight(resolved)
+
+        # Co-locate the resolved config + garak log with the report/hitlog under report_dir. When the
+        # orchestrator anchors report_dir to the run's iteration dir these become run-scoped; using a
+        # fixed name is safe because each run gets its own dir (no cross-run overwrite).
+        resolved_path = report_dir_path / probe.resolved_config_name
+        resolved_path.write_text(yaml.safe_dump(resolved, sort_keys=False), encoding="utf-8")
+
+        command = [*(garak_command or _garak_command()), "--config", str(resolved_path)]
+        # Whole seconds: some filesystems store mtimes at that resolution, and a file garak writes within
+        # the same second as the scan starts must still count as this scan's.
+        started = float(int(time.time()))
+        return_code = await runner(command, report_dir_path / probe.stdout_log_name, timeout_s, env)
 
     hitlog = _latest(report_dir_path, report_prefix, ".hitlog.jsonl", since=started)
     report = _latest(report_dir_path, report_prefix, ".report.jsonl", since=started)
@@ -269,6 +293,7 @@ async def run_agent_breaker_scan(
 
 async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
     """Run AgentBreaker as an Agent Hardener attacker."""
+    probe = AGENT_BREAKER
     config = agent.config
     overrides = {key: config[key] for key in OVERRIDE_KEYS if config.get(key) is not None}
     # Precedence: an explicit report_dir override in the agent config wins; otherwise write to the ready
@@ -280,6 +305,8 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         target_uri=str(config["target_uri"]) if config.get("target_uri") else None,
         target_port=int(config["target_port"]) if config.get("target_port") is not None else None,
     )
+    recon_profile = request.context.get(RECON_PROFILE_KEY)
+    agent_profile = AgentProfile.model_validate(recon_profile) if recon_profile is not None else None
     retried_after: str | None = None
     for scan in range(1, MAX_SCANS + 1):
         try:
@@ -287,10 +314,13 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
                 target_uri=target_uri,
                 config_path=str(config.get("config_path", DEFAULT_CONFIG_PATH)),
                 report_dir=str(report_dir),
-                report_prefix=str(config.get("report_prefix", DEFAULT_REPORT_PREFIX)),
+                report_prefix=str(config.get("report_prefix", probe.report_prefix)),
                 overrides=overrides,
                 timeout_s=float(config["timeout_s"]) if config.get("timeout_s") is not None else None,
-                preflight=check_model_endpoints if scan == 1 else None,  # models were checked before the first scan
+                # models were checked before the first scan
+                preflight=partial(check_model_endpoints, probe=probe) if scan == 1 else None,
+                probe=probe,
+                agent_profile=agent_profile,
             )
         except ModelUnavailableError as exc:
             # Returned, not raised: the attack stage keeps only an exception's text, so a raise would reach the
@@ -303,14 +333,14 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
                 metadata={"failure_code": ATTACKER_LLM_UNAVAILABLE, "remediation": exc.remediation},
             )
         evidence = read_scan_evidence(Path(result.report_path) if result.report_path else None)
-        stdout_log = Path(report_dir).resolve() / STDOUT_LOG_NAME
+        stdout_log = Path(report_dir).resolve() / probe.stdout_log_name
         garak_log = detail_log_path(stdout_log) or stdout_log
-        failure = diagnose_scan(evidence, _read_text(garak_log), target_uri=target_uri)
+        failure = diagnose_scan(evidence, _read_text(garak_log), target_uri=target_uri, probe=probe)
         if failure is None or not failure.retryable or scan == MAX_SCANS:
             break
         logger.warning("garak scan %d produced no attacks (%s); running it once more", scan, failure.code)
         retried_after = failure.code
-    hits = _coerce_hits(result.hits)
+    hits = _coerce_hits(result.hits, probe)
     hit_count = len(hits)
     # Hits prove attacks were sent, so a report that counts none (missing, truncated) is the broken part:
     # do not discard real findings over it. Rejected credentials are not report-derived and still fail.
@@ -339,7 +369,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
         agent_id=agent.agent_id,
         agent_name=agent.name,
         ok=ok,
-        summary=_summary(hit_count, partial=result.return_code != 0),
+        summary=_summary(hit_count, probe, partial=result.return_code != 0),
         records=hits,
         artifacts=artifacts,
         error=f"[{failure.code}] {failure.message}" if failure else None,
@@ -369,17 +399,17 @@ def _tail(path: Path, lines: int = 20) -> str:
     return "\n".join(_read_text(path).splitlines()[-lines:])
 
 
-def _summary(hit_count: int, *, partial: bool = False) -> str:
+def _summary(hit_count: int, probe: GarakProbe, *, partial: bool = False) -> str:
     suffix = " (garak exited early — partial run)" if partial else ""
     if hit_count == 0:
-        return f"AgentBreaker completed without reported hits.{suffix}"
+        return f"{probe.probe_class} completed without reported hits.{suffix}"
     return (
-        f"AgentBreaker reported {hit_count} attack hit(s), "
+        f"{probe.probe_class} reported {hit_count} attack hit(s), "
         f"indicating a vulnerability or exploit path in the victim agent behavior.{suffix}"
     )
 
 
-def _coerce_hits(raw_hits: Any) -> list[dict[str, Any]]:
+def _coerce_hits(raw_hits: Any, probe: GarakProbe) -> list[dict[str, Any]]:
     if not isinstance(raw_hits, list):
-        return [{"source": "garak-agent-breaker", "raw_hits": raw_hits}]
-    return [normalize_hit_record(hit, index, "garak-agent-breaker") for index, hit in enumerate(raw_hits)]
+        return [{"source": probe.source, "raw_hits": raw_hits}]
+    return [normalize_hit_record(hit, index, probe.source) for index, hit in enumerate(raw_hits)]

@@ -17,13 +17,14 @@ import copy
 import os
 from typing import Any
 
+from agent_hardener.agents.attackers.garak_probes import AGENT_BREAKER, GarakProbe, split_plugin
 from agent_hardener.endpoint import EndpointContract
 from agent_hardener.relay_plugin.config import no_reasoning_body
 
 #: ``probes.<module>.<Class>`` — naming the class explicitly runs it even though the probe is
 #: ``active = False`` (only *modules* in ``probe_spec`` honour the active flag).
-PROBE_SPEC = "agent_breaker.AgentBreaker"
-DETECTOR_SPEC = "agent_breaker.AgentBreakerResult"
+PROBE_SPEC = AGENT_BREAKER.probe
+DETECTOR_SPEC = AGENT_BREAKER.detector
 
 # Baked-in defaults mirror the historical scan_agent_breaker.yaml; each is env-overridable.
 DEFAULT_RED_TEAM_MODEL_TYPE = "nim.NVOpenAIChat"
@@ -42,6 +43,8 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
 DEFAULT_MODEL_TIMEOUT_SECONDS = 600
 # Empty by default: see the skip_codes comment in build_agent_breaker_config.
 DEFAULT_SKIP_CODES: list[int] = []
+#: The probe parameter naming the victim profile it attacks, relative to garak's data directories.
+AGENT_CONFIG_PARAM = "agent_config_file"
 
 _SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
 #: Match garak's AgentBreakerResult default so its structured verdict is not truncated.
@@ -118,8 +121,9 @@ def build_agent_breaker_config(
     report_prefix: str,
     overrides: dict[str, Any] | None = None,
     contract: EndpointContract | None = None,
+    probe: GarakProbe = AGENT_BREAKER,
 ) -> dict[str, Any]:
-    """Build the full garak run-config dict for the agent_breaker probe.
+    """Build the full garak run-config dict for ``probe`` (the agent_breaker probe by default).
 
     Args:
         target_uri: Victim chat-completions endpoint the RestGenerator attacks.
@@ -131,6 +135,7 @@ def build_agent_breaker_config(
             ``target_uri``. Passing the run's own contract is what keeps the attacker and the
             validators' replay sending the same request — otherwise a "blocked" verdict could just
             mean the two payload builders disagreed.
+        probe: The garak probe (and its detector) the config runs.
 
     Returns:
         A config mapping ready to ``yaml.safe_dump`` and pass to ``garak --config``.
@@ -143,13 +148,15 @@ def build_agent_breaker_config(
     generations = int(_resolve("generations", DEFAULT_GENERATIONS, overrides))
     model_timeout = resolve_model_timeout(overrides) or DEFAULT_MODEL_TIMEOUT_SECONDS
     json_mode = resolve_json_mode(overrides)
+    probe_module, probe_class = split_plugin(probe.probe)
+    detector_module, detector_class = split_plugin(probe.detector)
     return {
         "run": {"generations": generations},
         "plugins": {
             "target_type": "rest.RestGenerator",
             "target_name": "personal-assistant",
-            "probe_spec": PROBE_SPEC,
-            "extended_detectors": [DETECTOR_SPEC],
+            "probe_spec": probe.probe,
+            "extended_detectors": [probe.detector],
             "generators": {
                 "rest": {
                     "RestGenerator": {
@@ -175,8 +182,8 @@ def build_agent_breaker_config(
                 }
             },
             "probes": {
-                "agent_breaker": {
-                    "AgentBreaker": {
+                probe_module: {
+                    probe_class: {
                         "max_attempts_per_tool": max_attempts,
                         "red_team_model_type": _resolve("red_team_model_type", DEFAULT_RED_TEAM_MODEL_TYPE, overrides),
                         "red_team_model_name": red_team_model,
@@ -190,8 +197,8 @@ def build_agent_breaker_config(
                 }
             },
             "detectors": {
-                "agent_breaker": {
-                    "AgentBreakerResult": {
+                detector_module: {
+                    detector_class: {
                         "detector_model_type": _resolve("detector_model_type", DEFAULT_DETECTOR_MODEL_TYPE, overrides),
                         "detector_model_name": detector_model,
                         "detector_model_config": _model_config(
@@ -215,21 +222,28 @@ def apply_runtime_fields(
     report_dir: str,
     report_prefix: str,
     model_timeout: int | None = None,
+    probe: GarakProbe = AGENT_BREAKER,
+    agent_config_file: str | None = None,
 ) -> dict[str, Any]:
     """Return a copy of ``config`` with the resolved per-run fields forced.
 
     Lets a user-edited scaffold (model settings, probe params) survive while guaranteeing the
     target ``uri`` and reporting destination always match the current run. An explicit
     ``model_timeout`` replaces the scaffold's model timeouts; otherwise a scaffold without one
-    gets the default rather than garak's 60s.
+    gets the default rather than garak's 60s. ``agent_config_file`` (a name relative to garak's
+    data directory) points the probe at the run's recon profile; unset, the probe keeps its own.
     """
     resolved = copy.deepcopy(config)
     plugins = resolved.setdefault("plugins", {})
+    if agent_config_file is not None:
+        module, class_name = split_plugin(probe.probe)
+        probe_block = plugins.setdefault("probes", {}).setdefault(module, {}).setdefault(class_name, {})
+        probe_block[AGENT_CONFIG_PARAM] = agent_config_file
     generator = plugins.setdefault("generators", {}).setdefault("rest", {}).setdefault("RestGenerator", {})
     generator["uri"] = target_uri
     # A scaffold authored before this setting gets the default rather than an inherited NAT-ism.
     generator.setdefault("skip_codes", list(DEFAULT_SKIP_CODES))
-    for model_config in _model_configs(plugins):
+    for model_config in _model_configs(plugins, probe):
         if model_timeout is not None:
             model_config["timeout"] = model_timeout
         else:
@@ -238,8 +252,9 @@ def apply_runtime_fields(
     return resolved
 
 
-def _model_configs(plugins: dict[str, Any]) -> list[dict[str, Any]]:
-    probe = ((plugins.get("probes") or {}).get("agent_breaker") or {}).get("AgentBreaker") or {}
-    detector = ((plugins.get("detectors") or {}).get("agent_breaker") or {}).get("AgentBreakerResult") or {}
-    candidates = (probe.get("red_team_model_config"), detector.get("detector_model_config"))
+def _model_configs(plugins: dict[str, Any], probe: GarakProbe) -> list[dict[str, Any]]:
+    candidates = (
+        probe.plugin_config(plugins, "probes").get("red_team_model_config"),
+        probe.plugin_config(plugins, "detectors").get("detector_model_config"),
+    )
     return [config for config in candidates if isinstance(config, dict)]
