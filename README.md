@@ -109,46 +109,6 @@ NVIDIA Build, add its settings first: see [Model providers](#model-providers).
 
 ## Configuration
 
-### Credentials and environment variables
-
-| Variable | Used for | Needed |
-|---|---|---|
-| `INFERENCE_API_KEY` | The key for your model provider. Used by the analysis models, and passed to your agent when it is listed under `agent.secrets`. | Yes |
-| `NIM_API_KEY` | garak's red-team and detector models | No: copied from `INFERENCE_API_KEY` when unset |
-| `AGENT_HARDENER_SAFETY_API_KEY` | The guardrail judge inside your agent | No: copied from `INFERENCE_API_KEY` when unset |
-| `AGENT_HARDENER_SAFETY_BASE_URL` | The guardrail judge's endpoint | No: defaults to `AGENT_HARDENER_BASE_URL` |
-| `AGENT_HARDENER_MODEL`, `AGENT_HARDENER_BASE_URL` | The analysis model and endpoint | Only off NVIDIA Build |
-| `GARAK_*` | The attack models; see [Garak overrides](#garak-overrides) | Only off NVIDIA Build |
-
-If you set `NIM_API_KEY` or `AGENT_HARDENER_SAFETY_API_KEY` yourself, it wins over the copy, so a stale value
-breaks the run even when `INFERENCE_API_KEY` is right.
-
-**Which value wins,** highest first:
-
-1. An explicit value in the manifest or session config.
-2. A variable already set in the shell (`export`, or injected by CI).
-3. The `--env-file` value (default `.env`). The file only fills variables that are unset or empty. When a shell
-   export differs from the file, the command prints a warning naming the variable (never its value).
-4. The built-in default.
-
-If you see that warning for a stale export, `unset` it so the file is used.
-
-### Choosing models
-
-Agent Hardener uses four groups of models:
-
-| Group | Covers | Default | Set with |
-|---|---|---|---|
-| Attack | garak red-team model and detector, and the replay validator's detector | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_*` env vars or the manifest's `garak:` block |
-| Analysis | defenders, benign suite generation and judging | `nvidia/nemotron-3-ultra-550b-a55b` | `AGENT_HARDENER_MODEL`, `AGENT_HARDENER_BASE_URL` |
-| Safety judge | the guardrail judge inside your agent | the analysis model | `AGENT_HARDENER_SAFETY_BASE_URL`, `AGENT_HARDENER_SAFETY_API_KEY` |
-| Your agent | your agent's own LLM | your agent's code | `agent.env` in the manifest |
-
-All defaults point at NVIDIA Build (`https://integrate.api.nvidia.com/v1`).
-
-Before building anything, `run` checks every model you overrode against its endpoint. If the name, URL or key is
-wrong it stops within seconds and lists the models your key can reach.
-
 ### Model providers
 
 Agent Hardener works with any OpenAI-compatible endpoint. The three providers below were each tested with one
@@ -234,31 +194,6 @@ agent:
 - **A credential placeholder in the conversation is refused.** If an attack makes the agent print its
   environment, OpenShell's key placeholder enters the conversation and the gateway refuses to forward later model
   calls that contain it (HTTP 403). This can happen on any provider. The run still completes.
-
-### Garak overrides
-
-Add a `garak:` block to the manifest to tune the attacker. Every field is optional, and the model fields can also
-be set with the matching `GARAK_<FIELD>` environment variable.
-
-| Field | Default | Env variable | Purpose |
-|---|---|---|---|
-| `red_team_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_RED_TEAM_MODEL_NAME` | Model that plans the attacks |
-| `red_team_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_RED_TEAM_MODEL_URI` | Its endpoint |
-| `detector_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_DETECTOR_MODEL_NAME` | Model that judges which attacks landed, also used by the replay validator |
-| `detector_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_DETECTOR_MODEL_URI` | Its endpoint |
-| `max_attempts_per_tool` | `5` | `GARAK_MAX_ATTEMPTS_PER_TOOL` | Attack attempts per discovered tool |
-| `model_timeout` | `600` | `GARAK_MODEL_TIMEOUT` | Timeout in seconds for each red-team or detector call |
-| `target_port` | the agent's port | | Attack the agent on a different port |
-
-```yaml
-garak:
-  max_attempts_per_tool: 8
-  detector_model_name: nvidia/nemotron-3-ultra-550b-a55b
-```
-
-`agent-hardener init` also writes a `garak-scan.yaml` (a standard garak config) in the current directory, and
-the attacker reads it on every run. Settings in that file, such as the model, override the defaults, so delete
-or edit a leftover `garak-scan.yaml` if a change does not take effect.
 
 ## Run on your own agent
 
