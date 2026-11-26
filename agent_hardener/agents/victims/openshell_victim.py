@@ -50,11 +50,21 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> VictimResult:
         rate_limit = rate_limit_error_from_exception(exc, source=f"victim {agent.name}")
         if rate_limit is not None:
             raise rate_limit from exc
-        # A transport-level failure here (connection refused, server disconnected, timeout) means the
-        # victim/sandbox is DOWN, not that the agent produced a bad answer. Abort loudly instead of
+        # A transport-level failure here (connection refused, server disconnected, no answer in time) means
+        # the victim cannot be used, not that the agent produced a bad answer. Abort loudly instead of
         # returning a soft failure that lets the run replay against a dead victim and report "0 blocked".
+        # httpx leaves some errors without a message (a read timeout's is empty), so the type always shows.
+        reason = f"{type(exc).__name__}: {exc}" if str(exc) else type(exc).__name__
+        if isinstance(exc, httpx.ReadTimeout):
+            # The request reached the agent and it never answered: it is running, not crashed.
+            raise VictimUnavailableError(
+                f"OpenShell victim {agent.name} at {url} did not answer within {contract.timeout_seconds:g}s "
+                f"({reason}).",
+                remediation="The agent is up but did not answer in time — most often its own model call stalled "
+                "or was rate limited. Re-run; if it recurs, check the victim's model endpoint and its log.",
+            ) from exc
         msg = (
-            f"OpenShell victim {agent.name} is unreachable at {url} ({exc}). The sandbox or victim agent "
+            f"OpenShell victim {agent.name} is unreachable at {url} ({reason}). The sandbox or victim agent "
             "likely crashed — commonly a malformed workflow/policy it failed to load. Check the victim logs."
         )
         raise VictimUnavailableError(msg) from exc

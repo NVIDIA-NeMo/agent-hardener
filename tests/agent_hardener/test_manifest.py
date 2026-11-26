@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
 import pytest
@@ -312,6 +313,19 @@ def test_example_manifest_builds_the_bundled_victim_with_nothing_outside_the_rep
     project_dir = (REPO_ROOT / "examples" / osc.relay_victim.project_dir).resolve()
     assert project_dir == REPO_ROOT / "examples/langgraph-victim"
     assert (project_dir / osc.relay_victim.dockerfile).is_file()
+
+
+def test_the_bundled_victims_model_call_gives_up_before_the_victim_stage_does() -> None:
+    # Otherwise a stalled model call fails the whole run instead of being answered as a model error.
+    tree = ast.parse((REPO_ROOT / "examples/langgraph-victim/agent.py").read_text(encoding="utf-8"))
+    constants = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
+        if node.targets[0].id in {"MODEL_TIMEOUT_SECONDS", "MODEL_MAX_RETRIES"}
+    }
+    victim_stage_wait = load_config(str(REPO_ROOT / "examples/agent-hardener.yaml")).victim.timeout_seconds
+    assert constants["MODEL_TIMEOUT_SECONDS"] * (constants["MODEL_MAX_RETRIES"] + 1) < victim_stage_wait
 
 
 # --- garak settings -----------------------------------------------------------------------

@@ -71,9 +71,10 @@ class VictimBuildError(AgentHardenerError):
 class VictimUnavailableError(AgentHardenerError):
     """The victim agent (or its sandbox) is unreachable mid-run — the run cannot continue.
 
-    Raised on a transport-level failure talking to the victim (connection refused, server disconnected,
-    read timeout): the sandbox or the agent has crashed — commonly because a malformed guardrail set or
-    policy was deployed and the agent failed to load it. Fail loudly here rather than let the pipeline
+    Raised on a transport-level failure talking to the victim: connection refused or server disconnected
+    (the sandbox or the agent has crashed — commonly because a malformed guardrail set or policy was
+    deployed and the agent failed to load it), or a read timeout (the agent is up but did not answer in
+    time, which carries its own remediation). Fail loudly here rather than let the pipeline
     replay attacks and benign requests against a dead victim and report meaningless "0 blocked" results.
     """
 

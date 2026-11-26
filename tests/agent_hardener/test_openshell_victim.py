@@ -3,7 +3,7 @@
 
 """The OpenShell victim aborts loudly when the sandbox/victim is unreachable.
 
-A transport-level failure (connection refused, server disconnected, timeout) means the victim crashed —
+A transport-level failure (connection refused, server disconnected, no answer in time) means the victim is unusable —
 the run must raise VictimUnavailableError, not return a soft ok=False that lets attacks replay against a
 dead victim and report a meaningless "0 blocked".
 """
@@ -65,6 +65,26 @@ def test_connection_refused_raises_victim_unavailable(monkeypatch: pytest.Monkey
     _patch_client(monkeypatch, _FakeClient(raises=httpx.ConnectError("[Errno 61] Connection refused")))
     with pytest.raises(VictimUnavailableError):
         asyncio.run(ov.run(_request(), _agent()))
+
+
+def test_a_victim_that_never_answers_is_reported_as_slow_not_crashed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # httpx's read timeout carries no message, which used to leave the reason as "()".
+    _patch_client(monkeypatch, _FakeClient(raises=httpx.ReadTimeout("")))
+    with pytest.raises(VictimUnavailableError) as exc_info:
+        asyncio.run(ov.run(_request(), _agent()))
+    assert "did not answer within 30s (ReadTimeout)" in str(exc_info.value)
+    assert "crashed" not in str(exc_info.value)
+    assert "model call stalled" in exc_info.value.remediation
+
+
+def test_an_unreachable_victim_names_the_error_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_client(monkeypatch, _FakeClient(raises=httpx.ConnectError("[Errno 61] Connection refused")))
+    with pytest.raises(VictimUnavailableError) as exc_info:
+        asyncio.run(ov.run(_request(), _agent()))
+    assert "unreachable at http://victim.test/v1/chat/completions (ConnectError: [Errno 61] Connection refused)" in str(
+        exc_info.value
+    )
+    assert "malformed workflow" in exc_info.value.remediation
 
 
 def test_normal_response_returns_victim_result(monkeypatch: pytest.MonkeyPatch) -> None:
