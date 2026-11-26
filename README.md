@@ -84,28 +84,69 @@ Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summar
 - **Credentials:** an API key for your model provider, in a `.env` file.
 - **Agent Hardener:** the `agent-hardener` CLI, plus a one-time `agent-hardener setup`.
 
-## Quickstart: run on the example agent
+## Quickstart: run directly
 
-The repository includes a small LangGraph agent with two tools, `bash_executor` and `python_executor`, that run
-inside the OpenShell sandbox. It is connected to NeMo Relay and needs no backends.
+Clone the repository and run Agent Hardener on its example agent: a small LangGraph agent with two tools,
+`bash_executor` and `python_executor`, that run inside the OpenShell sandbox. It is connected to NeMo Relay and
+needs no backends.
 
 ```bash
 git clone https://github.com/NVIDIA-NeMo/agent-hardener.git
-cd agent-hardener/examples/langgraph-victim
+cd agent-hardener
+just install                     # dependencies, the garak environment and the OpenShell gateway
+
+cd examples/langgraph-victim
 echo "INFERENCE_API_KEY=<your provider key>" > .env
 
-agent-hardener synth-benign
-agent-hardener run --benign-suite .agent-hardener/benign_profiles/langgraph-victim/requests.csv
+uv run agent-hardener synth-benign
+uv run agent-hardener run --benign-suite .agent-hardener/benign_profiles/langgraph-victim/requests.csv
 ```
 
-- `synth-benign` brings the agent up in the OpenShell sandbox, asks you a few questions about what it is for, writes a
-  suite of normal requests to `requests.csv`, and tears the OpenShell sandbox down. Pass `--no-interactive` to skip the
-  questions; the suite is then built from rules only and is smaller.
-- `run` builds the OpenShell sandbox, attacks the agent, hardens it, replays the attacks, runs the benign suite, prints a
-  summary, and cleans up. The attack stage alone takes about 10–12 minutes on the example agent.
+- `synth-benign` brings the agent up in the OpenShell sandbox, asks you a few questions about what it is for,
+  writes a suite of normal requests to `requests.csv`, and tears the OpenShell sandbox down. Pass
+  `--no-interactive` to skip the questions; the suite is then built from rules only and is smaller.
+- `run` builds the OpenShell sandbox, attacks the agent, hardens it, replays the attacks, runs the benign suite,
+  prints a summary, and cleans up. The attack stage alone takes about 10–12 minutes on the example agent.
 
 Both commands read `agent-hardener.yaml` and `.env` from the current directory. To use a provider other than
 NVIDIA Build, add its settings first: see [Model providers](#model-providers).
+
+## Quickstart: run through NeMo Helix
+
+NeMo Helix runs Agent Hardener as a platform plugin, from the Studio UI or the `nemo agent-hardener` CLI. From a
+NeMo Helix checkout, run it on Helix's example agent, `react-agent`:
+
+```bash
+export INFERENCE_API_KEY=<your provider key>
+
+# Start the platform
+uv run nemo services run --service-group all --controllers models,jobs \
+  --host 0.0.0.0 --port 8080 > /tmp/nemo-helix.log 2>&1 &
+
+# Give it a model provider
+printf '%s' "$INFERENCE_API_KEY" | \
+  uv run nemo secrets create nvidia-inference-key --from-file - --workspace default
+uv run nemo inference providers create nvidia-inference --workspace default \
+  --host-url "https://inference-api.nvidia.com/v1" --api-key-secret-name nvidia-inference-key
+
+# Register the example agent, with a model name from `uv run nemo models list --workspace default`
+export NEMO_DEFAULT_MODEL=<model name>
+uv run nemo agents register --name react-agent \
+  --agent-config plugins/nemo-agents/examples/react-agent/react-agent.yml
+
+# Harden it
+uv run nemo agent-hardener setup
+uv run nemo agent-hardener doctor
+uv run nemo agent-hardener init --agent react-agent
+uv run nemo agent-hardener synth-benign --manifest-id react-agent
+uv run nemo agent-hardener run --manifest-id react-agent
+```
+
+To use the UI instead, open `http://localhost:8080/studio/`, go to **Safety → Agent Hardening**, create a
+manifest for `react-agent`, and click **Run war-game**.
+
+See the [NeMo Helix Agent Hardener guide](https://github.com/NVIDIA-NeMo/nemo-helix/blob/main/plugins/nemo-agent-hardener/README.md)
+for the full walkthrough.
 
 ## Configuration
 
