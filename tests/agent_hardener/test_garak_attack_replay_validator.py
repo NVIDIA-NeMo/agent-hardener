@@ -6,6 +6,8 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -179,7 +181,18 @@ def _patch_worker_process(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc, *, r
         return proc
 
     def fake_select(rlist: Any, _w: Any, _x: Any, _t: Any) -> tuple[list[Any], list[Any], list[Any]]:
-        return (list(rlist), [], []) if ready else ([], [], [])
+        return (list(rlist), list(_w), []) if ready else ([], [], [])
+
+    monkeypatch.setattr(proc.stdin, "fileno", lambda: 90001)
+    monkeypatch.setattr(proc.stdout, "fileno", lambda: 90002, raising=False)
+    monkeypatch.setattr(validator.os, "set_blocking", lambda *_: None)
+    monkeypatch.setattr(validator.os, "read", lambda *_: proc.stdout.readline().encode())
+
+    def fake_write(fd: int, data: bytes) -> int:
+        proc.stdin.write(data.decode())
+        return len(data)
+
+    monkeypatch.setattr(validator.os, "write", fake_write)
 
     monkeypatch.setattr(validator.subprocess, "Popen", fake_popen)
     monkeypatch.setattr(validator.select, "select", fake_select)
@@ -230,7 +243,7 @@ def test_persistent_worker_timeout_tears_down(tmp_path: Path, monkeypatch: pytes
     _patch_worker_process(monkeypatch, proc, ready=False)  # stdout never ready → timeout
 
     worker = validator._PersistentGarakWorker(repo_path=None, timeout_seconds=0.01)
-    with pytest.raises(RuntimeError, match="timed out"):
+    with pytest.raises(TimeoutError, match="deadline expired"):
         worker.verify("direct_prompt_injection", {}, {})
     assert proc.terminated  # worker is torn down so the next request restarts it
 
@@ -639,3 +652,96 @@ def test_default_detector_config_returns_none_when_nothing_found(
 
     assert detectors.default_detector_config(None, "scan.yaml") is None
     assert detectors.default_detector_config(tmp_path, "scan.yaml") is None
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_hit_timeout_rejects_invalid(timeout: float) -> None:
+    agent = _agent()
+    agent.config["timeout_seconds"] = timeout
+    with pytest.raises(ValueError, match="finite and positive"):
+        build_config(_request(), agent)
+
+
+def test_hit_timeout_independent_of_phase() -> None:
+    assert build_config(_request(), _agent()).timeout_seconds == 240
+
+
+@pytest.mark.parametrize("phase_expires", [False, True])
+def test_hung_hit_retains_completed(monkeypatch: pytest.MonkeyPatch, phase_expires: bool) -> None:
+    hits = _load_jsonl("direct_example.hitlog.jsonl")[:2]
+    assert len(hits) == 2
+    calls = 0
+
+    async def fake_validate(**kwargs: Any) -> dict[str, Any]:
+        nonlocal calls
+        calls += 1
+        if kwargs["aggregate_index"] == 2:
+            await asyncio.Event().wait()
+        return validator._error_result(
+            hit_context=kwargs["hit_context"],
+            aggregate_index=kwargs["aggregate_index"],
+            config=kwargs["config"],
+            error="completed evidence",
+            prompt="fast",
+        )
+
+    monkeypatch.setattr(validator, "_validate_hit", fake_validate)
+    agent = _agent()
+    agent.timeout_seconds = 0.3 if phase_expires else 3
+    agent.config["timeout_seconds"] = 3 if phase_expires else 0.03
+    report = asyncio.run(asyncio.wait_for(validator.run(_request(hits), agent), 1))
+    assert calls == 2
+    assert not report.ok
+    assert report.metadata["phase_timed_out"] is phase_expires
+    rows = report.metadata["attack_results"]
+    assert len(rows) == 2
+    assert rows[0]["prompt_excerpt"] == "fast"
+    assert rows[1]["verdict"]["status"] == "error"
+    assert "deadline expired" in rows[1]["verdict"]["reasoning"]
+
+
+def test_external_cancellation_propagates(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def hang(**kwargs: Any) -> dict[str, Any]:
+        await asyncio.Event().wait()
+        return {}
+
+    monkeypatch.setattr(validator, "_validate_hit", hang)
+
+    async def exercise() -> None:
+        task = asyncio.create_task(validator.run(_request(_load_jsonl("direct_example.hitlog.jsonl")), _agent()))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("boundary", ["victim", "detector"])
+def test_hung_external_boundary_is_never_blocked(monkeypatch: pytest.MonkeyPatch, boundary: str) -> None:
+    processes: list[subprocess.Popen[str]] = []
+
+    async def replay(*args: Any, **kwargs: Any) -> validator.ReplayResult:
+        if boundary == "victim":
+            await asyncio.Event().wait()
+        return validator.ReplayResult(ok=True, status_code=200, text="response")
+
+    def ensure(self: validator.PersistentGarakWorker) -> subprocess.Popen[str]:
+        self._proc = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            text=True,
+        )
+        processes.append(self._proc)
+        return self._proc
+
+    monkeypatch.setattr(validator, "_replay_prompt", replay)
+    monkeypatch.setattr(validator.PersistentGarakWorker, "_ensure", ensure)
+    agent = _agent()
+    agent.config["timeout_seconds"] = 0.03
+    report = asyncio.run(validator.run(_request(_load_jsonl("direct_example.hitlog.jsonl")[:1]), agent))
+    assert not report.ok
+    assert report.metadata["blocked_count"] == 0
+    assert report.metadata["error_count"] == 1
+    assert all(proc.poll() is not None for proc in processes)

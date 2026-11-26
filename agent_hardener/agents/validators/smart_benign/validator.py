@@ -11,6 +11,7 @@ victim. See ``CLAUDE.md`` in this package for the full contract.
 
 from __future__ import annotations
 
+import asyncio
 import csv
 import hashlib
 import logging
@@ -79,6 +80,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     the judge-only validator.
     """
     started = perf_counter()
+    phase_deadline = asyncio.get_running_loop().time() + agent.timeout_seconds * 0.9
     log_fields: dict[str, Any] = {
         "agent_name": agent.name,
         "agent_id": agent.agent_id,
@@ -106,11 +108,23 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     # Opened before any replay so the window excludes everything the victim did earlier.
     window = await open_trace_window(ctx)
     with quiet_warnings():
-        row_results = await run_all(requests, cfg)
-    traced = window is not None and await trace_section.apply_traces(
-        row_results, requests, window, build_args_judge(agent, "benign")
-    )
-    return _build_report(agent, artifact_dir, row_results, started, traced=traced)
+        row_results = await run_all(
+            requests, cfg, phase_timeout_seconds=max(0, phase_deadline - asyncio.get_running_loop().time())
+        )
+    traced = False
+    trace_expired = False
+    try:
+        async with asyncio.timeout_at(phase_deadline):
+            traced = window is not None and await trace_section.apply_traces(
+                row_results, requests, window, build_args_judge(agent, "benign")
+            )
+    except TimeoutError:
+        trace_expired = True
+    report = _build_report(agent, artifact_dir, row_results, started, traced=traced)
+    if trace_expired:
+        report.ok = False
+        report.metadata["phase_timed_out"] = True
+    return report
 
 
 def cached_suite_count(request: AgentRunInput, agent: AgentConfig) -> int | None:

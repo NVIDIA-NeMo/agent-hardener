@@ -133,6 +133,8 @@ def test_without_traces_the_report_is_the_detector_only_report() -> None:
     report, results = _results(None)
     assert not any("tool_facts" in result or "trace_verdict" in result for result in results.values())
     assert set(report.metadata) == {
+        "phase_timed_out",
+        "completed_attacks",
         "total_attacks",
         "blocked_count",
         "not_blocked_count",
