@@ -58,12 +58,10 @@ that landed into defenses, deploys them, and validates the result. The next roun
 
 ### Defenders
 
-- **OpenShell policy defender:** turns attacks that made the agent reach the network into changes to the
-  OpenShell sandbox's network policy. Attacks that stay inside the OpenShell sandbox, such as local shell commands, give it nothing
-  to act on.
-- **Tools guardrails defender:** reads each attack's execution trace from NeMo Relay, finds the tool call that
-  did the harm, and writes a guardrail for that tool. At run time, a safety judge model inside the agent checks
-  each guarded tool call before it runs.
+- **Tools guardrails defender:** reads each attack's NeMo Relay trace and writes a guardrail on the tool call that
+  did the harm.
+- **OpenShell policy defender:** turns attacks that made the agent reach the network into a tighter OpenShell
+  sandbox network policy.
 
 ### Validators
 
