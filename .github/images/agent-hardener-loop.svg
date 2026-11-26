@@ -28,7 +28,7 @@
   <!-- Defenders -->
   <rect x="700" y="70" width="220" height="180" rx="12" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
   <text x="810" y="104" text-anchor="middle" font-size="20" font-weight="700" fill="#1b5e20">Defenders</text>
-  <text x="810" y="134" text-anchor="middle" font-size="14" fill="#374151">Traces guardrails</text>
+  <text x="810" y="134" text-anchor="middle" font-size="14" fill="#374151">Tools Guardrails</text>
   <text x="810" y="153" text-anchor="middle" font-size="12" fill="#6b7280">a guardrail on the tool call</text>
   <text x="810" y="169" text-anchor="middle" font-size="12" fill="#6b7280">that did the harm</text>
   <text x="810" y="200" text-anchor="middle" font-size="14" fill="#374151">OpenShell policy</text>
@@ -64,7 +64,6 @@
 
   <!-- 4: validate -->
   <line x1="480" y1="360" x2="480" y2="304" stroke="#1a56db" stroke-width="2.5" marker-end="url(#arrow)"/>
-  <text x="490" y="337" font-size="13" font-weight="700" fill="#1e40af">4 replay + benign check</text>
 
   <!-- 5: report -->
   <line x1="620" y1="400" x2="696" y2="400" stroke="#4b5563" stroke-width="2.5" marker-end="url(#arrow)"/>
