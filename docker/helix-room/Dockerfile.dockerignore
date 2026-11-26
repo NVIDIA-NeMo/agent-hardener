@@ -1,0 +1,38 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Replaces the root .dockerignore for this image only: the root file drops every Dockerfile,
+# and the bundled example victims are built from theirs.
+.git
+.venv
+.ruff_cache
+.pytest_cache
+.mypy_cache
+.pi
+docker-bake.hcl
+**/__pycache__
+**/node_modules
+**/.agent-hardener
+web/packages/sdk/generated/
+jobs/
+runs/
+baselines/
+agent-hardener-victim/
+ahm-results/
+**/*keys*.env
+.env
+**/.env
+.env.*
+**/.env.*
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+.netrc
+.npmrc
+.pypirc
+.aws
+.ssh

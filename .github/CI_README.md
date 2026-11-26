@@ -52,3 +52,6 @@ uv run .github/scripts/check_war_game.py war-game-results --agents langgraph --s
 - `actions/free-disk-space`: frees runner disk for the sandbox images and the garak venv.
 - `scripts/war_game.sh`: one agent's war-game, end to end.
 - `scripts/check_war_game.py`: the threshold gate. Its tests are in `scripts/tests/`.
+- `workflows/room-image.yaml`: builds the room image (`docker/`) for amd64 and arm64 with NeMo Helix
+  main (or the `HELIX_REF` repository variable, as `system-test.yaml`), puts the image's build record in
+  the run summary and runs `docker/smoke.sh` on it. It needs no secrets and publishes nothing.
