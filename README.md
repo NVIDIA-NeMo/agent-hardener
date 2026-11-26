@@ -227,18 +227,6 @@ agent:
     INFERENCE_MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
 ```
 
-#### Known issues
-
-- **OpenRouter ignores the flag that turns reasoning off**, so every call reasons. Chat, JSON mode and tool
-  calls still work.
-- **OpenRouter can return an empty attack plan.** About a quarter of its replies to garak's planning prompt came
-  back empty, and the run then stops with `no_attacks_generated`. No setting fixes this; rerun.
-- **Switching providers on one gateway:** the OpenShell provider is named after `agent.name`, so give each
-  provider's agent a different name to keep their keys apart.
-- **A credential placeholder in the conversation is refused.** If an attack makes the agent print its
-  environment, OpenShell's key placeholder enters the conversation and the gateway refuses to forward later model
-  calls that contain it (HTTP 403). This can happen on any provider. The run still completes.
-
 ## Run on your own agent
 
 ### The manifest
@@ -327,21 +315,19 @@ image must come from the `stage` output of the same manifest and Agent Hardener 
 
 At the end of a run Agent Hardener prints a summary: the attacks that landed, the defenses each defender wrote,
 how many replayed attacks were blocked, and how many benign requests still passed. Everything it wrote is under
-`.agent-hardener/` in the working directory:
+`.agent-hardener/` in the working directory; `<run>` below is `.agent-hardener/run-logs/<run id>`.
 
-| What | Where |
-|---|---|
-| Complete log of the command | `.agent-hardener/logs/<command>-<time>.log`, printed as `→ log: <path>` when the command ends |
-| Run log | `.agent-hardener/run-logs/<run id>/agent-hardener.log` |
-| Per-round artifacts: attacks, traces, defenses, validation | `.agent-hardener/run-logs/<run id>/round_<N>/` |
-| Hardened image bundle | `.agent-hardener/run-logs/<run id>/hardened-image/` |
-| Benign suites | `.agent-hardener/benign_profiles/<agent name>/` |
-| OpenShell command logs | `.agent-hardener/openshell-logs/` |
+| What | Where | What's in it |
+|---|---|---|
+| Run log | `<run>/agent-hardener.log` | Everything the run did, including build and OpenShell output. Each command also writes a complete log, printed as `→ log: <path>` when it ends. |
+| Generated benign suite | `.agent-hardener/benign_profiles/<agent name>/requests.csv` | The normal requests the agent must keep answering, with the profile and interview they came from beside it |
+| Landed attacks | `<run>/round_<N>/attacks.json` | The attacks garak sent in that round and which ones landed; garak's own report and hitlog are in `round_<N>/garak/` |
+| Generated defenses | `<run>/mitigations.json` | The OpenShell sandbox policy and the guardrails before and after hardening |
+| Validation results | `<run>/validation.json` | For each replayed attack, whether it was blocked, and for each benign request, whether it still passed |
+| Hardened image | `<run>/hardened-image/` | A Dockerfile that layers the run's guardrails onto your agent's image, plus the hardened OpenShell sandbox policy and a README on deploying it |
 
-The **hardened image bundle** is a Dockerfile that layers the run's guardrails (`plugins.toml`) onto your image,
-plus the hardened OpenShell sandbox policy (`openshell-policy.yaml`) and a README on deploying it. The guardrail judge
-inside the image needs the key named by `api_key_env` in `plugins.toml`, normally
-`AGENT_HARDENER_SAFETY_API_KEY`. Without that key the judge fails and every tool call is allowed.
+To deploy the hardened image, give it the key named by `api_key_env` in its `plugins.toml`, normally
+`AGENT_HARDENER_SAFETY_API_KEY`. Without that key the guardrail judge fails and every tool call is allowed.
 
 ## Troubleshooting
 
