@@ -81,8 +81,13 @@ def render_session_overview(reports: list[dict[str, Any]], mission_ids: list[str
         f"  missions: {', '.join(overview.missions) if overview.missions else '<none>'}",
         f"  sessions: {overview.total} ({overview.succeeded} succeeded, {overview.failed} failed)",
     ]
+    if overview.duration:
+        lines.append(f"  total duration: {overview.duration}")
     lines.extend(
-        f"  - {row.round_id}: success={fmt_bool(row.success)}, iterations={row.iterations}, storage={row.storage}"
+        f"  - {row.round_id}: success={fmt_bool(row.success)}, iterations={row.iterations}"
+        + (f", duration={row.duration}" if row.duration else "")
+        + f", storage={row.storage}"
+        + (f", errors: {'; '.join(row.errors)}" if row.errors else "")
         for row in overview.rows
     )
     if overview.storage_dirs:
@@ -169,7 +174,7 @@ def render_attack_results(stats: dict[str, ScanStats]) -> list[str]:
     lines = ["Attacker results:"]
     for scanner in SCANNERS_WITH_OTHER:
         scan = stats[scanner]
-        if not scan_has_data(scan) and scanner == "other":
+        if not scan_has_data(scan):
             continue
         label = SCANNER_LABELS[scanner]
         lines.append(f"  {label}: {scan.displayed_successes} successful exploit hit(s)")
@@ -189,6 +194,8 @@ def render_attack_results(stats: dict[str, ScanStats]) -> list[str]:
             lines.append(f"    attacker agent status: {counter_summary(scan.statuses)}")
         for example in scan.examples[:MAX_EXAMPLES_PER_SCANNER]:
             lines.extend(_render_hit_example(example))
+    if len(lines) == 1:
+        lines.append("  no attacks ran")
     return lines
 
 
