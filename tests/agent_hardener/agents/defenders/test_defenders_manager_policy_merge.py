@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from agent_hardener.agents.defenders.defenders_manager import DefendersManager
+from agent_hardener.agents.defenders.defenders_manager import DefendersManager, why_no_mitigation
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.loader import dump_policy_yaml, load_policy_from_yaml
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import Policy
 from agent_hardener.models.contracts import CURRENT_POLICY_KEY, DefenderOutput
@@ -102,3 +102,14 @@ def test_no_write_when_no_candidates_produced_a_policy(tmp_path: Path) -> None:
     )
 
     assert victim_policy_path.read_text(encoding="utf-8") == "sentinel: unchanged\n"
+
+
+@pytest.mark.parametrize(
+    ("output", "reported"),
+    [
+        (DefenderOutput(ok=False, not_applicable="out_of_scope: no network signature"), "did not apply: out_of_scope"),
+        (DefenderOutput(ok=False, error_message="extraction_failed: bad JSON"), "failed: extraction_failed"),
+    ],
+)
+def test_a_defender_that_abstains_is_not_reported_as_failed(output: DefenderOutput, reported: str) -> None:
+    assert why_no_mitigation(output).startswith(reported)

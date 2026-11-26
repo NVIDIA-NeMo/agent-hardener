@@ -263,6 +263,7 @@ class DefenseStage:
             duration_seconds=round(duration_seconds, 6),
             summary="",
             error=output.error_message,
+            not_applicable=output.not_applicable,
         )
         return output
 

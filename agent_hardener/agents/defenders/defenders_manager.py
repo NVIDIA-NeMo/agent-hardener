@@ -220,7 +220,7 @@ class DefendersManager:
             if isinstance(result, BaseException):
                 errors.append(f"Agent {defender.name} raised exception: {result}")
             elif not result.ok:
-                errors.append(f"Agent {defender.name} failed: {result.error_message}")
+                errors.append(f"Agent {defender.name} {why_no_mitigation(result)}")
             else:
                 analyses.append(
                     DefenderAnalysis(
@@ -301,3 +301,10 @@ class DefendersManager:
         patch. A more selective routing rule can replace this later without changing that contract.
         """
         return [(attack, list(available)) for attack in attacks] if available else []
+
+
+def why_no_mitigation(result: DefenderOutput) -> str:
+    """How a defender that produced nothing is reported: an abstention is not a failure."""
+    if result.not_applicable:
+        return f"did not apply: {result.not_applicable}"
+    return f"failed: {result.error_message}"

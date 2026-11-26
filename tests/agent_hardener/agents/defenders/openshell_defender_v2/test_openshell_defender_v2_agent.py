@@ -97,7 +97,7 @@ def test_gate_abstains_out_of_scope_when_attack_has_no_network_signature(monkeyp
     output = agent.run(_run())
     assert output.ok is False
     assert output.new_policy_yaml is None
-    assert output.error_message.startswith("out_of_scope")
+    assert output.not_applicable.startswith("out_of_scope")
 
 
 def test_no_feasible_node_abstains(monkeypatch) -> None:
@@ -162,7 +162,7 @@ def test_protected_backend_endpoint_is_never_touched(monkeypatch) -> None:
     output = agent.run(_run(relay_victim_spec=_integration_backend_relay_victim_spec()))
     assert output.ok is False
     assert output.new_policy_yaml is None
-    assert output.error_message.startswith("protected_endpoint")
+    assert output.not_applicable.startswith("protected_endpoint")
 
 
 def test_protected_backend_endpoint_is_never_touched_when_attack_port_is_unspecified(monkeypatch) -> None:
@@ -182,7 +182,7 @@ def test_protected_backend_endpoint_is_never_touched_when_attack_port_is_unspeci
     output = agent.run(_run(relay_victim_spec=_integration_backend_relay_victim_spec()))
     assert output.ok is False
     assert output.new_policy_yaml is None
-    assert output.error_message.startswith("protected_endpoint")
+    assert output.not_applicable.startswith("protected_endpoint")
 
 
 def test_agent_env_endpoint_is_protected_even_without_a_matching_backend_entry(monkeypatch) -> None:
@@ -216,7 +216,7 @@ def test_agent_env_endpoint_is_protected_even_without_a_matching_backend_entry(m
     output = agent.run(_run(relay_victim_spec=relay_victim_spec, context={"current_policy": other_policy}))
     assert output.ok is False
     assert output.new_policy_yaml is None
-    assert output.error_message.startswith("protected_endpoint")
+    assert output.not_applicable.startswith("protected_endpoint")
 
 
 def test_no_environment_endpoints_when_no_relay_victim_spec_attack_proceeds_normally(monkeypatch) -> None:
@@ -473,8 +473,8 @@ def test_no_selection_on_an_l4_passthrough_endpoint_is_reported_as_unobservable(
 
     output = agent._run_selection_loop(ctx)
 
-    assert output.error_message.startswith("unobservable: no mitigation node's preconditions were met")
-    assert "add_deny_rule: no L7" in output.error_message  # per-node reasons are surfaced to the reviewer
+    assert output.not_applicable.startswith("unobservable: no mitigation node's preconditions were met")
+    assert "add_deny_rule: no L7" in output.not_applicable  # per-node reasons are surfaced to the reviewer
 
 
 @pytest.mark.parametrize(
@@ -498,5 +498,5 @@ def test_all_uninspectable_is_false_for_an_inspectable_endpoint() -> None:
 def test_abstain_output_without_per_node_reasons_keeps_the_detail_verbatim() -> None:
     output = agent._abstain_output(_ctx_for_loop(), AbstainReason(code="out_of_scope", detail="nothing to do"))
 
-    assert output.error_message == "out_of_scope: nothing to do"
+    assert output.not_applicable == "out_of_scope: nothing to do"
     assert output.resource_type is None
