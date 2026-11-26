@@ -326,6 +326,8 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
     # run-scoped dir the stage injected; fall back to the shared default only for standalone/CLI use where
     # no run dir is threaded in. No subdir math here — the authority already resolved the directory.
     report_dir = config.get("report_dir") or request.context.get(ARTIFACT_DIR_KEY) or DEFAULT_REPORT_DIR
+    # Inside a run (the attack stage injected its dir) preflight_run already probed these models.
+    preflight = None if ARTIFACT_DIR_KEY in request.context else check_model_endpoints
     retried_after: str | None = None
     for scan in range(1, MAX_SCANS + 1):
         try:
@@ -336,7 +338,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> AttackRecord:
                 report_prefix=options.report_prefix,
                 overrides=options.overrides,
                 timeout_s=float(config["timeout_s"]) if config.get("timeout_s") is not None else None,
-                preflight=check_model_endpoints if scan == 1 else None,  # models were checked before the first scan
+                preflight=preflight if scan == 1 else None,  # models were checked before the first scan
             )
         except ModelUnavailableError as exc:
             # Returned, not raised: the attack stage keeps only an exception's text, so a raise would reach the
