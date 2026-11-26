@@ -173,9 +173,14 @@ def test_docker_host_follows_the_active_docker_context(monkeypatch: pytest.Monke
     assert tool.os.environ["DOCKER_HOST"] == endpoint
 
 
-def test_docker_host_stays_unset_without_a_docker_context(monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize(
+    "endpoint", [None, "tcp://build-host:2376", "ssh://me@build-host"], ids=["no-context", "tls-tcp", "ssh"]
+)
+def test_docker_host_stays_unset_unless_the_context_is_a_local_socket(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str | None
+) -> None:
     monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: None)
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: endpoint)
 
     tool.configure_local_docker_host()
 

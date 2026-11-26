@@ -109,11 +109,13 @@ def configure_local_docker_host() -> None:
 
     Follows whichever runtime the operator selected rather than guessing one, so a leftover socket of a
     stopped runtime (e.g. Colima's next to a running Docker Desktop) is never picked over the live one.
+    Only a local socket is pinned: a tcp or ssh context also carries TLS or ssh settings that
+    ``DOCKER_HOST`` cannot, so the docker CLI is left to follow that context itself.
     """
     if os.environ.get("DOCKER_HOST"):
         return
     endpoint = docker_endpoint(timeout_s=DOCKER_ENDPOINT_TIMEOUT_S)
-    if endpoint:
+    if endpoint and endpoint.startswith("unix://"):
         os.environ["DOCKER_HOST"] = endpoint
 
 
