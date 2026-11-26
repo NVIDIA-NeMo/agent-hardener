@@ -28,6 +28,8 @@
 
 ### Verify the setup
 
+For other platforms, upgrades and install problems, see the [full setup guide](docs/setup.md).
+
 ## Quickstart: run on the example agent
 
 ## Configuration
