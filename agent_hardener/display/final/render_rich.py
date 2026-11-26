@@ -16,12 +16,11 @@ from rich.text import Text
 
 from agent_hardener.display.console import get_console, is_rich
 from agent_hardener.display.final._summary_data import (
-    ResultDetail,
+    Tally,
     collect_defenders,
     collect_validators,
-    result_detail,
+    defender_rows,
     session_overview,
-    validator_summary,
 )
 from agent_hardener.display.final.render_plain import (
     render_attack_results,
@@ -32,7 +31,7 @@ from agent_hardener.display.final.render_plain import (
     render_session_overview,
     render_validator_results,
 )
-from agent_hardener.display.render_diff import diff_renderable, diff_stat, load_yaml_diff_from_patch
+from agent_hardener.display.render_diff import diff_renderable, load_yaml_diff_from_patch
 from agent_hardener.display.renderers.garak_attacker import (
     _attacker_table,
     _transcript_conversation,
@@ -45,7 +44,6 @@ from agent_hardener.final_log import (
     policy_patches,
     short_text,
 )
-from agent_hardener.yaml_diff import YamlDiff
 
 
 def build_summary_renderable(
@@ -64,7 +62,6 @@ def build_summary_renderable(
     """
     data = collect_final_log_data(reports)
     defenders = collect_defenders(data.report_dicts)
-    validators = collect_validators(data.report_dicts)
     header = Rule("Agent Hardener — Final Report")
 
     if not verbose:
@@ -76,8 +73,6 @@ def build_summary_renderable(
         ]
         if defenders:
             parts += [Text(""), _defender_table(defenders)]
-        if validators:
-            parts += [Text(""), _validator_table(validators)]
         parts.append(Text("\nRun with --verbose for prompts, responses, policy, and Garak detail.", style="dim"))
         return Group(*parts)
 
@@ -141,8 +136,6 @@ def build_report_sections(
     tables: list[Any] = [_attacker_table(data.stats)]
     if defenders:
         tables += [Text(""), _defender_table(defenders)]
-    if validators:
-        tables += [Text(""), _validator_table(validators)]
 
     return {
         "Overview": Group(*overview),
@@ -153,63 +146,95 @@ def build_report_sections(
     }
 
 
-def _overview_table(reports: list[dict[str, Any]], mission_ids: list[str] | None) -> Table:
-    """Build the per-session overview table."""
+def _overview_table(reports: list[dict[str, Any]], mission_ids: list[str] | None) -> Group:
+    """Per-round table (did it complete, or which stage errored), then the run's facts and log dir.
+
+    The facts sit under the table as full-width lines rather than a caption, which Rich would wrap to
+    the (narrow) table's width.
+    """
     overview = session_overview(reports, mission_ids)
-    caption = (
-        f"missions: {', '.join(overview.missions) if overview.missions else '<none>'}  |  "
-        f"sessions: {overview.total} ({overview.succeeded} succeeded, {overview.failed} failed)"
+    rounds = f"{overview.total} round{'' if overview.total == 1 else 's'}"
+    rounds += f" ({overview.errored} with errors)" if overview.errored else ""
+    facts = [f"run {', '.join(overview.missions)}" if overview.missions else "", rounds]
+    if overview.duration:
+        facts.append(f"total {overview.duration}")
+    footer = Text("  ·  ".join(fact for fact in facts if fact), style="dim")
+    if overview.logs_dir:
+        footer.append(f"\nlogs: {overview.logs_dir}", style="dim")
+    table = Table(
+        title="Session overview",
+        title_justify="left",
+        title_style="bold",
+        header_style="bold cyan",
+        border_style="bright_black",
     )
-    table = Table(title="Session overview", title_justify="left", caption=caption, caption_justify="left")
-    table.add_column("Session")
-    table.add_column("Success", justify="center")
-    table.add_column("Iterations", justify="right")
-    table.add_column("Storage", overflow="fold")
+    table.add_column("Round", style="bold")
+    table.add_column("Result")
+    table.add_column("Attack hits", justify="right")
+    table.add_column("Blocked", justify="right")
+    table.add_column("Benign OK", justify="right")
+    show_errors = overview.errored > 0
+    if show_errors:
+        table.add_column("Error", overflow="fold")
     if not overview.rows:
-        table.add_row("<no reports loaded>", "", "", "")
+        table.add_row("<no reports loaded>", "", "", "", "", *([""] if show_errors else []))
     for row in overview.rows:
-        table.add_row(row.round_id, _success_glyph(row.success), str(row.iterations), row.storage)
-    return table
+        hits = row.outcome.attack_hits
+        cells: list[Any] = [
+            row.round_id,
+            _outcome(row.errors),
+            Text(str(hits), style="bold red" if hits else "green"),
+            _tally(row.outcome.blocked),
+            _tally(row.outcome.benign),
+        ]
+        if show_errors:
+            more = f" (+{len(row.errors) - 1} more)" if len(row.errors) > 1 else ""
+            cells.append(Text(short_text(row.errors[0], 100) + more if row.errors else "", style="red"))
+        table.add_row(*cells)
+    return Group(table, footer)
 
 
-def _detail_text(detail: ResultDetail, limit: int) -> Text:
-    """Render a :class:`ResultDetail` as a (red-if-error) ``Text`` cell."""
-    return Text(short_text(detail.text, limit), style="red" if detail.is_error else "")
+def _tally(tally: Tally) -> Text:
+    """``16/16`` green when all passed, yellow when some, red when none; ``—`` when the validator did not run.
+
+    The validator's breakdown (``(3 refused, 2 errors)``) follows in grey.
+    """
+    if tally.total is None:
+        return Text("—", style="dim")
+    style = "green" if tally.passed == tally.total else "yellow" if tally.passed else "red"
+    text = Text(f"{tally.passed}/{tally.total}", style=style)
+    if tally.detail:
+        text.append(f" {tally.detail}", style="bright_black")
+    return text
+
+
+def _outcome(errors: list[str]) -> Text:
+    """``✓ completed`` when no stage recorded an error, else ``✗ error``."""
+    return Text("✗ error", style="red") if errors else Text("✓ completed", style="green")
 
 
 def _defender_table(defenders: list[dict[str, Any]]) -> Table:
-    """Per-defender results table (status, patches yielded, YAML changes, summary/error)."""
+    """One row per defender: how many of its runs succeeded, what it added, and which tools it protected."""
+    rows = defender_rows(defenders)
     table = Table(title="Defender results", title_justify="left")
     table.add_column("Defender")
-    table.add_column("Status", justify="center")
-    table.add_column("Patches", justify="right")
-    table.add_column("Changes", justify="right")
-    table.add_column("Detail", overflow="fold")
-    for defender in defenders:
-        patches = len(defender.get("policy_patches") or [])
-        table.add_row(
-            str(defender.get("agent_name") or defender.get("agent_id") or "<unknown>"),
-            _success_glyph(defender.get("ok", True)),
-            Text(str(patches), style="green" if patches else "dim"),
-            diff_stat(_defender_change_diff(defender)),
-            _detail_text(result_detail(defender), 100),
-        )
+    table.add_column("Runs ok", justify="right")
+    table.add_column("Added")
+    table.add_column("Protects", overflow="fold")
+    show_errors = any(row.error for row in rows)
+    if show_errors:
+        table.add_column("Error", overflow="fold")
+    for row in rows:
+        cells: list[Any] = [
+            row.name,
+            Text(f"{row.succeeded}/{row.runs}", style="green" if row.succeeded == row.runs else "red"),
+            Text(row.defenses, style="dim" if row.defenses == "none" else ""),
+            row.targets,
+        ]
+        if show_errors:
+            cells.append(Text(short_text(row.error or "", 100), style="red"))
+        table.add_row(*cells)
     return table
-
-
-def _defender_change_diff(defender: dict[str, Any]) -> YamlDiff:
-    """Combine a defender's per-patch YAML diffs into one stat-bearing diff (adds/removes summed)."""
-    combined = YamlDiff()
-    for patch in defender.get("policy_patches") or []:
-        if not isinstance(patch, dict):
-            continue
-        resolved = load_yaml_diff_from_patch(patch)
-        if resolved is not None:
-            _, diff = resolved
-            combined.hunks.extend(diff.hunks)
-            combined.added += diff.added
-            combined.removed += diff.removed
-    return combined
 
 
 def _workflow_change_renderables(reports: list[dict[str, Any]]) -> list[Any]:
@@ -224,33 +249,6 @@ def _workflow_change_renderables(reports: list[dict[str, Any]]) -> list[Any]:
                 label, diff = resolved
                 parts += [Text(f"\n{label}", style="bold"), diff_renderable(diff, more_hint=label)]
     return parts
-
-
-def _validator_table(validators: list[dict[str, Any]]) -> Table:
-    """Per-validator results table (kind, status, summary/error) with per-kind tallies as caption."""
-    summary = validator_summary(validators)
-    table = Table(
-        title="Validator results",
-        title_justify="left",
-        caption=summary.caption or None,
-        caption_justify="left",
-    )
-    table.add_column("Validator")
-    table.add_column("Kind")
-    table.add_column("Status", justify="center")
-    table.add_column("Result", overflow="fold")
-    for row in summary.rows:
-        table.add_row(row.name, row.kind, _success_glyph(row.ok), _detail_text(row.detail, 120))
-    return table
-
-
-def _success_glyph(value: Any) -> Text:
-    """Return a colored ✓/✗ for a success flag (plain ``?`` when unknown)."""
-    if value is True:
-        return Text("✓", style="green")
-    if value is False:
-        return Text("✗", style="red")
-    return Text("?")
 
 
 def _try_report_tui(reports: list[Any], *, mission_ids: list[str] | None) -> bool:
