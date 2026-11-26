@@ -133,6 +133,8 @@ class DefendersManagerOutput(AgentHardenerModel):
     ok: bool = True
     summary: str = ""
     error: str | None = None
+    #: Why each abstaining defender did not apply; abstentions are not failures, so they stay out of ``error``.
+    not_applicable: list[str] = Field(default_factory=list)
     routed_agent_ids: list[str] = Field(default_factory=list)
     analyses: list[DefenderAnalysis] = Field(default_factory=list)
 

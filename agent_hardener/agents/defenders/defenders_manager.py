@@ -215,12 +215,14 @@ class DefendersManager:
 
         analyses: list[DefenderAnalysis] = []
         errors: list[str] = []
+        not_applicable: list[str] = []
 
         for (defender, _), result in zip(task_meta, results, strict=True):
             if isinstance(result, BaseException):
                 errors.append(f"Agent {defender.name} raised exception: {result}")
             elif not result.ok:
-                errors.append(f"Agent {defender.name} {why_no_mitigation(result)}")
+                reasons = not_applicable if result.not_applicable else errors
+                reasons.append(f"Agent {defender.name} {why_no_mitigation(result)}")
             else:
                 analyses.append(
                     DefenderAnalysis(
@@ -246,6 +248,8 @@ class DefendersManager:
             ok=len(analyses) > 0,
             summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {len(analyses)} analyses.",
             error=" | ".join(errors) if errors else None,
+            # Every attack record repeats its defender's reason; report each once.
+            not_applicable=list(dict.fromkeys(not_applicable)),
             routed_agent_ids=routed_agent_ids,
             analyses=analyses,
         )

@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from agent_hardener.agents.defenders.defenders_manager import DefendersManager
 from agent_hardener.agents.validators.smart_benign.validator import load_requests
-from agent_hardener.errors import DefendersFailedError
+from agent_hardener.errors import DefendersFailedError, DefendersNotApplicableError
 from agent_hardener.events import EventType
 from agent_hardener.loggers import using_current_agent
 from agent_hardener.models import (
@@ -271,11 +271,15 @@ class DefenseStage:
 def _require_mitigation(manager_output: DefendersManagerOutput, ctx: IterationContext) -> None:
     """Stop before deploy and validation when no defender produced anything for this round's attacks.
 
+    Failed only when a defender failed; when every one abstained, the attacks are out of their scope.
     A retry is exempt: the attempt before it already deployed and validated mitigations, and failing
     here would discard that attempt's report.
     """
     if manager_output.ok or not ctx.attacks or ctx.validation_feedback:
         return
+    if manager_output.error is None and manager_output.not_applicable:
+        reasons = " | ".join(manager_output.not_applicable)
+        raise DefendersNotApplicableError(f"no defender applies to this round's attacks: {reasons}")
     # One line per distinct failure: every attack record repeats its defender's error.
     errors = " | ".join(dict.fromkeys((manager_output.error or "no error reported").split(" | ")))
     raise DefendersFailedError(f"no defender produced a mitigation: {errors}")

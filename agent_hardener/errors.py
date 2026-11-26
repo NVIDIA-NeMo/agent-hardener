@@ -164,6 +164,20 @@ class DefendersFailedError(AgentHardenerError):
     )
 
 
+class DefendersNotApplicableError(AgentHardenerError):
+    """Every defender abstained: this round's attacks are outside what the configured defenders can mitigate.
+
+    The defenders worked, so this is not :class:`DefendersFailedError`; but there is still nothing to
+    deploy, and validating the unchanged victim would report the attacks landing as if a defense had failed.
+    """
+
+    category = "attacks_out_of_scope"
+    default_remediation = (
+        "Add a defender that covers these attacks (e.g. the guardrails defender alongside the network-policy "
+        "one), or point the attacks at the surface the configured defenders protect."
+    )
+
+
 class GuardrailJudgeError(AgentHardenerError):
     """The guardrails' safety judge failed on most of the calls it should have scored.
 
