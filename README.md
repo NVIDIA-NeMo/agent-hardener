@@ -30,16 +30,6 @@
 
 ## Quickstart: run on the example agent
 
-## Run on your own agent
-
-### The manifest
-
-### What your agent needs
-
-### Generate the benign suite
-
-### Run the hardening loop
-
 ## Configuration
 
 ### Credentials and environment variables
@@ -145,6 +135,16 @@ agent:
   calls that contain it (HTTP 403). This can happen on any provider. The run still completes.
 
 ### Garak overrides
+
+## Run on your own agent
+
+### The manifest
+
+### What your agent needs
+
+### Generate the benign suite
+
+### Run the hardening loop
 
 ## Reading the results
 
