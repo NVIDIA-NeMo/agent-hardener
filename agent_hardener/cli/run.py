@@ -71,6 +71,7 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
     anything else = an explicit hitlog path. The attack traces recorded by the run that produced the
     hitlog are attached when they exist (see :func:`_resolve_replay_traces`).
     """
+    from agent_hardener.agents.attackers.garak_probes import AGENT_BREAKER
     from agent_hardener.models import PreloadedAttackConfig
     from agent_hardener.storage import find_latest_hitlog
     from agent_hardener.swarm_tracker import run_logs_root
@@ -108,7 +109,7 @@ def _resolve_replay(replay: str | None, session_config: SessionConfig, with_trac
                 PreloadedAttackConfig(
                     name=preload_name,
                     path=hitlog_path.resolve(),
-                    source="garak-agent-breaker",
+                    source=AGENT_BREAKER.source,
                     traces_path=traces_path,
                 )
             ],

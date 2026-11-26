@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import httpx
 
+from agent_hardener.agents.attackers.garak_probes import GARAK_PACKAGES
 from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
@@ -529,9 +530,10 @@ class PersistentGarakWorker:
         config_root: dict[str, Any],
         verify_kwargs: dict[str, Any],
     ) -> tuple[bool, float, str] | None:
+        module, class_name = parsing.detector_namespace_and_class(attack_type)
         request = json.dumps(
             {
-                "attack_type": attack_type,
+                "detector": [f"{GARAK_PACKAGES['detectors']}.{module}", class_name],
                 "config_root": config_root,
                 "verify_kwargs": verify_kwargs,
                 "repo_path": self._repo_path,
