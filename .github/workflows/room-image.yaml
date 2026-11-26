@@ -1,0 +1,95 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Room image
+
+# Builds the Agent Hardener room (docker/) for amd64 and arm64 and smoke-tests it (docker/smoke.sh).
+# Nothing is published from here.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+    - "docker/**"
+    - "agent_hardener/**"
+    - "pyproject.toml"
+    - "uv.lock"
+    - ".github/workflows/room-image.yaml"
+  workflow_dispatch:
+    inputs:
+      helix_repository:
+        description: NeMo Helix repository to build the room from (empty uses the
+          default below)
+        required: false
+        type: string
+        default: ""
+      helix_ref:
+        description: Commit or ref in that repository (empty uses the HELIX_REF repo
+          variable, else main)
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # As system-test.yaml: NeMo Helix main unless the HELIX_REF repository variable names another ref.
+  HELIX_REPOSITORY: ${{ inputs.helix_repository || 'NVIDIA-NeMo/nemo-helix' }}
+  HELIX_REF: ${{ inputs.helix_ref || vars.HELIX_REF || 'main' }}
+
+jobs:
+  room:
+    name: Room (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - arch: amd64
+          runner: ubuntu-latest
+        - arch: arm64
+          runner: ubuntu-24.04-arm
+    steps:
+    - name: Checkout agent-hardener
+      uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10   # v6.0.3
+      with:
+        path: agent-hardener
+        persist-credentials: false
+    - name: Free disk space
+        # The room is about 26 GB, and the build needs room for its layers on top.
+      uses: ./agent-hardener/.github/actions/free-disk-space
+      with:
+        remove_python: "true"
+        remove_pypy: "true"
+        remove_ruby: "true"
+        remove_java: "true"
+        remove_go: "true"
+        remove_haskell: "true"
+        remove_swift: "true"
+        prune_docker: "true"
+        disable_swap: "true"
+    - name: Build the room
+      # build.sh fetches NeMo Helix itself and records both commits in the image.
+      run: |
+        agent-hardener/docker/build.sh --agent-hardener agent-hardener \
+          --helix-repo "https://github.com/${HELIX_REPOSITORY}.git" --helix-ref "${HELIX_REF}" \
+          --tag "nemo-agent-hardener-room:ci-${{ matrix.arch }}"
+    - name: Report the image
+      run: |
+        image="nemo-agent-hardener-room:ci-${{ matrix.arch }}"
+        {
+          docker image ls "${image}" --format '{{.Repository}}:{{.Tag}} {{.Size}}'
+          printf '\n```json\n'
+          docker run --rm --entrypoint cat "${image}" /usr/local/share/ah-room/versions.json
+          printf '```\n'
+        } >> "${GITHUB_STEP_SUMMARY}"
+        df -h /
+    - name: Smoke test
+      run: agent-hardener/docker/smoke.sh "nemo-agent-hardener-room:ci-${{ matrix.arch }}"

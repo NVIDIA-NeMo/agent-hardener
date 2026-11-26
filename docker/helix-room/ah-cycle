@@ -1,0 +1,246 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# One command for the whole Agent Hardener cycle through NeMo Helix, with no interview:
+# describe the agent (init), point Agent Hardener's models at the key's endpoint, synthesize the
+# benign suite, then attack, harden and replay (run).
+#
+#   ah-cycle --example langgraph|langchain|other         a bundled agent
+#   ah-cycle --project-dir DIR --name NAME [--harness H] [-- more init flags]
+#                                                        your agent: a directory with a Dockerfile
+#   ah-cycle --registered DIR --name NAME                a Fabric agent: DIR has agent.yaml + Dockerfile
+#   ah-cycle --manifest NAME                             a manifest you already created (CLI or Studio):
+#                                                        its defenders and intensity are kept
+#
+# Options: --rounds N (1)  --attack-intensity light|standard|thorough (standard; --manifest: unchanged)
+#          --interview skip|auto (skip)  --env-file FILE (more secrets for your agent)
+#          --examples-root DIR (read --example from DIR/<name>-victim instead of the bundled copy)
+# Results: /work/results/<name>/<UTC time>/cycle.json and one log per stage.
+# Exit: 0 hardened, 2 completed with findings (attacks got through or benign requests failed), 1 failed.
+set -euo pipefail
+
+EXAMPLES=/opt/nemo-helix/plugins/nemo-agent-hardener/examples
+OPERATOR_ENV="${HOME}/.agent-hardener/.env"
+
+MODE=""
+SOURCE=""
+NAME=""
+HARNESS=""
+ROUNDS=1
+INTENSITY=""
+INTERVIEW=skip
+ENV_FILE=""
+INIT_EXTRA=()
+
+die() {
+  printf 'ah-cycle: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  awk 'NR >= 5 && !/^#/ { exit } NR >= 5 { sub(/^# ?/, ""); print }' "$0"
+}
+
+set_mode() {
+  [[ -z "${MODE}" ]] || die "pass only one of --example, --project-dir, --registered, --manifest"
+  MODE="$1"
+  SOURCE="$2"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --example) set_mode example "$2"; shift 2 ;;
+    --project-dir) set_mode project "$2"; shift 2 ;;
+    --registered) set_mode registered "$2"; shift 2 ;;
+    --manifest) set_mode manifest "$2"; NAME="$2"; shift 2 ;;
+    --name) NAME="$2"; shift 2 ;;
+    --harness) HARNESS="$2"; shift 2 ;;
+    --rounds) ROUNDS="$2"; shift 2 ;;
+    --attack-intensity) INTENSITY="$2"; shift 2 ;;
+    --interview) INTERVIEW="$2"; shift 2 ;;
+    --env-file) ENV_FILE="$2"; shift 2 ;;
+    --examples-root) EXAMPLES="$2"; shift 2 ;;
+    --) shift; INIT_EXTRA=("$@"); break ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument $1 (see --help)" ;;
+  esac
+done
+
+[[ -n "${MODE}" ]] || { usage; exit 1; }
+[[ -f /run/ah-room/ready ]] || die "the room is not ready; check: docker logs <container>"
+case "${INTERVIEW}" in
+  skip) INTERVIEW_FLAG=--no-interactive ;;
+  auto) INTERVIEW_FLAG=--yes ;;
+  *) die "--interview must be skip or auto" ;;
+esac
+ENV_ARGS=()
+if [[ -n "${ENV_FILE}" ]]; then
+  [[ -f "${ENV_FILE}" ]] || die "--env-file ${ENV_FILE} does not exist"
+  ENV_ARGS=(--env-file "${ENV_FILE}")
+fi
+
+# shellcheck source=/dev/null
+. /usr/local/lib/ah-room/models.sh
+ah_select_models "${OPERATOR_ENV}"
+
+INIT_ARGS=()
+case "${MODE}" in
+  example)
+    case "${SOURCE}" in
+      langgraph|langchain|other) ;;
+      *) die "--example must be langgraph, langchain or other" ;;
+    esac
+    [[ -f "${EXAMPLES}/${SOURCE}-victim/Dockerfile" ]] || die "no Dockerfile in ${EXAMPLES}/${SOURCE}-victim"
+    NAME="${NAME:-${SOURCE}-victim}"
+    # The bundled agents read their model from INFERENCE_BASE_URL / INFERENCE_MODEL and name
+    # neither the key nor the host in their Dockerfile, so both are passed explicitly.
+    INIT_ARGS=(--project-dir "${EXAMPLES}/${SOURCE}-victim" --name "${NAME}" --harness "${SOURCE}" --relay-confirmed
+      --secrets INFERENCE_API_KEY --env "INFERENCE_BASE_URL=${AH_BASE_URL}" --env "INFERENCE_MODEL=${AH_MODEL}"
+      --egress "${AH_EGRESS_HOST}" --start-command "/usr/local/bin/python /app/server.py"
+      --binary "/usr/local/bin/python*")
+    ;;
+  project)
+    [[ -d "${SOURCE}" ]] || die "--project-dir ${SOURCE} is not a directory"
+    [[ -n "${NAME}" ]] || die "--project-dir needs --name"
+    INIT_ARGS=(--project-dir "${SOURCE}" --name "${NAME}")
+    [[ -z "${HARNESS}" ]] || INIT_ARGS+=(--harness "${HARNESS}" --relay-confirmed)
+    ;;
+  registered)
+    [[ -f "${SOURCE}/agent.yaml" && -f "${SOURCE}/Dockerfile" ]] || die "--registered ${SOURCE} needs agent.yaml and Dockerfile"
+    [[ -n "${NAME}" ]] || die "--registered needs --name"
+    INIT_ARGS=(--agent "${NAME}" --name "${NAME}")
+    [[ -z "${HARNESS}" ]] || INIT_ARGS+=(--harness "${HARNESS}")
+    ;;
+esac
+INIT_ARGS+=("${INIT_EXTRA[@]}")
+
+RESULTS="/work/results/${NAME}/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "${RESULTS}"
+STAGES="${RESULTS}/stages.jsonl"
+CURRENT=""
+STAGE_START=0
+OUTCOME=failed
+
+finish() {
+  local code=$?
+  if [[ -n "${CURRENT}" ]]; then
+    printf '{"stage": "%s", "status": "failed", "exit_code": %d, "seconds": %d}\n' \
+      "${CURRENT}" "${code}" "$(( $(date +%s) - STAGE_START ))" >>"${STAGES}"
+  fi
+  python3 - "${RESULTS}" "${NAME}" "${OUTCOME}" "${AH_BASE_URL}" "${AH_MODEL}" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+results, name, outcome, base_url, model = Path(sys.argv[1]), *sys.argv[2:]
+stages = [json.loads(line) for line in (results / "stages.jsonl").read_text(encoding="utf-8").splitlines() if line]
+run_file = results / "run.json"
+run = json.loads(run_file.read_text(encoding="utf-8")) if run_file.is_file() else None
+summary = {
+    "name": name,
+    "outcome": outcome,
+    "failed_stage": next((s["stage"] for s in stages if s["status"] == "failed"), None),
+    "error_category": ((run or {}).get("error") or {}).get("category"),
+    "run_record": (run or {}).get("run_record"),
+    "models": {"base_url": base_url, "model": model},
+    "stages": stages,
+}
+(results / "cycle.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+print(f"ah-cycle: {outcome} — {results / 'cycle.json'}")
+PY
+  case "${OUTCOME}" in
+    hardened) exit 0 ;;
+    findings) exit 2 ;;
+    *) exit 1 ;;
+  esac
+}
+trap finish EXIT
+: >"${STAGES}"
+
+stage() {
+  local name="$1"
+  shift
+  CURRENT="${name}"
+  STAGE_START=$(date +%s)
+  printf '\n── ah-cycle: %s ──\n' "${name}"
+  "$@" 2>&1 | tee "${RESULTS}/${name}.log"
+  printf '{"stage": "%s", "status": "ok", "exit_code": 0, "seconds": %d}\n' \
+    "${name}" "$(( $(date +%s) - STAGE_START ))" >>"${STAGES}"
+  CURRENT=""
+}
+
+stage doctor nemo agent-hardener doctor
+
+if [[ "${MODE}" != manifest ]]; then
+  if nemo agent-hardener manifest show "${NAME}" >/dev/null 2>&1; then
+    printf 'ah-cycle: manifest %s exists; reusing it (pass a new --name to upload the agent again)\n' "${NAME}"
+  else
+    if [[ "${MODE}" == registered ]]; then
+      stage package nemo agents package --agent "${SOURCE}/agent.yaml" --dockerfile "${SOURCE}/Dockerfile" --tag "${NAME}:room"
+      stage register nemo agents register --name "${NAME}" --agent-config "${SOURCE}/agent.yaml"
+    fi
+    stage init nemo agent-hardener init "${INIT_ARGS[@]}"
+  fi
+fi
+
+# The models always follow the mounted key's endpoint; a manifest the user configured keeps its
+# defenders and intensity unless --attack-intensity is passed.
+MODEL_ARGS=(--attack-model "${AH_MODEL}" --attack-base-url "${AH_BASE_URL}"
+  --analysis-model "${AH_MODEL}" --analysis-base-url "${AH_BASE_URL}"
+  --safety-model "${AH_MODEL}" --safety-base-url "${AH_BASE_URL}")
+if [[ "${MODE}" != manifest ]]; then
+  MODEL_ARGS+=(--defender guardrails --defender openshell --attack-intensity "${INTENSITY:-standard}")
+elif [[ -n "${INTENSITY}" ]]; then
+  MODEL_ARGS+=(--attack-intensity "${INTENSITY}")
+fi
+stage models nemo agent-hardener manifest set "${NAME}" "${MODEL_ARGS[@]}"
+
+stage synth-benign nemo agent-hardener synth-benign --manifest-id "${NAME}" "${INTERVIEW_FLAG}" "${ENV_ARGS[@]}"
+
+# `run` exits 1 for a finished war-game whose validation found problems, so its JSON decides
+# between a finding and a failure.
+CURRENT=run
+STAGE_START=$(date +%s)
+printf '\n── ah-cycle: run ──\n'
+set +e
+nemo agent-hardener run --manifest-id "${NAME}" --rounds "${ROUNDS}" "${ENV_ARGS[@]}" 2>&1 | tee "${RESULTS}/run.log"
+RUN_CODE=${PIPESTATUS[0]}
+set -e
+python3 - "${RESULTS}/run.log" "${RESULTS}/run.json" <<'PY'
+import json
+import shutil
+import sys
+from pathlib import Path
+
+lines = Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines()
+starts = [i for i, line in enumerate(lines) if line == "{"]
+if not starts:
+    raise SystemExit("ah-cycle: run printed no result JSON")
+run = json.loads("\n".join(lines[starts[-1]:]))
+Path(sys.argv[2]).write_text(json.dumps(run, indent=2), encoding="utf-8")
+artifacts = Path(sys.argv[2]).parent / "artifacts"
+for name, item in (run.get("results") or {}).items():
+    url = str(item.get("artifact_url", ""))
+    if not url.startswith("file://"):
+        continue
+    source = Path(url.removeprefix("file://"))
+    assert source.exists(), f"ah-cycle: run reported artifact {name} at {source}, which does not exist"
+    artifacts.mkdir(exist_ok=True)
+    if source.is_dir():
+        shutil.copytree(source, artifacts / name)
+    else:
+        shutil.copy2(source, artifacts / name)
+PY
+CATEGORY="$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("error") or {}).get("category", ""))' "${RESULTS}/run.json")"
+STATUS="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("status", ""))' "${RESULTS}/run.json")"
+if [[ "${RUN_CODE}" == 0 && "${STATUS}" == completed ]]; then
+  OUTCOME=hardened
+elif [[ "${CATEGORY}" == validation_failed ]]; then
+  OUTCOME=findings
+else
+  exit 1
+fi
+printf '{"stage": "run", "status": "ok", "exit_code": %d, "seconds": %d}\n' \
+  "${RUN_CODE}" "$(( $(date +%s) - STAGE_START ))" >>"${STAGES}"
+CURRENT=""

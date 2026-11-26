@@ -1,0 +1,347 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Host-side launcher for the NeMo Agent Hardener room (Linux, macOS, WSL; needs only Docker
+# Engine 20.10 or later, with permission to run --privileged containers).
+# Get it from the image:
+#   docker run --rm --entrypoint cat nemo-agent-hardener-room:dev /usr/local/share/ah-room/ah-room > ah-room
+#   chmod +x ah-room
+#
+#   ah-room up --keys FILE [--agent DIR] [--port N] [--no-ui] [--no-open]
+#              [--name ah-room] [--image IMG] [--host-docker | --host-openshell]
+#                          start the room, wait until it is ready, open Studio in the browser
+#   ah-room cycle [ah-cycle flags]   attack and harden (inside the room), e.g.
+#                          ah-room cycle --example langgraph
+#                          ah-room cycle --project-dir /agent --name my-agent --harness langgraph
+#   ah-room open           open Studio again
+#   ah-room shell          a shell inside the room (nemo agent-hardener ... works there)
+#   ah-room logs           follow the room's log
+#   ah-room down [--purge] stop and remove the room; its data stays in the volumes <name>-data
+#                          (NeMo Helix: runs, results, secrets), <name>-work (/work) and, in private
+#                          mode, <name>-docker (the inner Docker's images), which the next up
+#                          reuses, also with a newer image. --purge deletes them too.
+#   ah-room version [--image IMG]
+#                          what the room's image (else IMG) was built from, when and by whom
+#
+# --keys: a file with OPENROUTER_API_KEY=... or INFERENCE_API_KEY=... (an nvapi- key); more
+#         NAME=value lines (your agent's secrets) are passed into the room too.
+# --agent: your agent's directory (with its Dockerfile); it appears inside the room as /agent.
+# --port: Studio's port on this machine. Given, it must be free; omitted, the first free port
+#         from 8080 (or AH_ROOM_PORT) up is used.
+#         Studio listens on 127.0.0.1 only, because it has no login; from another machine use
+#         ssh -L <port>:localhost:<port> <this host>.
+# --image: a local image, or <registry>/<repo>/nemo-agent-hardener-room:<version>, pulled when missing.
+# --host-docker: use this machine's Docker Engine instead of a private one inside the room (Linux only).
+#         No --privileged, but the room gets this machine's Docker socket (root on this machine) and
+#         its network: Studio and the OpenShell gateway (17670, which must be free) listen here,
+#         the agent's containers appear in docker ps, and only one such room runs per machine.
+# --host-openshell: --host-docker, and use the OpenShell gateway already on this machine (registered
+#         as auto-defender, e.g. by agent-hardener setup) instead of starting one. The room runs only
+#         NeMo Helix, Studio and agent-hardener; it reads this machine's ~/.config/openshell and never
+#         changes it, and down leaves the gateway and its other sandboxes alone.
+# AH_ROOM_NAME, AH_ROOM_IMAGE and AH_ROOM_PORT set the defaults for --name, --image and --port.
+set -euo pipefail
+
+NAME="${AH_ROOM_NAME:-ah-room}"
+IMAGE="${AH_ROOM_IMAGE:-nemo-agent-hardener-room:dev}"
+START_TIMEOUT=900
+MIN_ENGINE=20.10
+STUDIO_LABEL=ah-room.studio
+HOST_LABEL=ah-room.docker
+OPENSHELL_LABEL=ah-room.openshell
+VOLUME_LABEL=ah-room.room
+HOST_OPENSHELL="${XDG_CONFIG_HOME:-${HOME}/.config}/openshell"
+
+die() {
+  printf 'ah-room: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  awk 'NR >= 5 && !/^#/ { exit } NR >= 5 { sub(/^# ?/, ""); print }' "$0"
+}
+
+require_room() {
+  [[ "$(docker inspect -f '{{.State.Running}}' "${NAME}" 2>/dev/null)" == true ]] \
+    || die "room ${NAME} is not running; start it with: ah-room up --keys FILE"
+}
+
+studio_url() {
+  local url
+  url="$(docker inspect -f "{{index .Config.Labels \"${STUDIO_LABEL}\"}}" "${NAME}")"
+  [[ -n "${url}" ]] || die "room ${NAME} was started with --no-ui; Studio is closed"
+  printf '%s\n' "${url}"
+}
+
+host_socket() {
+  local endpoint
+  endpoint="$(docker context inspect --format '{{.Endpoints.docker.Host}}')" \
+    || die "cannot read the current Docker context (docker context inspect)"
+  [[ "${endpoint}" == unix://* ]] \
+    || die "--host-docker needs a local Docker Engine socket; the current context points at ${endpoint}"
+  [[ -S "${endpoint#unix://}" ]] || die "--host-docker: ${endpoint#unix://} is not a socket"
+  printf '%s\n' "${endpoint#unix://}"
+}
+
+open_browser() {
+  local url="$1"
+  printf 'ah-room: Studio: %s\n' "${url}"
+  if command -v open >/dev/null && [[ "$(uname -s)" == Darwin ]]; then
+    open "${url}"
+  elif command -v wslview >/dev/null; then
+    wslview "${url}"
+  elif grep -qi microsoft /proc/version 2>/dev/null && command -v cmd.exe >/dev/null; then
+    cmd.exe /c start "" "${url}" >/dev/null 2>&1
+  elif [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]] && command -v xdg-open >/dev/null; then
+    xdg-open "${url}" >/dev/null 2>&1 &
+  else
+    local port="${url##*:}"
+    port="${port%%/*}"
+    printf 'ah-room: no browser here; from your machine forward the port: ssh -L %s:localhost:%s <this host>\n' \
+      "${port}" "${port}"
+  fi
+}
+
+port_in_use() {
+  local probe="$1" port="$2"
+  [[ "${probe}" != 0.0.0.0 ]] || probe=127.0.0.1
+  # Something answering the connect means the port is taken; a refused connect means it is free.
+  (exec 3<>"/dev/tcp/${probe}/${port}") 2>/dev/null
+}
+
+pick_port() {
+  local bind="$1" port="$2" last=$(( $2 + 50 ))
+  while (( port <= last )); do
+    port_in_use "${bind}" "${port}" || { printf '%s\n' "${port}"; return 0; }
+    port=$(( port + 1 ))
+  done
+  die "no free port between $2 and ${last}; pass --port"
+}
+
+require_engine() {
+  local version major minor
+  version="$(docker version --format '{{.Server.Version}}' 2>/dev/null)" \
+    || die "cannot reach the Docker Engine (is it running, and may this user use it?); docker version says: $(docker version 2>&1 | tail -n 1)"
+  [[ "${version}" =~ ^([0-9]+)\.([0-9]+) ]] || die "unrecognized Docker Engine version '${version}'; the room needs Docker Engine ${MIN_ENGINE}+"
+  major="${BASH_REMATCH[1]}"
+  minor="${BASH_REMATCH[2]}"
+  # 20.10 is the first engine with cgroup v2; 19.03 fails to start the room with
+  # "cgroups: cgroup mountpoint does not exist".
+  (( major > 20 || (major == 20 && minor >= 10) )) \
+    || die "Docker Engine ${version} is too old; the room needs Docker Engine ${MIN_ENGINE}+ (Docker Desktop 4.x ships 20.10+)"
+}
+
+cmd_up() {
+  require_engine
+  local keys="" agent="" port="" ui=1 open_ui=1 host_docker=0 host_openshell=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --host-docker) host_docker=1; shift ;;
+      --host-openshell) host_docker=1; host_openshell=1; shift ;;
+      --keys) keys="$2"; shift 2 ;;
+      --agent) agent="$2"; shift 2 ;;
+      --port) port="$2"; shift 2 ;;
+      --bind) die "--bind was removed: Studio has no login, so it listens on 127.0.0.1 only; from another machine: ssh -L <port>:localhost:<port> <this host>" ;;
+      --no-ui) ui=0; shift ;;
+      --no-open) open_ui=0; shift ;;
+      --name) NAME="$2"; shift 2 ;;
+      --image) IMAGE="$2"; shift 2 ;;
+      *) die "up: unknown argument $1 (see ah-room --help)" ;;
+    esac
+  done
+  [[ -n "${keys}" ]] || die "up needs --keys FILE (with OPENROUTER_API_KEY=... or INFERENCE_API_KEY=...)"
+  [[ -f "${keys}" ]] || die "--keys ${keys} does not exist"
+  if [[ "${ui}" == 1 ]]; then
+    if [[ -n "${port}" ]]; then
+      [[ "${port}" =~ ^[0-9]+$ ]] && (( port >= 1 && port <= 65535 )) || die "--port must be 1-65535"
+      ! port_in_use 127.0.0.1 "${port}" || die "port ${port} is already in use; pick another with --port, or omit it"
+    else
+      local start="${AH_ROOM_PORT:-8080}"
+      [[ "${start}" =~ ^[0-9]+$ ]] || die "AH_ROOM_PORT must be a number"
+      port="$(pick_port 127.0.0.1 "${start}")"
+      [[ "${port}" == "${start}" ]] || printf 'ah-room: port %s is in use; Studio gets %s\n' "${start}" "${port}"
+    fi
+  fi
+  if docker inspect "${NAME}" >/dev/null 2>&1; then
+    die "a container named ${NAME} already exists; run: ah-room down (or pass --name)"
+  fi
+  local socket=""
+  if [[ "${host_docker}" == 1 ]]; then
+    [[ "$(uname -s)" == Linux ]] || die "--host-docker works on Linux only (Docker Desktop has no shared host network)"
+    socket="$(host_socket)"
+    local other
+    other="$(docker ps -q --filter "label=${HOST_LABEL}=host")"
+    [[ -z "${other}" ]] || die "a --host-docker room already runs here ($(docker inspect -f '{{.Name}}' ${other})); run: ah-room down --name <it>"
+    [[ "${ui}" == 1 ]] || port="$(pick_port 127.0.0.1 "${AH_ROOM_PORT:-8080}")"
+    if [[ "${host_openshell}" == 1 ]]; then
+      [[ -d "${HOST_OPENSHELL}/gateways/auto-defender" ]] \
+        || die "--host-openshell: no gateway auto-defender in ${HOST_OPENSHELL}; register it (agent-hardener setup), or run without --host-openshell"
+      port_in_use 127.0.0.1 17670 \
+        || die "--host-openshell: nothing answers on 127.0.0.1:17670; start this machine's gateway (openshell status), or run without --host-openshell"
+    else
+      ! port_in_use 127.0.0.1 17670 \
+        || die "port 17670 (the OpenShell gateway's) is taken here; use that gateway with --host-openshell, or run without --host-docker"
+    fi
+  fi
+  if ! docker image inspect "${IMAGE}" >/dev/null 2>&1; then
+    printf 'ah-room: pulling %s (about 26 GB, once)\n' "${IMAGE}"
+    docker pull "${IMAGE}" \
+      || die "cannot pull ${IMAGE}: log in first (docker login ${IMAGE%%/*}) and check the name and tag"
+  fi
+  local args=(run -d --name "${NAME}" -v "$(cd "$(dirname "${keys}")" && pwd)/$(basename "${keys}"):/run/secrets/keys.env:ro")
+  local volume data_path=/data volumes=("${NAME}-data" "${NAME}-work")
+  [[ "${host_docker}" == 1 ]] || volumes+=("${NAME}-docker")
+  for volume in "${volumes[@]}"; do
+    if docker volume inspect "${volume}" >/dev/null 2>&1; then
+      printf 'ah-room: reusing volume %s from an earlier room\n' "${volume}"
+    else
+      docker volume create --label "${VOLUME_LABEL}=${NAME}" "${volume}" >/dev/null
+    fi
+  done
+  if [[ "${host_docker}" == 1 ]]; then
+    # This machine's engine runs Helix's ClickHouse and bind-mounts its data by path.
+    data_path="$(docker volume inspect -f '{{.Mountpoint}}' "${NAME}-data")"
+    [[ "${data_path}" == /* ]] || die "volume ${NAME}-data has no local mount point ('${data_path}'); --host-docker needs the local volume driver"
+  fi
+  args+=(-v "${NAME}-data:${data_path}" -e "AH_ROOM_DATA=${data_path}" -v "${NAME}-work:/work")
+  if [[ "${host_docker}" == 1 ]]; then
+    args+=(--network host -v "${socket}:/var/run/docker.sock" --label "${HOST_LABEL}=host"
+      -e AH_ROOM_DOCKER=host
+      -e "AH_ROOM_HELIX_PORT=${port}" -e "NHX_BASE_URL=http://127.0.0.1:${port}")
+    if [[ "${host_openshell}" == 1 ]]; then
+      args+=(-v "${HOST_OPENSHELL}:/run/host-openshell:ro" -e AH_ROOM_OPENSHELL=host --label "${OPENSHELL_LABEL}=host")
+    fi
+  else
+    # The inner Docker on disk rather than in a tmpfs: no memory for it, and its images stay cached.
+    args+=(--privileged -v "${NAME}-docker:/var/lib/docker" -e AH_ROOM_DOCKER_TMPFS=off)
+  fi
+  if [[ -n "${agent}" ]]; then
+    [[ -d "${agent}" ]] || die "--agent ${agent} is not a directory"
+    args+=(-v "$(cd "${agent}" && pwd):/agent:ro")
+  fi
+  if [[ "${ui}" == 1 ]]; then
+    local url="http://localhost:${port}/studio"
+    args+=(-e "AH_ROOM_STUDIO_URL=${url}" --label "${STUDIO_LABEL}=${url}")
+    if [[ "${host_docker}" == 1 ]]; then
+      args+=(-e NHX_ROOM_HOST=127.0.0.1)
+    else
+      args+=(-p "127.0.0.1:${port}:8080" -e NHX_ROOM_HOST=0.0.0.0)
+    fi
+  fi
+  docker "${args[@]}" "${IMAGE}" >/dev/null
+
+  printf 'ah-room: starting %s (the first start pulls the sandbox images; a few minutes)' "${NAME}"
+  local waited=0
+  until docker exec "${NAME}" test -f /run/ah-room/ready 2>/dev/null; do
+    if [[ "$(docker inspect -f '{{.State.Running}}' "${NAME}")" != true ]]; then
+      printf '\n'
+      docker logs --tail 20 "${NAME}" >&2
+      die "the room stopped during start; see above, then: ah-room down"
+    fi
+    (( waited < START_TIMEOUT )) || { printf '\n'; die "not ready after ${START_TIMEOUT}s; see: ah-room logs"; }
+    printf '.'
+    sleep 5
+    waited=$(( waited + 5 ))
+  done
+  printf ' ready\n'
+  if [[ "${ui}" == 1 ]]; then
+    if [[ "${open_ui}" == 1 ]]; then
+      open_browser "$(studio_url)"
+    else
+      printf 'ah-room: Studio: %s\n' "$(studio_url)"
+    fi
+  fi
+  printf 'ah-room: next: ah-room cycle --example langgraph'
+  [[ -z "${agent}" ]] || printf '   or   ah-room cycle --project-dir /agent --name my-agent --harness langgraph'
+  printf '\n'
+}
+
+cmd_down() {
+  local purge=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --purge) purge=1; shift ;;
+      --name) NAME="$2"; shift 2 ;;
+      *) die "down: unknown argument $1 (see ah-room --help)" ;;
+    esac
+  done
+  if ! docker inspect "${NAME}" >/dev/null 2>&1; then
+    [[ "${purge}" == 1 ]] || die "no room named ${NAME}"
+    remove_volumes
+    return 0
+  fi
+  if [[ "$(docker inspect -f "{{index .Config.Labels \"${HOST_LABEL}\"}}" "${NAME}")" == host ]]; then
+    # Its sandboxes and Helix's ClickHouse run on this machine's engine, not inside the room. A gateway
+    # the room did not start may hold others' sandboxes; agent-hardener removes its own after each run.
+    require_room
+    local own_gateway=1
+    [[ "$(docker inspect -f "{{index .Config.Labels \"${OPENSHELL_LABEL}\"}}" "${NAME}")" != host ]] || own_gateway=0
+    docker exec -e "OWN_GATEWAY=${own_gateway}" "${NAME}" bash -c '
+      set -euo pipefail
+      [[ "${OWN_GATEWAY}" == 0 ]] || openshell sandbox delete --all --gateway auto-defender >/dev/null
+      data="$(readlink -f "${HOME}/.local/share/nemo/intake-clickhouse" | tr -d "\n" | sha256sum | cut -d" " -f1)"
+      ids="$(docker ps -aq --filter "label=nhx.nvidia.com/data-directory-sha256=${data}")"
+      [[ -z "${ids}" ]] || docker rm -f -v ${ids} >/dev/null' \
+      || die "could not remove ${NAME}'s sandboxes from this machine's engine; see: ah-room logs"
+  fi
+  docker rm -f -v "${NAME}" >/dev/null
+  printf 'ah-room: removed %s\n' "${NAME}"
+  if [[ "${purge}" == 1 ]]; then
+    remove_volumes
+  else
+    printf 'ah-room: kept the volumes %s-data (Helix), %s-work (/work) and, in private mode, %s-docker (image cache);\n' \
+      "${NAME}" "${NAME}" "${NAME}"
+    printf 'ah-room: the next up reuses them; down --purge deletes them\n'
+  fi
+}
+
+remove_volumes() {
+  local volume
+  for volume in "${NAME}-data" "${NAME}-work" "${NAME}-docker"; do
+    docker volume inspect "${volume}" >/dev/null 2>&1 || continue
+    [[ "$(docker volume inspect -f "{{index .Labels \"${VOLUME_LABEL}\"}}" "${volume}")" == "${NAME}" ]] \
+      || die "volume ${volume} was not created by ah-room for ${NAME}; remove it yourself if you mean to"
+    docker volume rm "${volume}" >/dev/null
+    printf 'ah-room: deleted volume %s\n' "${volume}"
+  done
+}
+
+cmd_version() {
+  local image=""
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --image) image="$2"; shift 2 ;;
+      --name) NAME="$2"; shift 2 ;;
+      *) die "version: unknown argument $1 (see ah-room --help)" ;;
+    esac
+  done
+  if [[ -z "${image}" ]]; then
+    image="${IMAGE}"
+    ! docker inspect "${NAME}" >/dev/null 2>&1 || image="$(docker inspect -f '{{.Image}}' "${NAME}")"
+  fi
+  docker run --rm --entrypoint cat "${image}" /usr/local/share/ah-room/versions.json \
+    || die "${image} has no versions.json: it was built before 0.0.23, or not with build.sh"
+}
+
+[[ $# -gt 0 ]] || { usage; exit 1; }
+command -v docker >/dev/null || die "docker is not installed or not on PATH"
+sub="$1"
+shift
+case "${sub}" in
+  up) cmd_up "$@" ;;
+  cycle)
+    require_room
+    # A TTY only when there is one: CI and pipes have none, and -t would refuse to start.
+    tty=(-i)
+    [[ -t 0 && -t 1 ]] && tty=(-it)
+    exec docker exec "${tty[@]}" "${NAME}" ah-cycle "$@"
+    ;;
+  open) require_room; open_browser "$(studio_url)" ;;
+  shell) require_room; exec docker exec -it "${NAME}" bash ;;
+  logs) exec docker logs -f "${NAME}" ;;
+  down) cmd_down "$@" ;;
+  version) cmd_version "$@" ;;
+  -h|--help|help) usage ;;
+  *) die "unknown command ${sub} (see ah-room --help)" ;;
+esac

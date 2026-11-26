@@ -1,0 +1,83 @@
+#!/bin/bash
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Standalone cycle (no NeMo Helix): synthesize the benign suite, then attack, harden and replay.
+#   ah-cycle                       the bundled LangGraph example
+#   ah-cycle --config FILE         your own agent-hardener.yaml (see examples/agent-hardener.yaml)
+#   ah-cycle --rounds N --env-file FILE
+set -euo pipefail
+
+OPERATOR_ENV="${HOME}/.agent-hardener/.env"
+EXAMPLE=/opt/agent-hardener/src/examples/langgraph-victim
+CONFIG=""
+ROUNDS=1
+ENV_FILE="${OPERATOR_ENV}"
+
+die() {
+  printf 'ah-cycle: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() {
+  awk 'NR >= 2 && !/^#/ { exit } NR >= 2 { sub(/^# ?/, ""); print }' "$0"
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --config) CONFIG="$2"; shift 2 ;;
+    --rounds) ROUNDS="$2"; shift 2 ;;
+    --env-file) ENV_FILE="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
+    *) die "unknown argument $1 (see --help)" ;;
+  esac
+done
+
+[[ -f /run/ah-room/ready ]] || die "the room is not ready; check: docker logs <container>"
+[[ -f "${ENV_FILE}" ]] || die "env file ${ENV_FILE} is missing"
+# shellcheck source=/dev/null
+. /usr/local/lib/ah-room/models.sh
+ah_select_models "${ENV_FILE}"
+
+export AGENT_HARDENER_BASE_URL="${AH_BASE_URL}"
+export AGENT_HARDENER_MODEL="${AH_MODEL}"
+export GARAK_RED_TEAM_MODEL_NAME="${AH_MODEL}"
+export GARAK_RED_TEAM_MODEL_URI="${AH_BASE_URL}/"
+export GARAK_DETECTOR_MODEL_NAME="${AH_MODEL}"
+export GARAK_DETECTOR_MODEL_URI="${AH_BASE_URL}/"
+
+mkdir -p /work
+cd /work
+if [[ -z "${CONFIG}" ]]; then
+  CONFIG=/work/agent-hardener.yaml
+  cat >"${CONFIG}" <<EOF
+agent:
+  name: langgraph-victim
+  project_dir: ${EXAMPLE}
+  dockerfile: Dockerfile
+  harness: langgraph
+  relay_integration_confirmed: true
+  start_command: /usr/local/bin/python /app/server.py
+  binaries: ["/usr/local/bin/python*"]
+  port: 8000
+  secrets_file: ${OPERATOR_ENV}
+  secrets:
+    - INFERENCE_API_KEY
+  egress:
+    - ${AH_EGRESS_HOST}
+  env:
+    INFERENCE_BASE_URL: ${AH_BASE_URL}
+    INFERENCE_MODEL: ${AH_MODEL}
+EOF
+fi
+[[ -f "${CONFIG}" ]] || die "manifest ${CONFIG} is missing"
+
+printf 'ah-cycle: synthesizing the benign suite\n'
+MARK="$(mktemp)"
+agent-hardener synth-benign --config "${CONFIG}" --env-file "${ENV_FILE}" --no-interactive
+mapfile -t SUITES < <(find /work/.agent-hardener/benign_profiles -name requests.csv -type f -newer "${MARK}")
+rm -f "${MARK}"
+[[ ${#SUITES[@]} -eq 1 ]] || die "expected one new benign suite under /work/.agent-hardener/benign_profiles, found ${#SUITES[@]}"
+printf 'ah-cycle: attack, harden, replay\n'
+agent-hardener run --config "${CONFIG}" --env-file "${ENV_FILE}" --benign-suite "${SUITES[0]}" --rounds "${ROUNDS}"
+printf 'ah-cycle: finished\n'
