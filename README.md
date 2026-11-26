@@ -8,7 +8,7 @@ they are blocked and check that normal requests still work. At the end you get a
 your agent's image.
 
 <p align="center">
-  <img src=".github/images/agent-hardener-loop.svg" alt="Agent Hardener loop: attackers attack your agent in an OpenShell sandbox, defenders patch it from the attacks that landed and their NeMo Relay traces, validators replay the attacks and check benign requests, then a report and a hardened image are produced. The next round attacks the hardened agent." width="900">
+  <img src=".github/images/agent-hardener-loop.svg" alt="Agent Hardener loop: attackers attack your agent in an OpenShell sandbox, defenders patch it from the attacks that landed and their NeMo Relay traces, validators replay the attacks and check benign requests, then a report and a hardened image are produced. The next round attacks the hardened agent." width="1000">
 </p>
 
 Your agent runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and must be connected to

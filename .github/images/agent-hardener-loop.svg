@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" font-family="Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1240" height="480" viewBox="0 0 1240 480" font-family="Helvetica, Arial, sans-serif">
   <defs>
     <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#4b5563"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="960" height="470" rx="14" fill="#ffffff"/>
+  <rect x="0" y="0" width="1240" height="480" rx="14" fill="#ffffff"/>
 
   <!-- Attackers -->
   <rect x="40" y="70" width="220" height="180" rx="12" fill="#fdecea" stroke="#c62828" stroke-width="2"/>
@@ -64,6 +64,7 @@
 
   <!-- 4: validate -->
   <line x1="480" y1="360" x2="480" y2="304" stroke="#1a56db" stroke-width="2.5" marker-end="url(#arrow)"/>
+  <text x="490" y="337" font-size="13" font-weight="700" fill="#1e40af">4 replay attacks and benign requests</text>
 
   <!-- 5: report -->
   <line x1="620" y1="400" x2="696" y2="400" stroke="#4b5563" stroke-width="2.5" marker-end="url(#arrow)"/>
@@ -73,4 +74,37 @@
   <path d="M340,400 L150,400 L150,254" fill="none" stroke="#9ca3af" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
   <text x="245" y="420" text-anchor="middle" font-size="12" fill="#6b7280">next round attacks</text>
   <text x="245" y="436" text-anchor="middle" font-size="12" fill="#6b7280">the hardened agent</text>
+
+  <!-- Steps legend -->
+  <rect x="960" y="30" width="260" height="422" rx="12" fill="#f9fafb" stroke="#d1d5db" stroke-width="1.5"/>
+  <text x="984" y="62" font-size="16" font-weight="700" fill="#111827">Steps</text>
+  <circle cx="994" cy="95" r="12" fill="#c62828"/>
+  <text x="994" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">1</text>
+  <text x="1016" y="100" font-size="14" font-weight="700" fill="#111827">Attack</text>
+  <text x="1016" y="118" font-size="12" fill="#4b5563">Attackers send attacks</text>
+  <text x="1016" y="133" font-size="12" fill="#4b5563">to your agent's tools</text>
+  <circle cx="994" cy="157" r="12" fill="#4b5563"/>
+  <text x="994" y="162" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">2</text>
+  <text x="1016" y="162" font-size="14" font-weight="700" fill="#111827">Route the hits</text>
+  <text x="1016" y="180" font-size="12" fill="#4b5563">Attacks that landed and their</text>
+  <text x="1016" y="195" font-size="12" fill="#4b5563">NeMo Relay traces go to defenders</text>
+  <circle cx="994" cy="219" r="12" fill="#2e7d32"/>
+  <text x="994" y="224" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">3</text>
+  <text x="1016" y="224" font-size="14" font-weight="700" fill="#111827">Patch</text>
+  <text x="1016" y="242" font-size="12" fill="#4b5563">Defenders apply guardrails and</text>
+  <text x="1016" y="257" font-size="12" fill="#4b5563">policy to the running agent</text>
+  <circle cx="994" cy="281" r="12" fill="#1a56db"/>
+  <text x="994" y="286" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">4</text>
+  <text x="1016" y="286" font-size="14" font-weight="700" fill="#111827">Validate</text>
+  <text x="1016" y="304" font-size="12" fill="#4b5563">Replay the attacks and send</text>
+  <text x="1016" y="319" font-size="12" fill="#4b5563">benign requests</text>
+  <circle cx="994" cy="343" r="12" fill="#4b5563"/>
+  <text x="994" y="348" text-anchor="middle" font-size="13" font-weight="700" fill="#ffffff">5</text>
+  <text x="1016" y="348" font-size="14" font-weight="700" fill="#111827">Report</text>
+  <text x="1016" y="366" font-size="12" fill="#4b5563">Results and a hardened</text>
+  <text x="1016" y="381" font-size="12" fill="#4b5563">agent image</text>
+  <line x1="984" y1="402" x2="1196" y2="402" stroke="#e5e7eb" stroke-width="1"/>
+  <path d="M982,422 L1006,422" stroke="#9ca3af" stroke-width="2" stroke-dasharray="5 4"/>
+  <text x="1016" y="426" font-size="12" fill="#4b5563">Next round attacks the</text>
+  <text x="1016" y="441" font-size="12" fill="#4b5563">hardened agent</text>
 </svg>
