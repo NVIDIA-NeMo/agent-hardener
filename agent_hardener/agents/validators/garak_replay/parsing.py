@@ -11,16 +11,15 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
+
+from agent_hardener.agents.attackers.garak_probes import DETECTORS, PROBES, AttackType, split_plugin
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from agent_hardener.models import AttackRecord
 
-AttackType = Literal["direct_prompt_injection", "indirect_prompt_injection"]
-
-DIRECT_PROBE_KEYWORD = "agent_breaker"
 INDIRECT_PROBE_KEYWORD = "indirect_injection"
 
 
@@ -63,8 +62,9 @@ def identify_attack_type(hit: dict[str, Any]) -> AttackType | None:
             hit.get("detector"),
         )
     ).lower()
-    if DIRECT_PROBE_KEYWORD in haystack or "agent-breaker" in haystack:
-        return "direct_prompt_injection"
+    for probe in PROBES.values():
+        if probe.key in haystack or probe.report_prefix in haystack:
+            return probe.attack_type
     if INDIRECT_PROBE_KEYWORD in haystack or "indirect-injection" in haystack:
         return "indirect_prompt_injection"
     return None
@@ -101,9 +101,8 @@ def parse_target_tool(prompt: str) -> str:
 
 
 def detector_namespace_and_class(attack_type: AttackType) -> tuple[str, str]:
-    if attack_type == "direct_prompt_injection":
-        return "agent_breaker", "AgentBreakerResult"
-    return "indirect_injection", "IndirectInjectionResult"
+    """The garak detector judging ``attack_type``, as the ``(<module>, <Class>)`` its config nests under."""
+    return split_plugin(DETECTORS[attack_type])
 
 
 def watched_github_targets(injection_location: str, injected_payload: str) -> list[GitHubIssueTarget]:

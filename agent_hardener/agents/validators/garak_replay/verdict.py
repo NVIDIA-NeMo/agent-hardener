@@ -114,7 +114,7 @@ def format_finding(result: dict[str, Any], aggregate_index: int) -> str:
 
 def attack_id(hit_context: dict[str, Any], aggregate_index: int) -> str:
     hit = hit_context["hit"]
-    prefix = "agent_breaker" if hit_context["attack_type"] == "direct_prompt_injection" else "indirect_injection"
+    prefix, _ = parsing.detector_namespace_and_class(hit_context["attack_type"])
     run_id = hit.get("run_id") or "unknown-run"
     attempt_id = hit.get("attempt_id") or f"record-{hit_context['record_index']}"
     attempt_idx = hit.get("attempt_idx")

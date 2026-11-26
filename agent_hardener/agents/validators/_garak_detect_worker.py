@@ -12,14 +12,15 @@ Protocol: a newline-delimited JSON request/response stream. The process imports 
 first request) and then services many requests over its lifetime — one cold torch/garak import per
 *run*, not per hit. Read one JSON request object per input line, write one JSON response line:
 
-    request  = {"attack_type": str, "config_root": dict, "verify_kwargs": dict, "repo_path": str|null}
+    request  = {"detector": [module, class], "config_root": dict, "verify_kwargs": dict, "repo_path": str|null}
     response = {"ok": true, "is_success": bool, "confidence": float, "reasoning": str}
              | {"ok": true, "judged": false}   # the detector could not judge the output
              | {"ok": false, "error": str}
 
 garak/torch chatter is redirected to stderr for the whole process so stdout carries only JSON lines.
-Detector instances are cached by (attack_type, serialized config_root) so repeated configs reuse the
-already-constructed detector.
+The caller names the detector (``garak.detectors.<module>``, ``<Class>``) so the attack-type mapping lives
+only on the Agent Hardener side. Detector instances are cached by (module, class, serialized config_root) so
+repeated configs reuse the already-constructed detector.
 """
 
 from __future__ import annotations
@@ -29,27 +30,23 @@ import json
 import sys
 from typing import Any
 
-# attack_type -> (garak detector module, detector class). Mirrors the direct/indirect split the
-# validator drives; the class contract is ``verify(**kwargs) -> (is_success, confidence, reasoning)``.
-_DETECTORS = {
-    "direct_prompt_injection": ("garak.detectors.agent_breaker", "AgentBreakerResult"),
-    "indirect_prompt_injection": ("garak.detectors.indirect_injection", "IndirectInjectionResult"),
-}
-
-_detector_cache: dict[tuple[str, str], Any] = {}
+# The detector class contract is ``verify(**kwargs) -> (is_success, confidence, reasoning)``.
+_detector_cache: dict[tuple[str, str, str], Any] = {}
 _seen_repo_paths: set[str] = set()
 
 
-def _detector_for(attack_type: str, config_root: dict[str, Any], repo_path: str | None) -> Any:
+def _detector_for(detector_name: list[str], config_root: dict[str, Any], repo_path: str | None) -> Any:
     if repo_path and repo_path not in _seen_repo_paths:
         # Honour a dev editable garak checkout (GARAK_REPO_PATH) even inside the worker.
         if repo_path not in sys.path:
             sys.path.insert(0, repo_path)
         _seen_repo_paths.add(repo_path)
-    cache_key = (attack_type, json.dumps(config_root, sort_keys=True))
+    module_name, class_name = detector_name
+    if not module_name.startswith("garak.detectors."):
+        raise ValueError(f"not a garak detector module: {module_name!r}")
+    cache_key = (module_name, class_name, json.dumps(config_root, sort_keys=True))
     detector = _detector_cache.get(cache_key)
     if detector is None:
-        module_name, class_name = _DETECTORS[attack_type]
         module = importlib.import_module(module_name)
         detector = getattr(module, class_name)(config_root=config_root)
         _detector_cache[cache_key] = detector
@@ -57,7 +54,7 @@ def _detector_for(attack_type: str, config_root: dict[str, Any], repo_path: str 
 
 
 def _run(request: dict[str, Any]) -> dict[str, Any]:
-    detector = _detector_for(request["attack_type"], request["config_root"], request.get("repo_path"))
+    detector = _detector_for(request["detector"], request["config_root"], request.get("repo_path"))
     detection = detector.verify(**request["verify_kwargs"])
     if detection is None:
         return {"ok": True, "judged": False}

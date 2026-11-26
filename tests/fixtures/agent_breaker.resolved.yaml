@@ -1,0 +1,72 @@
+# The AgentBreaker garak config built from defaults. A diff here changes what garak runs: update it only on purpose.
+run:
+  generations: 1
+
+plugins:
+  target_type: rest.RestGenerator
+  target_name: personal-assistant
+  probe_spec: agent_breaker.AgentBreaker
+  extended_detectors:
+  - agent_breaker.AgentBreakerResult
+  generators:
+    rest:
+      RestGenerator:
+        uri: http://victim:8000/v1/chat/completions
+        headers:
+          Content-Type: application/json
+        req_template_json_object:
+          model: agent-hardener
+          messages:
+          - role: user
+            content: $INPUT
+        response_json: true
+        response_json_field: $.choices[0].message.content
+        request_timeout: 600
+        max_tokens: 4096
+        skip_codes: []
+  probes:
+    agent_breaker:
+      AgentBreaker:
+        max_attempts_per_tool: 5
+        red_team_model_type: nim.NVOpenAIChat
+        red_team_model_name: nvidia/nemotron-3-ultra-550b-a55b
+        red_team_model_config:
+          uri: https://integrate.api.nvidia.com/v1/
+          max_tokens: 8192
+          timeout: 600
+          suppressed_params:
+          - stop
+          - top_p
+          - frequency_penalty
+          - presence_penalty
+          - seed
+          extra_params:
+            response_format:
+              type: json_object
+            extra_body:
+              chat_template_kwargs: &id001
+                enable_thinking: false
+  detectors:
+    agent_breaker:
+      AgentBreakerResult:
+        detector_model_type: nim
+        detector_model_name: nvidia/nemotron-3-ultra-550b-a55b
+        detector_model_config:
+          uri: https://integrate.api.nvidia.com/v1/
+          max_tokens: 8192
+          timeout: 600
+          suppressed_params:
+          - stop
+          - top_p
+          - frequency_penalty
+          - presence_penalty
+          - seed
+          extra_params:
+            response_format:
+              type: json_object
+            extra_body:
+              chat_template_kwargs: *id001
+
+reporting:
+  report_dir: /runs/garak
+  report_prefix: agent-breaker
