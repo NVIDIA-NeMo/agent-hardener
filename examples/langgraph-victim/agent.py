@@ -60,7 +60,9 @@ SYSTEM_PROMPT = (
 
 #: Longest one model call may wait, and how often it is retried. Without a cap, a provider that
 #: stops answering holds the request open until garak's 600s turn timeout fails the whole attacker.
-MODEL_TIMEOUT_SECONDS = 90
+#: Both tries together must end inside the 120s Agent Hardener waits for the hardened victim's answer
+#: (the victim stage): a stalled call is then answered as a model error rather than failing the run.
+MODEL_TIMEOUT_SECONDS = 55
 MODEL_MAX_RETRIES = 1
 #: The model errors that are answered instead of raised: the ones that pass on their own (a timeout, a
 #: dropped connection, a 5xx such as a model that is temporarily down). A 429 is not one of them: the
