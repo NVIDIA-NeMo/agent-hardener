@@ -46,6 +46,9 @@ GARAK_PINNED_SPEC = f"garak @ {GARAK_WHEEL_URL}#sha256={GARAK_WHEEL_SHA256}"
 # interpreter float risks landing on a Python with no torch wheel (and litellm caps at <3.14).
 # 3.12 sits inside garak's >=3.10 window with mature torch wheels; uv fetches it if the host lacks it.
 GARAK_PYTHON_VERSION = "3.12"
+# garak only drives remote models over HTTP here, so its torch needs no GPU. The default Linux wheels bundle
+# ~5 GB of CUDA libraries; the CPU build keeps the venv near 1.6 GB.
+GARAK_TORCH_BACKEND = "cpu"
 _DEFAULT_GARAK_VENV = Path("~/.agent-hardener/garak-venv")
 
 
@@ -161,7 +164,7 @@ def provision_garak_venv(*, force: bool = False) -> Path:
 
     venv_dir.parent.mkdir(parents=True, exist_ok=True)
     _run(["uv", "venv", "--python", GARAK_PYTHON_VERSION, str(venv_dir)])
-    _run(["uv", "pip", "install", "--python", str(python), GARAK_PINNED_SPEC])
+    _run(["uv", "pip", "install", "--python", str(python), "--torch-backend", GARAK_TORCH_BACKEND, GARAK_PINNED_SPEC])
     if not python.exists():
         raise SetupError(f"garak install finished but {python} is missing.")
     return python

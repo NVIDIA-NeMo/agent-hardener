@@ -166,6 +166,7 @@ def test_provision_creates_and_installs(tmp_path: Path, monkeypatch: pytest.Monk
     assert calls[0][-1] == str(tmp_path / "garak-venv")
     assert calls[1][:3] == ["uv", "pip", "install"]
     assert garak_venv.GARAK_PINNED_SPEC in calls[1]
+    assert calls[1][calls[1].index("--torch-backend") + 1] == "cpu"  # no CUDA libraries in the venv
 
 
 def test_pinned_spec_carries_the_wheel_hash() -> None:
