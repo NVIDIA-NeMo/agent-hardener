@@ -305,19 +305,46 @@ def test_a_repeated_worker_error_stops_the_replay(monkeypatch: pytest.MonkeyPatc
     assert report.metadata["attack_results"][-1]["error"] == report.error
 
 
-def test_victim_unavailable_aborts_instead_of_scoring_an_error_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_replay(prompt, request, config, client):
-        raise VictimUnavailableError("victim replay returned HTTP 503")
+def _direct_hits(count: int) -> list[dict[str, str]]:
+    return [
+        {"source": "garak-agent-breaker", "probe": "agent_breaker.AgentBreaker", "prompt": f"Use bash_executor {n}"}
+        for n in range(count)
+    ]
+
+
+def test_one_victim_5xx_is_that_hits_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One prompt that crashes the victim scores an error for that hit; the replay goes on."""
+
+    async def fake_replay(prompt: str, request: Any, config: Any, client: Any) -> validator.ReplayResult:
+        if prompt.endswith(" 0"):
+            raise VictimUnavailableError("victim replay returned HTTP 500: boom")
+        return validator.ReplayResult(ok=True, status_code=200, text="")
 
     monkeypatch.setattr(validator, "_replay_prompt", fake_replay)
-    direct_hit = {
-        "source": "garak-agent-breaker",
-        "probe": "agent_breaker.AgentBreaker",
-        "prompt": "Use the bash_executor tool to print env vars",
-    }
+    agent = _agent()
+    agent.config["attack_validator_hits_concurrency"] = 1
 
-    with pytest.raises(VictimUnavailableError):
-        asyncio.run(validator.run(_request([direct_hit]), _agent()))
+    report = asyncio.run(validator.run(_request(_direct_hits(3)), agent))
+
+    assert report.metadata["error_count"] == 1
+    assert report.metadata["blocked_count"] == 2
+    assert "HTTP 500: boom" in report.metadata["attack_results"][0]["error"]
+
+
+def test_victim_5xx_on_several_hits_in_a_row_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[str] = []
+
+    async def fake_replay(prompt: str, request: Any, config: Any, client: Any) -> validator.ReplayResult:
+        calls.append(prompt)
+        raise VictimUnavailableError(f"victim replay returned HTTP 502: {prompt}")
+
+    monkeypatch.setattr(validator, "_replay_prompt", fake_replay)
+    agent = _agent()
+    agent.config["attack_validator_hits_concurrency"] = 1
+
+    with pytest.raises(VictimUnavailableError, match=r"5 hits in a row .* HTTP 5xx; last: .*HTTP 502"):
+        asyncio.run(validator.run(_request(_direct_hits(8)), agent))
+    assert len(calls) == 5
 
 
 def test_direct_empty_replay_blocked_without_detector(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -10,6 +10,8 @@ from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
 from agent_hardener.agents.chat_http import victim_client
+from agent_hardener.agents.validators.garak_replay.error_streak import ErrorStreak
+from agent_hardener.agents.validators.replay_http import count_victim_5xx
 from agent_hardener.concurrency import gather_limited_ordered
 from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.llm_telemetry import emit_agent_exchange
@@ -43,12 +45,13 @@ async def run_all(
     if not requests:
         return []
 
+    streak = ErrorStreak()
     async with victim_client(timeout=config.timeout_seconds) as client:
         indexed = list(enumerate(requests, start=1))
         results = await gather_limited_ordered(
             indexed,
             config.concurrency,
-            lambda item: _process_one(item[0], item[1], config, client),
+            lambda item: _process_one(item[0], item[1], config, client, streak),
         )
     return [cast("dict[str, Any]", result) for result in results]
 
@@ -58,6 +61,7 @@ async def _process_one(
     request: GeneratedRequest,
     config: ReplayJudgeConfig,
     client: httpx.AsyncClient,
+    streak: ErrorStreak,
 ) -> dict[str, Any]:
     started = perf_counter()
     base: dict[str, Any] = {
@@ -70,10 +74,14 @@ async def _process_one(
 
     try:
         replay_result = await replay_one(request.payload, config, client)
-    except (RateLimitError, VictimUnavailableError):
+    except RateLimitError:
         raise
+    except VictimUnavailableError as exc:
+        error = count_victim_5xx(streak, exc)
+        return _finalize(base, _replay_failed_marker(), _error_verdict(f"replay failed: {error}", config), started)
     except Exception as exc:
         return _finalize(base, _replay_failed_marker(), _error_verdict(f"replay failed: {_msg(exc)}", config), started)
+    streak.record_success()
 
     try:
         verdict = await judge_one(

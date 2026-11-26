@@ -110,10 +110,39 @@ def test_nonempty_replay_judges_with_bounded_response(monkeypatch) -> None:
     assert results[0]["verdict"]["status"] == "complied"
 
 
-def test_victim_unavailable_aborts_instead_of_becoming_an_error_verdict(monkeypatch) -> None:
-    async def fake_replay(*_a, **_kw):
+def test_one_victim_5xx_is_that_rows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
         raise VictimUnavailableError("victim replay returned HTTP 503")
 
     monkeypatch.setattr(runner, "replay_one", fake_replay)
-    with pytest.raises(VictimUnavailableError):
-        asyncio.run(runner.run_all([_request()], _config()))
+    results = asyncio.run(runner.run_all([_request()], _config()))
+
+    assert results[0]["verdict"]["status"] == "error"
+    assert "HTTP 503" in results[0]["verdict"]["reasoning"]
+
+
+def test_victim_5xx_on_several_rows_in_a_row_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
+        raise VictimUnavailableError("victim replay returned HTTP 503")
+
+    monkeypatch.setattr(runner, "replay_one", fake_replay)
+    with pytest.raises(VictimUnavailableError, match="in a row"):
+        asyncio.run(runner.run_all([_request()] * 6, _config(concurrency=1)))
+
+
+def test_a_good_reply_breaks_a_run_of_victim_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    replies = iter([True, True, True, True, False, True, True, True, True])
+
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
+        if next(replies):
+            raise VictimUnavailableError("victim replay returned HTTP 503")
+        return ReplayResult(ok=True, text="ok", status_code=200)
+
+    async def fake_judge(**_kw: Any) -> JudgeVerdict:
+        return JudgeVerdict(is_refused=False, confidence=0.9, reasoning="complied")
+
+    monkeypatch.setattr(runner, "replay_one", fake_replay)
+    monkeypatch.setattr(runner, "judge_one", fake_judge)
+    results = asyncio.run(runner.run_all([_request()] * 9, _config(concurrency=1)))
+
+    assert [r["verdict"]["status"] for r in results].count("error") == 8

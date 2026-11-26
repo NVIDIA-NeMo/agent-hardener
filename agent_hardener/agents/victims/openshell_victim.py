@@ -38,8 +38,6 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> VictimResult:
             response = await client.post(url, json=payload, timeout=contract.timeout_seconds, headers=headers)
         raise_for_rate_limit_response(response, source=f"victim {agent.name}")
         body = response_body_or_text(response)
-        if response.status_code >= 500:
-            raise VictimUnavailableError(f"OpenShell victim {agent.name} returned HTTP {response.status_code}: {body}")
         return VictimResult(
             agent_id=agent.agent_id,
             agent_name=agent.name,

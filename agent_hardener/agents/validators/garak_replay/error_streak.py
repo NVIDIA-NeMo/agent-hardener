@@ -29,10 +29,12 @@ class ErrorStreak:
         if self.abort_reason is None:
             self._error, self._count = None, 0
 
-    def record_error(self, error: str) -> None:
+    def record_error(self, error: str) -> bool:
+        """Count ``error``; return whether this call tripped the streak."""
         if self.abort_reason is not None:
-            return
+            return False
         self._count = self._count + 1 if error == self._error else 1
         self._error = error
         if self._count >= self.limit:
             self.abort_reason = f"stopped after {self._count} hits in a row failed with: {error}"
+        return self.abort_reason is not None

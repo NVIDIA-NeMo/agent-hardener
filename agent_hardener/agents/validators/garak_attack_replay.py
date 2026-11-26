@@ -24,7 +24,7 @@ from agent_hardener.agents.validators.garak_replay import traces as trace_sectio
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
 from agent_hardener.agents.validators.garak_replay.error_streak import ErrorStreak
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
-from agent_hardener.agents.validators.replay_http import ReplayResult
+from agent_hardener.agents.validators.replay_http import ReplayResult, count_victim_5xx
 from agent_hardener.agents.validators.replay_http import replay_prompt as replay_http_prompt
 from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import gather_limited_ordered
@@ -237,20 +237,23 @@ async def _validate_hit(
             worker=worker,
             detector_cache=detector_cache,
         )
-    except (RateLimitError, VictimUnavailableError):
+    except RateLimitError:
         raise
+    except VictimUnavailableError as exc:
+        error = count_victim_5xx(streak, exc)
     except Exception as exc:
         error = str(exc) or exc.__class__.__name__
         streak.record_error(error)
-        return _error_result(
-            hit_context=hit_context,
-            aggregate_index=aggregate_index,
-            config=config,
-            error=error,
-            prompt=parsing.extract_prompt(hit),
-        )
-    streak.record_success()
-    return result
+    else:
+        streak.record_success()
+        return result
+    return _error_result(
+        hit_context=hit_context,
+        aggregate_index=aggregate_index,
+        config=config,
+        error=error,
+        prompt=parsing.extract_prompt(hit),
+    )
 
 
 async def _validate_direct_hit(
