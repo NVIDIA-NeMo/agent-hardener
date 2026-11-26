@@ -44,6 +44,9 @@ class AgentConfig(AgentHardenerModel):
         default=None,
         description="Natural language description of what attacks this defender mitigates.",
     )
+    #: An attacker that is not required may fail without failing the round: its failure is warned about and
+    #: its record kept, and the round goes on with the other attackers' hits.
+    required: bool = True
     _agent_id_cache: str = PrivateAttr(default="")
 
     @field_validator("name")

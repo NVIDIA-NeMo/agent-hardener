@@ -13,14 +13,21 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from agent_hardener.agents.attackers.garak_probes import DETECTORS, PROBES, AttackType, split_plugin
+from agent_hardener.agents.attackers.garak_probes import (
+    DETECTORS,
+    INDIRECT_PROBE,
+    PROBES,
+    AttackType,
+    probe_for_hit,
+    split_plugin,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from agent_hardener.models import AttackRecord
 
-INDIRECT_PROBE_KEYWORD = "indirect_injection"
+INDIRECT_PROBE_KEYWORD = split_plugin(INDIRECT_PROBE)[0]
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,16 @@ def iter_supported_hits(attacks: Iterable[AttackRecord]) -> Iterable[dict[str, A
 
 
 def identify_attack_type(hit: dict[str, Any]) -> AttackType | None:
+    """The attack type of ``hit``: by its garak ``probe`` when that is a known one, else by keywords.
+
+    The probe garak wrote wins over the ``source``, which a replay of preloaded hits may stamp with a
+    default that is not theirs.
+    """
+    probe = probe_for_hit(hit.get("probe"))
+    if probe is not None:
+        return probe.attack_type
+    if hit.get("probe") == INDIRECT_PROBE:
+        return "indirect_prompt_injection"
     haystack = " ".join(
         str(value or "")
         for value in (

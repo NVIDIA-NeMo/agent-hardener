@@ -9,12 +9,14 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from agent_hardener.agents.attackers.garak_probes import PROBES
+
 if TYPE_CHECKING:
     from pathlib import Path
 
 SCANNER_LABELS = {
     "indirect": "indirect",
-    "agent_breaker": "agent_breaker",
+    **{probe.key: probe.key for probe in PROBES.values()},
     "other": "other",
 }
 # The two real garak scanners, and the same plus the "other" catch-all — iterate these instead of

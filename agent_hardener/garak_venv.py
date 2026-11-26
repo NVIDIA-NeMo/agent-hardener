@@ -137,6 +137,20 @@ def garak_subprocess_env() -> dict[str, str]:
     return env
 
 
+def garak_user_data_dir(env: dict[str, str]) -> Path:
+    """The user data directory a garak process run with ``env`` searches before its bundled data.
+
+    garak opens a probe's data file (such as AgentBreaker's ``agent_config_file``) only by a path relative to
+    this directory or to its package's ``data``, so a file agent-hardener hands it has to be written here.
+    Mirrors ``xdg_base_dirs.xdg_data_home``: ``XDG_DATA_HOME`` when it is absolute, else ``~/.local/share``.
+    """
+    xdg = env.get("XDG_DATA_HOME", "")
+    base = Path(xdg) if xdg and Path(xdg).is_absolute() else Path(env.get("HOME") or Path.home()) / ".local/share"
+    data_dir = base / "garak" / "data"
+    assert data_dir.is_absolute(), f"garak data dir must be absolute, got {data_dir}"
+    return data_dir
+
+
 def _run(cmd: list[str]) -> None:
     """Run a provisioning subprocess, raising ``RuntimeError`` with the stderr tail on failure."""
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)  # noqa: S603

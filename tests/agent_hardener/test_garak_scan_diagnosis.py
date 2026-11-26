@@ -375,6 +375,7 @@ def test_a_garak_log_the_caller_pinned_is_kept(tmp_path: Path, monkeypatch: pyte
 class _Agent:
     def __init__(self, name: str) -> None:
         self.name = name
+        self.required = True
 
 
 def _failed(code: str | None) -> AttackRecord:

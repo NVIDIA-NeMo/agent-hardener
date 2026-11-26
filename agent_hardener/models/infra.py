@@ -8,7 +8,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from agent_hardener.models.base import AgentHardenerModel, VictimControlType
 
@@ -79,6 +79,42 @@ class RelayVictimSpec(AgentHardenerModel):
         return self.relay_artifacts / "events.atof.jsonl"
 
 
+class ReconTool(AgentHardenerModel):
+    """One tool of the victim, as a garak probe is told about it."""
+
+    name: str = Field(min_length=1)
+    description: str = ""
+
+
+class AgentProfile(AgentHardenerModel):
+    """What the victim is for and which tools it has: the ``agent.yaml`` garak's agent probes read."""
+
+    agent_purpose: str = ""
+    tools: list[ReconTool] = Field(default_factory=list)
+
+
+class ReconSettings(AgentHardenerModel):
+    """Where the attackers' victim profile comes from.
+
+    ``none`` leaves it to each probe: AgentBreaker then asks the victim for its tools. ``static`` takes it
+    from ``file`` (a YAML in garak's ``agent.yaml`` shape) or the inline ``profile``. A relative ``file`` is
+    resolved against the manifest's directory.
+    """
+
+    source: Literal["none", "static"] = "none"
+    file: Path | None = None
+    profile: AgentProfile | None = None
+
+    @model_validator(mode="after")
+    def _one_static_input(self) -> ReconSettings:
+        given = [name for name in ("file", "profile") if getattr(self, name) is not None]
+        if self.source == "none" and given:
+            raise ValueError(f"recon source 'none' takes no {' or '.join(given)}; set source: static")
+        if self.source == "static" and len(given) != 1:
+            raise ValueError("recon source 'static' needs exactly one of file or profile")
+        return self
+
+
 class GarakSettings(AgentHardenerModel):
     """How agent-hardener drives garak's agent_breaker probe via the garak CLI.
 
@@ -114,6 +150,9 @@ class GarakSettings(AgentHardenerModel):
     # can need well over the default; raise this rather than let a scan be killed mid-probe (which yields
     # a spurious "0 hits"). Unset -> the default in ``_default_attackers``.
     timeout_s: int | None = None
+    #: The victim profile handed to the attackers before the attack stage. Not part of the attacker's
+    #: config: it reaches the attacker through the run context, so it does not change the attacker's id.
+    recon: ReconSettings = Field(default_factory=ReconSettings)
 
 
 class DefenderSettings(AgentHardenerModel):
@@ -130,6 +169,8 @@ class PreloadedAttackConfig(AgentHardenerModel):
 
     name: str = Field(min_length=1)
     path: Path
+    #: Stamped on every hit that has no ``source``. Unset: a hit of a registered garak probe gets that
+    #: probe's attacker source, and any other hit is left without one.
     source: str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
     #: A recorded ``attack_traces.json`` to load with these hits (``run --replay``). ``None``, or a hit the

@@ -66,6 +66,11 @@ class GarakProbe:
         """The rendered garak config passed to ``garak --config``."""
         return f"{self.source}.resolved.yaml"
 
+    @property
+    def scanner_terms(self) -> frozenset[str]:
+        """Words that mark a garak report row or hit as this probe's, casefolded with ``-`` as ``_``."""
+        return frozenset(term.casefold().replace("-", "_") for term in (self.key, self.probe_class, self.report_prefix))
+
     def plugin_config(self, plugins: dict[str, Any], kind: Literal["probes", "detectors"]) -> dict[str, Any]:
         """This probe's (or its detector's) config block in a garak ``plugins`` mapping; ``{}`` when absent."""
         module, class_name = split_plugin(self.probe if kind == "probes" else self.detector)
@@ -82,6 +87,15 @@ AGENT_BREAKER = GarakProbe(
 )
 
 PROBES: dict[str, GarakProbe] = {probe.key: probe for probe in (AGENT_BREAKER,)}
+
+#: The garak probe indirect-injection hits carry in their ``probe`` field.
+INDIRECT_PROBE = "indirect_injection.IndirectInjection"
+
+
+def probe_for_hit(probe_name: object) -> GarakProbe | None:
+    """The registered probe whose garak name a hit's ``probe`` field is, exactly; ``None`` for any other."""
+    return next((probe for probe in PROBES.values() if probe.probe == probe_name), None)
+
 
 #: The detector that judges each attack type on replay. Indirect injection has no attacker here: its hits
 #: arrive preloaded, so it appears only in this table.

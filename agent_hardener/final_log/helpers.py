@@ -10,6 +10,7 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agent_hardener.agents.attackers.garak_probes import PROBES
 from agent_hardener.final_log.models import SCANNER_LABELS, ScanStats
 from agent_hardener.storage import to_jsonable
 
@@ -176,8 +177,9 @@ def _extract_text(value: Any) -> str:
 def _classify_scanner(values: list[Any]) -> str:
     text = " ".join(_flatten_text(value) for value in values).casefold()
     normalized = text.replace("-", "_").replace(" ", "_")
-    if any(term in normalized for term in ("agent_breaker", "agentbreaker")):
-        return "agent_breaker"
+    for probe in PROBES.values():
+        if any(term in normalized for term in probe.scanner_terms):
+            return probe.key
     if any(term in normalized for term in ("indirect", "latentinjection", "latent_injection", "prompt_injection")):
         return "indirect"
     return "other"

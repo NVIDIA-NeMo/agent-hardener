@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from agent_hardener.agents.attackers.garak_probes import probe_for_hit
 from agent_hardener.agents.attackers.hits import normalize_hit_record
 from agent_hardener.ids import normalize_agent_name
 from agent_hardener.models import AttackRecord, PreloadedAttackConfig
@@ -46,7 +47,7 @@ def _load_preloaded_attack(config: PreloadedAttackConfig) -> list[AttackRecord]:
     attacks: list[AttackRecord] = []
     base_name = normalize_agent_name(config.name)
     for record_index, record in enumerate(records):
-        normalized = normalize_hit_record(record, record_index, config.source)
+        normalized = normalize_hit_record(record, record_index, config.source or _probe_source(record))
         attacks.append(
             AttackRecord(
                 agent_id=f"preloaded-{base_name}-{record_index}",
@@ -61,6 +62,12 @@ def _load_preloaded_attack(config: PreloadedAttackConfig) -> list[AttackRecord]:
             )
         )
     return attacks
+
+
+def _probe_source(record: Any) -> str | None:
+    """The ``source`` a registered probe's attacker stamps on its hits, for a hit of that probe."""
+    probe = probe_for_hit(record.get("probe")) if isinstance(record, dict) else None
+    return probe.source if probe is not None else None
 
 
 def _read_preloaded_attack_records(path: Path) -> list[Any]:

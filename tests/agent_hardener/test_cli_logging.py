@@ -324,6 +324,14 @@ def test_output_events_render_by_level(out: io.StringIO) -> None:
     ]
 
 
+def test_a_tolerated_attacker_failure_is_warned_about(out: io.StringIO) -> None:
+    render = ConsoleRenderer()
+    render("attacker_failure_tolerated", {"agent_name": "garak-tool-chain", "error": "TimeoutError: slow\ntrace"})
+    assert out.getvalue().splitlines() == [
+        "! optional attacker garak-tool-chain did not complete; the round goes on without it: TimeoutError: slow",
+    ]
+
+
 def test_summaries_say_why_an_agent_failed(out: io.StringIO) -> None:
     render = ConsoleRenderer()
     render(

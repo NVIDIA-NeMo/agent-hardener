@@ -16,7 +16,7 @@ import os
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from rich.console import Console
 
@@ -107,6 +107,19 @@ def line_text(level: str, message: str, elapsed: float | None = None) -> str:
     """The unstyled text of a console line at ``level`` — e.g. ``✓ Sandbox ready (12.4s)``."""
     template, _style = _FORMATS.get(level, _FORMATS["info"])
     return template.format(_with_elapsed(message, elapsed))
+
+
+def output_payload(level: str, message: str, elapsed: float | None = None) -> dict[str, Any]:
+    """The payload of an ``output`` event announcing ``message`` as a console line at ``level``.
+
+    ``line`` is the line as the console shows it (``✓ Sandbox ready (12.4s)``), so a subscriber that renders
+    only ``line`` (Helix Studio's feed) keeps the marker; ``message``, ``level`` and ``elapsed`` are its parts,
+    for subscribers that style lines themselves.
+    """
+    payload: dict[str, Any] = {"line": line_text(level, message, elapsed), "message": message, "level": level}
+    if elapsed is not None:
+        payload["elapsed"] = round(elapsed, 3)
+    return payload
 
 
 def _say_styled(level: str, message: str, *, elapsed: float | None = None, markup: bool = True) -> None:

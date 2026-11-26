@@ -32,7 +32,7 @@ from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
 from agent_hardener.atof import load_records, requested_tools
 from agent_hardener.bundle import write_hardened_bundle
-from agent_hardener.display.console import failure_excerpt, line_text
+from agent_hardener.display.console import failure_excerpt, output_payload
 from agent_hardener.display.final.render_plain import render_final_run_log
 from agent_hardener.display.final.render_rich import print_final_summary
 from agent_hardener.errors import AgentHardenerError, AtofSyncError, BenignSuiteError, VictimUnavailableError
@@ -352,16 +352,9 @@ class Mission:
 
         ``level`` picks how the console renders it: ``section``, ``step``, ``ok``, ``warn``, ``fail``, ``hint``,
         ``detail`` (``--debug`` only), ``info``, or ``output`` for verbatim subprocess output. ``elapsed`` (seconds)
-        is shown after an ``ok`` line as ``(12.4s)``.
-
-        The payload's ``line`` is the line as the console shows it (``✓ Sandbox ready (12.4s)``), so a subscriber
-        that renders only ``line`` (Helix Studio's feed) keeps the marker; ``message``, ``level`` and ``elapsed``
-        are its parts, for subscribers that style lines themselves.
+        is shown after an ``ok`` line as ``(12.4s)``. The payload is :func:`output_payload`'s.
         """
-        payload: dict[str, Any] = {"line": line_text(level, line, elapsed), "message": line, "level": level}
-        if elapsed is not None:
-            payload["elapsed"] = round(elapsed, 3)
-        emit_event(EventType.OUTPUT, payload)
+        emit_event(EventType.OUTPUT, output_payload(level, line, elapsed))
 
     def _announce_failure_output(self, output: str) -> None:
         """Show the error lines of a failed build/compose blob (:func:`failure_excerpt`); the log has all of it."""

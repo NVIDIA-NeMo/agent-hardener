@@ -35,6 +35,7 @@ _PLAIN_EVENTS = frozenset(
         "phase_completed",
         "agent_completed",
         "agent_failed",
+        "attacker_failure_tolerated",
         "attack_summary",
         "defender_summary",
         "validator_summary",
@@ -239,6 +240,12 @@ class ConsoleRenderer:
 
     def _on_agent_failed(self, payload: dict[str, Any]) -> None:
         self._finish_agent_task(payload, succeeded=False)
+
+    def _on_attacker_failure_tolerated(self, payload: dict[str, Any]) -> None:
+        self._stop_progress()
+        name = payload.get("agent_name") or "<attacker>"
+        reason = _failure_reason(payload)
+        warn(f"optional attacker {name} did not complete; the round goes on without it: {reason}", markup=False)
 
     def _finish_agent_task(self, payload: dict[str, Any], *, succeeded: bool) -> None:
         """Close an agent's row: ``✓ name`` or ``✗ name: reason`` (a plain line off a styled terminal)."""

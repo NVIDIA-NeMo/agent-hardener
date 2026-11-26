@@ -43,6 +43,8 @@ DEFAULT_REQUEST_TIMEOUT_SECONDS = 600
 DEFAULT_MODEL_TIMEOUT_SECONDS = 600
 # Empty by default: see the skip_codes comment in build_agent_breaker_config.
 DEFAULT_SKIP_CODES: list[int] = []
+#: The probe parameter naming the victim profile it attacks, relative to garak's data directories.
+AGENT_CONFIG_PARAM = "agent_config_file"
 
 _SUPPRESSED_PARAMS = ["stop", "top_p", "frequency_penalty", "presence_penalty", "seed"]
 #: Match garak's AgentBreakerResult default so its structured verdict is not truncated.
@@ -221,16 +223,22 @@ def apply_runtime_fields(
     report_prefix: str,
     model_timeout: int | None = None,
     probe: GarakProbe = AGENT_BREAKER,
+    agent_config_file: str | None = None,
 ) -> dict[str, Any]:
     """Return a copy of ``config`` with the resolved per-run fields forced.
 
     Lets a user-edited scaffold (model settings, probe params) survive while guaranteeing the
     target ``uri`` and reporting destination always match the current run. An explicit
     ``model_timeout`` replaces the scaffold's model timeouts; otherwise a scaffold without one
-    gets the default rather than garak's 60s.
+    gets the default rather than garak's 60s. ``agent_config_file`` (a name relative to garak's
+    data directory) points the probe at the run's recon profile; unset, the probe keeps its own.
     """
     resolved = copy.deepcopy(config)
     plugins = resolved.setdefault("plugins", {})
+    if agent_config_file is not None:
+        module, class_name = split_plugin(probe.probe)
+        probe_block = plugins.setdefault("probes", {}).setdefault(module, {}).setdefault(class_name, {})
+        probe_block[AGENT_CONFIG_PARAM] = agent_config_file
     generator = plugins.setdefault("generators", {}).setdefault("rest", {}).setdefault("RestGenerator", {})
     generator["uri"] = target_uri
     # A scaffold authored before this setting gets the default rather than an inherited NAT-ism.

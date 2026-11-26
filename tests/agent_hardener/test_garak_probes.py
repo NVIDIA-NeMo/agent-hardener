@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 
@@ -17,11 +18,16 @@ from agent_hardener.agents.attackers.agent_breaker.diagnosis import ScanEvidence
 from agent_hardener.agents.attackers.garak_probes import (
     AGENT_BREAKER,
     DETECTORS,
+    INDIRECT_PROBE,
     PROBES,
     GarakProbe,
     split_plugin,
 )
+from agent_hardener.agents.attackers.preloaded import load_preloaded_attacks
 from agent_hardener.agents.validators.garak_replay import parsing
+from agent_hardener.final_log import SCANNER_LABELS
+from agent_hardener.final_log.helpers import _classify_scanner
+from agent_hardener.models import PreloadedAttackConfig
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 VICTIM = "http://victim:8000/v1/chat/completions"
@@ -117,6 +123,79 @@ def test_diagnosis_reads_the_log_lines_of_the_probe_that_ran() -> None:
     assert failure is not None
     assert failure.code == "no_attacks_generated"
     assert "3 tool(s)" in failure.message
+
+
+def test_the_profile_file_is_set_on_the_probe_only_when_given() -> None:
+    built = build_agent_breaker_config(target_uri=VICTIM, report_dir="d", report_prefix="p", probe=OTHER)
+    plain = apply_runtime_fields(built, target_uri=VICTIM, report_dir="d", report_prefix="p", probe=OTHER)
+    assert "agent_config_file" not in OTHER.plugin_config(plain["plugins"], "probes")
+
+    pointed = apply_runtime_fields(
+        built, target_uri=VICTIM, report_dir="d", report_prefix="p", probe=OTHER, agent_config_file="ah/x/agent.yaml"
+    )
+    assert OTHER.plugin_config(pointed["plugins"], "probes")["agent_config_file"] == "ah/x/agent.yaml"
+    assert "agent_config_file" not in AGENT_BREAKER.plugin_config(pointed["plugins"], "probes")
+
+
+def test_scanner_labels_follow_the_registry() -> None:
+    assert list(SCANNER_LABELS) == ["indirect", "agent_breaker", "other"]
+
+
+@pytest.mark.parametrize(
+    ("values", "scanner"),
+    [
+        (["garak-agent-breaker.report.jsonl"], "agent_breaker"),
+        (["agent_breaker.AgentBreaker"], "agent_breaker"),
+        (["AgentBreakerResult"], "agent_breaker"),
+        (["latentinjection.IndirectInjection"], "indirect"),
+        (["indirect_injection.IndirectInjectionResult"], "indirect"),
+        (["prompt_injection"], "indirect"),
+        (["encoding.InjectBase64"], "other"),
+    ],
+)
+def test_scanner_classification_is_unchanged(values: list[str], scanner: str) -> None:
+    assert _classify_scanner(values) == scanner
+
+
+def test_a_registered_probe_gets_its_own_scanner(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setitem(PROBES, OTHER.key, OTHER)
+    assert _classify_scanner(["garak-tool-chain.hitlog.jsonl"]) == "tool_chain"
+    assert _classify_scanner(["tool_chain.ToolChain"]) == "tool_chain"
+    assert _classify_scanner(["ToolChainResult"]) == "tool_chain"
+
+
+def test_a_hits_garak_probe_decides_its_attack_type_over_its_source() -> None:
+    indirect = {"probe": INDIRECT_PROBE, "detector": "", "source": AGENT_BREAKER.source}
+    assert parsing.identify_attack_type(indirect) == "indirect_prompt_injection"
+    direct = {"probe": AGENT_BREAKER.probe, "source": "garak-indirect-injection"}
+    assert parsing.identify_attack_type(direct) == "direct_prompt_injection"
+    assert parsing.identify_attack_type({"source": AGENT_BREAKER.source}) == "direct_prompt_injection"
+    assert parsing.identify_attack_type({"probe": "encoding.InjectBase64"}) is None
+
+
+def test_a_replayed_hit_takes_its_probes_source(tmp_path: Path) -> None:
+    hitlog = tmp_path / "mixed.hitlog.jsonl"
+    rows = [
+        {"probe": AGENT_BREAKER.probe, "prompt": "a"},
+        {"probe": INDIRECT_PROBE, "prompt": "b"},
+        {"probe": INDIRECT_PROBE, "prompt": "c", "source": "garak-indirect-injection"},
+    ]
+    hitlog.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
+
+    inferred = load_preloaded_attacks([PreloadedAttackConfig(name="replay", path=hitlog)])
+    assert [attack.records[0].get("source") for attack in inferred] == [
+        AGENT_BREAKER.source,
+        None,
+        "garak-indirect-injection",
+    ]
+    assert [parsing.identify_attack_type(attack.records[0]) for attack in inferred] == [
+        "direct_prompt_injection",
+        "indirect_prompt_injection",
+        "indirect_prompt_injection",
+    ]
+
+    stamped = load_preloaded_attacks([PreloadedAttackConfig(name="replay", path=hitlog, source="custom")])
+    assert [attack.records[0]["source"] for attack in stamped] == ["custom", "custom", "garak-indirect-injection"]
 
 
 def test_replay_names_the_detector_from_the_registry() -> None:
