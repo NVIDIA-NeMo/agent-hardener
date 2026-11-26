@@ -1,9 +1,15 @@
 # Agent Hardener
 
-Agent Hardener finds the attacks that work against your AI agent and hardens the agent against them. It
-attacks the agent, writes defenses for every attack that landed, applies them, replays the same attacks to
-check they are now blocked, and checks that normal requests still work. At the end you get a report and a
-hardened copy of your agent's image.
+Agent Hardener is a swarm of attacker and defender agents that finds vulnerabilities in a given agent and
+patches them dynamically. Attacker agents probe your agent's tools and record every attack that lands. Defender
+agents turn each landed attack into a fix, either a guardrail on the tool call that did the harm or a tighter
+sandbox policy, and apply it to the running agent. Validator agents then replay the same attacks to confirm
+they are blocked and check that normal requests still work. At the end you get a report and a hardened copy of
+your agent's image.
+
+<p align="center">
+  <img src=".github/images/agent-hardener-loop.svg" alt="Agent Hardener loop: attackers attack your agent in an OpenShell sandbox, defenders patch it from the attacks that landed and their NeMo Relay traces, validators replay the attacks and check benign requests, then a report and a hardened image are produced. The next round attacks the hardened agent." width="900">
+</p>
 
 Your agent runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and must be connected to
 [NeMo Relay](https://github.com/NVIDIA-NeMo/Relay), which Agent Hardener uses to see what each attack made the
