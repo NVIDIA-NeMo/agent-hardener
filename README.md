@@ -52,9 +52,9 @@ that landed into defenses, deploys them, and validates the result. The next roun
 
 ### Attackers
 
-garak's **agent_breaker** probe discovers the agent's tools, plans attacks against each one with a red-team
-model, sends them, and has a detector model judge which ones landed. The landed attacks (the hitlog) are what the
-defenders work from.
+- **[agent_breaker](https://github.com/NVIDIA/garak/blob/main/garak/probes/agent_breaker.py)** (a garak probe):
+  discovers the agent's tools, plans attacks against each one with a red-team model, sends them, and has a
+  detector model judge which ones landed.
 
 ### Defenders
 
