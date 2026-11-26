@@ -12,7 +12,7 @@ your agent's image.
 </p>
 
 Your agent runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and must be connected to
-[NeMo Relay](https://github.com/NVIDIA-NeMo/Relay), which Agent Hardener uses to see what each attack made the
+[NeMo Relay](https://github.com/NVIDIA/NeMo-Relay), which Agent Hardener uses to see what each attack made the
 agent do and to deliver guardrails.
 
 See [AGENT_CARD.md](AGENT_CARD.md) for intended use, limitations, evaluation results and safety considerations.
