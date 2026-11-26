@@ -280,6 +280,4 @@ def _require_mitigation(manager_output: DefendersManagerOutput, ctx: IterationCo
     if manager_output.error is None and manager_output.not_applicable:
         reasons = " | ".join(manager_output.not_applicable)
         raise DefendersNotApplicableError(f"no defender applies to this round's attacks: {reasons}")
-    # One line per distinct failure: every attack record repeats its defender's error.
-    errors = " | ".join(dict.fromkeys((manager_output.error or "no error reported").split(" | ")))
-    raise DefendersFailedError(f"no defender produced a mitigation: {errors}")
+    raise DefendersFailedError(f"no defender produced a mitigation: {manager_output.error or 'no error reported'}")

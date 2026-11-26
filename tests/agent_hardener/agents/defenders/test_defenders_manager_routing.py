@@ -129,3 +129,12 @@ def test_abstentions_are_reported_once_and_not_as_errors() -> None:
     assert output.ok is False
     assert output.error is None
     assert output.not_applicable == ["Agent defender did not apply: out_of_scope: no network signature"]
+
+
+def test_a_defender_failing_on_every_record_is_reported_once() -> None:
+    async def fail(_agent: AgentConfig, _input: DefenderInput) -> DefenderOutput:
+        return DefenderOutput(ok=False, error_message="401")
+
+    attack = AttackRecord(agent_id="garak", agent_name="garak", records=[{"prompt": "a"}, {"prompt": "b"}])
+
+    assert _run_manager([attack], fail).error == "Agent defender failed: 401"

@@ -247,8 +247,8 @@ class DefendersManager:
         return DefendersManagerOutput(
             ok=len(analyses) > 0,
             summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {len(analyses)} analyses.",
-            error=" | ".join(errors) if errors else None,
-            # Every attack record repeats its defender's reason; report each once.
+            # Every attack record repeats its defender's error or reason; report each once.
+            error=" | ".join(dict.fromkeys(errors)) if errors else None,
             not_applicable=list(dict.fromkeys(not_applicable)),
             routed_agent_ids=routed_agent_ids,
             analyses=analyses,

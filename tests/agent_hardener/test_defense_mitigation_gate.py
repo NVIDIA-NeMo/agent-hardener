@@ -21,10 +21,8 @@ def _ctx(*, attacks: list[AttackRecord], feedback: dict[str, Any] | None = None)
     return cast("Any", SimpleNamespace(attacks=attacks, validation_feedback=feedback))
 
 
-def test_no_successful_defender_fails_with_each_distinct_error_once() -> None:
-    failed = DefendersManagerOutput(
-        ok=False, error="Agent guard failed: 401 | Agent guard failed: 401 | Agent policy failed: timeout"
-    )
+def test_no_successful_defender_fails_with_the_managers_errors() -> None:
+    failed = DefendersManagerOutput(ok=False, error="Agent guard failed: 401 | Agent policy failed: timeout")
     with pytest.raises(DefendersFailedError) as exc_info:
         _require_mitigation(failed, _ctx(attacks=[_ATTACK]))
     assert str(exc_info.value) == (

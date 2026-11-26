@@ -35,7 +35,7 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> VictimResult:
     headers = contract.headers(f"{request.round_id}-{agent.agent_id}")
     try:
         async with victim_client(timeout=contract.timeout_seconds) as client:
-            response = await client.post(url, json=payload, timeout=contract.timeout_seconds, headers=headers)
+            response = await client.post(url, json=payload, headers=headers)
         raise_for_rate_limit_response(response, source=f"victim {agent.name}")
         body = response_body_or_text(response)
         return VictimResult(

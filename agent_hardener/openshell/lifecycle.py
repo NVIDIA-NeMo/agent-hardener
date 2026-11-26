@@ -528,18 +528,17 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
 
     def _provider_credentials(self) -> tuple[dict[str, str], OpenShellCommandResult | None]:
         """The ``NAME -> value`` credentials: ``provider_env_file``'s, plus the safety judge's own key."""
-        if not self.config.provider_env_file:
-            return sandbox_credentials(self.config), None
         command = [self.config.openshell_bin, "provider", "create"]
         try:
-            credentials = provider_credentials(self.config)
+            credentials = sandbox_credentials(self.config)
         except OSError as exc:
             message = f"failed to read provider_env_file {self.config.provider_env_file}: {exc}"
             return {}, OpenShellCommandResult(ok=False, command=command, output=message)
-        if not credentials:
+        # A named env file must supply the victim's own secrets; the judge key alone does not count.
+        if self.config.provider_env_file and credentials.keys() <= judge_credentials().keys():
             message = f"no configured provider credentials found in {self.config.provider_env_file}"
             return {}, OpenShellCommandResult(ok=False, command=command, output=message)
-        return {**credentials, **judge_credentials()}, None
+        return credentials, None
 
     def _ensure_generic_profile(self, credential_names: list[str]) -> OpenShellCommandResult:
         """Import (or update) the credentials-only provider profile named after the provider."""
