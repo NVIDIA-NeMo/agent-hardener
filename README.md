@@ -58,7 +58,7 @@ that landed into defenses, deploys them, and validates the result. The next roun
 
 ### Defenders
 
-- **Tools guardrails defender:** reads each attack's NeMo Relay trace and writes a guardrail on the tool call that
+- **Guardrails defender:** reads each attack's NeMo Relay trace and writes a guardrail on the tool call that
   did the harm.
 - **OpenShell policy defender:** turns attacks that made the agent reach the network into a tighter OpenShell
   sandbox network policy.
