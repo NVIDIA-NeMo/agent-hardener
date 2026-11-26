@@ -51,6 +51,8 @@ class FakeRun:
             return override
         if cmd[:2] == ["docker", "info"]:
             return _cp(0)
+        if cmd[:2] == ["openshell", "--version"]:
+            return _cp(0, stdout="openshell 0.1.6\n")
         if cmd[:3] == ["docker", "context", "inspect"]:
             return _cp(0, stdout="unix:///var/run/docker.sock\n")
         if cmd[:3] == ["openshell", "status", "--gateway"]:
@@ -92,6 +94,37 @@ def test_missing_openshell_cli_returns_hint(monkeypatch: pytest.MonkeyPatch) -> 
     assert not result.ok
     assert "install it" in result.message
     assert fake.calls == []  # no commands run when the CLI is absent
+
+
+@pytest.mark.parametrize(
+    ("output", "problem"),
+    [
+        ("openshell 0.1.6\n", None),
+        ("openshell 0.2.0\n", None),
+        ("openshell 0.1.4\n", "OpenShell 0.1.4 is older than the required v0.1.6"),
+        ("dev build\n", "could not read the OpenShell version"),
+    ],
+)
+def test_outdated_openshell_accepts_the_pinned_release_or_newer(
+    monkeypatch: pytest.MonkeyPatch, output: str, problem: str | None
+) -> None:
+    monkeypatch.setattr(gateway, "_run", FakeRun(overrides={("openshell", "--version"): _cp(0, stdout=output)}))
+
+    found = gateway.outdated_openshell()
+
+    assert found == problem if problem is None else problem in (found or "")
+
+
+def test_setup_refuses_an_outdated_openshell_with_the_install_command(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gateway.shutil, "which", _which({"openshell", "docker"}))
+    fake = FakeRun(overrides={("openshell", "--version"): _cp(0, stdout="openshell 0.1.4\n")})
+    monkeypatch.setattr(gateway, "_run", fake)
+
+    result = gateway.register_local_gateway()
+
+    assert not result.ok
+    assert gateway.INSTALL_HINT in result.message
+    assert ["docker", "info"] not in fake.calls
 
 
 def test_docker_unreachable_returns_hint(monkeypatch: pytest.MonkeyPatch) -> None:

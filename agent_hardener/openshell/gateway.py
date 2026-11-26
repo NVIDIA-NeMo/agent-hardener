@@ -27,8 +27,8 @@ GATEWAY_ENDPOINT = "https://127.0.0.1:17670"
 GATEWAY_NAME = "auto-defender"
 DRIVER = "docker"
 DOCKER_NETWORK = "openshell-docker"
-#: The OpenShell release this code targets.
-OPENSHELL_VERSION = "v0.1.4"
+#: The OpenShell release this code targets: ``setup`` installs it and older releases are refused.
+OPENSHELL_VERSION = "v0.1.6"
 INSTALL_HINT = (
     "curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh "
     f"| OPENSHELL_VERSION={OPENSHELL_VERSION} sh"
@@ -68,6 +68,25 @@ def docker_reachable(*, timeout_s: float = SETUP_COMMAND_TIMEOUT_S) -> bool:
         return _run(["docker", "info"], timeout_s=timeout_s).returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+def _release(text: str) -> tuple[int, int, int] | None:
+    match = re.search(r"(\d+)\.(\d+)\.(\d+)", text)
+    return (int(match[1]), int(match[2]), int(match[3])) if match else None
+
+
+def outdated_openshell(openshell_bin: str = "openshell", *, timeout_s: float = SETUP_COMMAND_TIMEOUT_S) -> str | None:
+    """Why the installed OpenShell CLI is older than :data:`OPENSHELL_VERSION`, or None when it is recent enough."""
+    try:
+        output = _run([openshell_bin, "--version"], timeout_s=timeout_s).stdout
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"`{openshell_bin} --version` failed ({exc})"
+    installed, required = _release(output), _release(OPENSHELL_VERSION)
+    if installed is None:
+        return f"could not read the OpenShell version from `{openshell_bin} --version` ({output.strip()!r})"
+    if required is not None and installed < required:
+        return f"OpenShell {'.'.join(map(str, installed))} is older than the required {OPENSHELL_VERSION}"
+    return None
 
 
 def gateway_connected(
@@ -184,12 +203,20 @@ def _wait_connected(timeout_s: int = READY_TIMEOUT_S) -> bool:
     return _poll_until(gateway_connected, timeout=timeout_s, interval=1.0)
 
 
+def _missing_prerequisite() -> str | None:
+    if shutil.which("openshell") is None:
+        return f"OpenShell CLI not found — install it: {INSTALL_HINT}"
+    if outdated := outdated_openshell():
+        return f"{outdated} — upgrade it: {INSTALL_HINT}"
+    if not docker_reachable():
+        return "Docker daemon not reachable — start Docker, then re-run."
+    return None
+
+
 def register_local_gateway(*, wait: bool = True) -> GatewayResult:
     """Configure the Docker driver and register the local ``auto-defender`` gateway (idempotent)."""
-    if shutil.which("openshell") is None:
-        return GatewayResult(ok=False, message=f"OpenShell CLI not found — install it: {INSTALL_HINT}")
-    if not docker_reachable():
-        return GatewayResult(ok=False, message="Docker daemon not reachable — start Docker, then re-run.")
+    if missing := _missing_prerequisite():
+        return GatewayResult(ok=False, message=missing)
     socket = docker_endpoint()
     if socket is None:
         return GatewayResult(ok=False, message="Could not resolve the Docker socket via `docker context inspect`.")

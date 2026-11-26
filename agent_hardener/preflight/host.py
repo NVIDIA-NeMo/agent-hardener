@@ -21,7 +21,14 @@ from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR
 from agent_hardener.manifest import AGENT_BREAKER_IMPLEMENTATION
 from agent_hardener.openshell.command import openshell_not_found
 from agent_hardener.openshell.gateway import DRIVER as DOCKER_DRIVER
-from agent_hardener.openshell.gateway import GATEWAY_NAME, docker_reachable, gateway_connected, local_compute_driver
+from agent_hardener.openshell.gateway import (
+    GATEWAY_NAME,
+    INSTALL_HINT,
+    docker_reachable,
+    gateway_connected,
+    local_compute_driver,
+    outdated_openshell,
+)
 from agent_hardener.providers.backends import compose_file_path, resolve_compose_command
 from agent_hardener.runtime.runner import recorded_victim_image
 from agent_hardener.tools.openshell import openshell_config, sandbox_is_ready
@@ -49,6 +56,8 @@ def preflight_host(session: SessionConfig, *, reuse: bool = False) -> None:
 def _require_openshell(session: SessionConfig, config: OpenShellConfig, *, reuse: bool) -> None:
     if shutil.which(config.openshell_bin) is None:
         raise openshell_not_found(config.openshell_bin)
+    if outdated := outdated_openshell(config.openshell_bin, timeout_s=PROBE_TIMEOUT_S):
+        raise SandboxProvisioningError(f"{outdated}.", remediation=f"Upgrade OpenShell: {INSTALL_HINT}")
     if not gateway_connected(config.gateway, openshell_bin=config.openshell_bin, timeout_s=PROBE_TIMEOUT_S):
         raise SandboxProvisioningError(
             f"OpenShell gateway '{config.gateway}' is not connected.",

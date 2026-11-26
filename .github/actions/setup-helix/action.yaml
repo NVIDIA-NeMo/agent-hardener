@@ -19,10 +19,6 @@ inputs:
   uv_version:
     description: uv version to install
     required: true
-  openshell_version:
-    description: OpenShell release whose installer to run
-    required: false
-    default: v0.1.2
 
 runs:
   using: composite
@@ -49,10 +45,14 @@ runs:
         TOOLCHAIN: system
         PYTORCH_DEPS: cpu
     - name: Install OpenShell
-      # The native installer ships the gateway; `uv tool install openshell` is CLI-only.
+      # The native installer ships the gateway; `uv tool install openshell` is CLI-only. The version is the
+      # one agent-hardener requires (OPENSHELL_VERSION in its gateway module), so CI cannot drift from it.
       shell: bash
       env:
-        OPENSHELL_VERSION: ${{ inputs.openshell_version }}
+        GATEWAY_MODULE: ${{ github.action_path }}/../../../agent_hardener/openshell/gateway.py
       run: |
+        OPENSHELL_VERSION=$(sed -n 's/^OPENSHELL_VERSION = "\(v[0-9.]*\)"$/\1/p' "$GATEWAY_MODULE")
+        test -n "$OPENSHELL_VERSION" || { echo "::error::OPENSHELL_VERSION not found in $GATEWAY_MODULE"; exit 1; }
+        export OPENSHELL_VERSION
         curl -LsSf "https://raw.githubusercontent.com/NVIDIA/OpenShell/${OPENSHELL_VERSION}/install.sh" | sh
         echo "$HOME/.local/bin" >> "$GITHUB_PATH"

@@ -32,7 +32,7 @@ a failed command also writes its classified error there.
 ## Installing OpenShell
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.6 sh
 openshell status
 ```
 

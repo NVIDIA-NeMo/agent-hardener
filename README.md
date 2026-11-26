@@ -182,13 +182,13 @@ For the real OpenShell/Garak demo:
 Install OpenShell and verify the local gateway:
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.6 sh
 openshell status
 ```
 
 > **Upgrading from OpenShell 0.0.x**
 >
-> Agent Hardener targets OpenShell 0.1.4. OpenShell 0.1.0 is a breaking release, and the installer refuses to upgrade a 0.0.x install in place. On macOS:
+> Agent Hardener targets OpenShell 0.1.6 (older releases are refused). OpenShell 0.1.0 is a breaking release, and the installer refuses to upgrade a 0.0.x install in place. On macOS:
 >
 > 1. Delete every 0.0.x sandbox: `openshell sandbox delete --all --gateway <name>` for each registered gateway. 0.0.x sandboxes cannot run under 0.1.
 > 2. Uninstall: `brew services stop nvidia/openshell/openshell && brew uninstall nvidia/openshell/openshell`. Also remove any stray `openshell` / `openshell-gateway` binaries left in `/opt/homebrew/bin` or `~/.local/bin`; the installer stops if it finds a 0.0.x binary on the path.

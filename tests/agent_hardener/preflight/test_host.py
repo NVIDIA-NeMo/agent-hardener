@@ -29,6 +29,7 @@ class HostProbes:
     on_path: set[str] = field(default_factory=lambda: {"openshell"})
     docker_up: bool = True
     gateway_up: bool = True
+    outdated: str | None = None
     compose_error: Exception | None = None
     driver: str | None = None
     sandbox_ready: bool = False
@@ -47,6 +48,9 @@ class HostProbes:
         self.gateways.append((gateway, openshell_bin))
         return self.gateway_up
 
+    def outdated_openshell(self, openshell_bin: str, *, timeout_s: float | None = None) -> str | None:
+        return self.outdated
+
     def resolve_compose_command(self) -> list[str]:
         if self.compose_error is not None:
             raise self.compose_error
@@ -59,6 +63,7 @@ def probes(monkeypatch: pytest.MonkeyPatch) -> HostProbes:
     monkeypatch.setattr(host.shutil, "which", scripted.which)
     monkeypatch.setattr(host, "docker_reachable", scripted.docker_reachable)
     monkeypatch.setattr(host, "gateway_connected", scripted.gateway_connected)
+    monkeypatch.setattr(host, "outdated_openshell", scripted.outdated_openshell)
     monkeypatch.setattr(host, "resolve_compose_command", scripted.resolve_compose_command)
     monkeypatch.setattr(host, "local_compute_driver", lambda: scripted.driver)
     monkeypatch.setattr(host, "sandbox_is_ready", lambda _config: scripted.sandbox_ready)
@@ -175,6 +180,16 @@ def test_a_recorded_image_the_run_will_not_adopt_still_needs_docker(
 
     with pytest.raises(SandboxProvisioningError, match="Docker daemon not reachable"):
         host.preflight_host(_session(tmp_path, openshell={"gateway": "k8s"}), reuse=reuse)
+
+
+def test_an_outdated_openshell_fails_before_the_gateway_probe(tmp_path: Path, probes: HostProbes) -> None:
+    probes.outdated = "OpenShell 0.1.4 is older than the required v0.1.6"
+
+    with pytest.raises(SandboxProvisioningError, match=r"0\.1\.4 is older") as caught:
+        host.preflight_host(_session(tmp_path, openshell={}))
+
+    assert host.INSTALL_HINT in caught.value.remediation
+    assert probes.gateways == []
 
 
 def test_disconnected_gateway_fails_with_its_name(tmp_path: Path, probes: HostProbes) -> None:

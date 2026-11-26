@@ -38,14 +38,14 @@ Fixed values, set in `agent_hardener/manifest.py`:
 | Item | Value |
 |---|---|
 | Gateway | `auto-defender` at `https://127.0.0.1:17670` |
-| OpenShell version targeted | `v0.1.4` |
+| OpenShell version targeted | `v0.1.6` (minimum) |
 | Provider | `<sandbox name>-secrets`, one per agent, type `generic` |
 | Sandbox name | `ah-<slug>-<7-char digest>`, at most 19 characters |
 
 ## Step 0: Preflight
 
 ```bash
-openshell --version                          # v0.1.4 is what the code targets
+openshell --version                          # v0.1.6 or newer; older fails the preflight
 openshell status --gateway auto-defender     # must say Connected
 docker info >/dev/null && echo docker-ok
 openshell sandbox list --gateway auto-defender
