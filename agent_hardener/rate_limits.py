@@ -3,10 +3,11 @@
 
 """Helpers for surfacing rate-limit failures clearly, and for waiting them out.
 
-A provider's rate limit is a reason to wait, not to fail: :class:`RateLimitRetryTransport` and
-:class:`AsyncRateLimitRetryTransport` retry a rate-limited request with exponential backoff before the
-caller ever sees the response. Only when the total wait runs out does the rate-limited response reach the
-caller, where the helpers below turn it into a :class:`RateLimitError` that names the source.
+A provider's rate limit is a reason to wait, not to fail: :class:`RetryTransport` and
+:class:`AsyncRetryTransport` retry a rate-limited request with exponential backoff before the caller ever
+sees the response, and a :class:`RetryPolicy` can have them retry a brief 5xx too. This is Agent
+Hardener's one HTTP retry policy. Only when the total wait runs out does the rate-limited response reach
+the caller, where the helpers below turn it into a :class:`RateLimitError` that names the source.
 """
 
 from __future__ import annotations
@@ -18,6 +19,7 @@ import os
 import random
 import threading
 import time
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -180,23 +182,54 @@ def _parse_retry_after(value: str) -> float | None:
     return max(0.0, when.timestamp() - time.time())
 
 
-class _RetryPolicy:
-    """What both transports share: which responses to retry, how long to wait, when to give up."""
+@dataclass
+class RetryState:
+    """One request's retries so far: kept by a transport, updated by :meth:`RetryPolicy.next_delay`."""
 
-    def __init__(self, *, max_wait: float | None) -> None:
-        self.max_wait = rate_limit_max_wait() if max_wait is None else max_wait
+    rate_limit_retries: int = 0
+    rate_limit_waited: float = 0.0
+    server_error_retries: int = 0
 
-    @staticmethod
-    def may_be_rate_limited(response: httpx.Response) -> bool:
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """Which failed responses a retry transport sends again, and how long it waits before each try.
+
+    A rate limit (a 429, or a 403/503 whose body says so) is waited out with :func:`retry_delay` backoff for
+    up to ``rate_limit_budget_s`` seconds in total; ``None`` means :func:`rate_limit_max_wait`. Any other
+    5xx is retried once per entry of ``server_error_delays_s``, after that many seconds. Transport errors
+    are never retried: after a timeout the server may already have acted on the request.
+    """
+
+    rate_limit_budget_s: float | None = None
+    server_error_delays_s: tuple[float, ...] = ()
+
+    def resolved(self) -> RetryPolicy:
+        """This policy with an unset rate-limit budget read from the environment now, once."""
+        return replace(self, rate_limit_budget_s=self._rate_limit_budget())
+
+    def _rate_limit_budget(self) -> float:
+        return rate_limit_max_wait() if self.rate_limit_budget_s is None else self.rate_limit_budget_s
+
+    def may_retry(self, response: httpx.Response) -> bool:
         """Whether the response needs its body read to decide (403/503 are rate limits only by their text)."""
-        return response.status_code in {403, 429, 503}
+        return response.status_code in {403, 429, 503} or (
+            bool(self.server_error_delays_s) and response.status_code >= 500
+        )
 
-    def next_delay(self, request: httpx.Request, response: httpx.Response, attempt: int, waited: float) -> float | None:
-        """The wait before the next try, or ``None`` when the response should go to the caller as is."""
-        if not is_rate_limited_response(response):
-            return None
+    def next_delay(self, request: httpx.Request, response: httpx.Response, state: RetryState) -> float | None:
+        """The wait before the next try (recorded in ``state``), or ``None`` to hand the response to the caller."""
+        if is_rate_limited_response(response):
+            return self._rate_limit_delay(request, response, state)
+        if response.status_code >= 500:
+            return self._server_error_delay(request, response, state)
+        return None
+
+    def _rate_limit_delay(self, request: httpx.Request, response: httpx.Response, state: RetryState) -> float | None:
+        budget = self._rate_limit_budget()
+        waited = state.rate_limit_waited
         retry_after = response.headers.get("retry-after")
-        delay = min(retry_delay(attempt, retry_after), self.max_wait - waited)
+        delay = min(retry_delay(state.rate_limit_retries, retry_after), budget - waited)
         if delay <= 0:
             logger.warning(
                 "%s still rate limited (HTTP %s) after waiting %.0fs; giving up",
@@ -206,86 +239,109 @@ class _RetryPolicy:
             )
             return None
         if waited == 0:
-            _warn_wait_started(request.url.host, response.status_code, self.max_wait)
+            _warn_wait_started(request.url.host, response.status_code, budget)
         logger.info(
             "%s rate limited the request (HTTP %s); retry %d in %.1fs (waited %.0fs of %.0fs)",
             request.url.host,
             response.status_code,
-            attempt + 1,
+            state.rate_limit_retries + 1,
             delay,
             waited,
-            self.max_wait,
+            budget,
+        )
+        state.rate_limit_retries += 1
+        state.rate_limit_waited += delay
+        return delay
+
+    def _server_error_delay(self, request: httpx.Request, response: httpx.Response, state: RetryState) -> float | None:
+        if state.server_error_retries >= len(self.server_error_delays_s):
+            return None
+        delay = self.server_error_delays_s[state.server_error_retries]
+        state.server_error_retries += 1
+        logger.warning(
+            "%s returned HTTP %s; retry %d of %d in %.0fs",
+            request.url.host,
+            response.status_code,
+            state.server_error_retries,
+            len(self.server_error_delays_s),
+            delay,
         )
         return delay
 
 
-class RateLimitRetryTransport(httpx.BaseTransport):
-    """An httpx transport that waits out rate limits: it retries a rate-limited request with backoff.
+class RetryTransport(httpx.BaseTransport):
+    """An httpx transport that retries a failed request as its :class:`RetryPolicy` says.
 
-    A response that is not a rate limit (including every other error) passes through untouched, as
-    does the last rate-limited one once ``max_wait`` seconds are spent, so the caller's own error
-    handling still runs. It only calls methods httpx and httpx2 share, so it can wrap a transport of
-    either: pass the one from the library the client is built on (see :mod:`agent_hardener.llm`).
+    The default policy waits out rate limits only. A response the policy does not retry passes through
+    untouched, as does the last failed one once the policy gives up, so the caller's own error handling
+    still runs. It only calls methods httpx and httpx2 share, so it can wrap a transport of either: pass
+    the one from the library the client is built on (see :mod:`agent_hardener.llm`).
     """
 
     def __init__(
         self,
         transport: httpx.BaseTransport | None = None,
         *,
-        max_wait: float | None = None,
+        policy: RetryPolicy | None = None,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         self._transport = transport or httpx.HTTPTransport()
-        self._policy = _RetryPolicy(max_wait=max_wait)
+        self._policy = (policy or RetryPolicy()).resolved()
         self._sleep = sleep
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
         request.read()  # buffer the body so the same request can be sent again
-        attempt, waited = 0, 0.0
+        state = RetryState()
         while True:
             response = self._transport.handle_request(request)
-            if not self._policy.may_be_rate_limited(response):
+            if not self._policy.may_retry(response):
                 return response
-            response.read()
-            delay = self._policy.next_delay(request, response, attempt, waited)
+            try:
+                response.read()
+            except BaseException:
+                response.close()
+                raise
+            delay = self._policy.next_delay(request, response, state)
             if delay is None:
                 return response
             response.close()
             self._sleep(delay)
-            attempt, waited = attempt + 1, waited + delay
 
     def close(self) -> None:
         self._transport.close()
 
 
-class AsyncRateLimitRetryTransport(httpx.AsyncBaseTransport):
-    """The async counterpart of :class:`RateLimitRetryTransport`."""
+class AsyncRetryTransport(httpx.AsyncBaseTransport):
+    """The async counterpart of :class:`RetryTransport`."""
 
     def __init__(
         self,
         transport: httpx.AsyncBaseTransport | None = None,
         *,
-        max_wait: float | None = None,
+        policy: RetryPolicy | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     ) -> None:
         self._transport = transport or httpx.AsyncHTTPTransport()
-        self._policy = _RetryPolicy(max_wait=max_wait)
+        self._policy = (policy or RetryPolicy()).resolved()
         self._sleep = sleep
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         await request.aread()  # buffer the body so the same request can be sent again
-        attempt, waited = 0, 0.0
+        state = RetryState()
         while True:
             response = await self._transport.handle_async_request(request)
-            if not self._policy.may_be_rate_limited(response):
+            if not self._policy.may_retry(response):
                 return response
-            await response.aread()
-            delay = self._policy.next_delay(request, response, attempt, waited)
+            try:
+                await response.aread()
+            except BaseException:
+                await response.aclose()
+                raise
+            delay = self._policy.next_delay(request, response, state)
             if delay is None:
                 return response
             await response.aclose()
             await self._sleep(delay)
-            attempt, waited = attempt + 1, waited + delay
 
     async def aclose(self) -> None:
         await self._transport.aclose()

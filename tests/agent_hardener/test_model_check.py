@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import httpx
@@ -12,6 +13,7 @@ import pytest
 
 from agent_hardener import model_check as mc
 from agent_hardener.errors import ModelUnavailableError
+from agent_hardener.rate_limits import RetryTransport
 
 if TYPE_CHECKING:
     from conftest import ModelProbe
@@ -101,67 +103,95 @@ def test_a_keyless_custom_endpoint_is_probed_without_a_key(
     assert model_probes == [(mc.default_model(), "http://localhost:8000/v1", None)]
 
 
+def _patch_posts(monkeypatch: pytest.MonkeyPatch, *answers: httpx.Response | Exception) -> list[httpx.Request]:
+    """Answer successive probe requests with *answers* (an exception is raised); return the requests sent.
+
+    The probe keeps its real :data:`~model_check.PROBE_RETRY` policy; only the network and the sleeps are
+    faked, the sleeps recorded on the returned list's ``sleeps`` attribute.
+    """
+    queue = list(answers)
+    sent = _Sent()
+
+    def answer(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        item = queue.pop(0)
+        if isinstance(item, Exception):
+            raise item
+        return item
+
+    def client(timeout: float) -> httpx.Client:
+        sent.timeout = timeout
+        transport = RetryTransport(httpx.MockTransport(answer), policy=mc.PROBE_RETRY, sleep=sent.sleeps.append)
+        return httpx.Client(transport=transport, timeout=timeout)
+
+    monkeypatch.setattr(mc, "_probe_client", client)
+    return sent
+
+
+class _Sent(list[httpx.Request]):
+    def __init__(self) -> None:
+        super().__init__()
+        self.sleeps: list[float] = []
+        self.timeout: float | None = None
+
+
 def test_probe_generation_sends_one_token_with_the_extra_body(monkeypatch: pytest.MonkeyPatch) -> None:
-    sent: dict[str, object] = {}
-
-    def fake_post(url: str, **kwargs: object) -> httpx.Response:
-        sent.update(url=url, **kwargs)
-        return httpx.Response(200, json={})
-
-    monkeypatch.setattr(httpx, "post", fake_post)
+    sent = _patch_posts(monkeypatch, httpx.Response(200, json={}))
     verdict = mc.probe_generation("m", "https://x/v1/", "k", timeout=5, extra_body={"chat_template_kwargs": {}})
     assert verdict.ok
-    assert sent["url"] == "https://x/v1/chat/completions"
-    assert sent["json"] == {
+    assert str(sent[0].url) == "https://x/v1/chat/completions"
+    assert json.loads(sent[0].content) == {
         "model": "m",
         "messages": [{"role": "user", "content": "ping"}],
         "max_tokens": 1,
         "chat_template_kwargs": {},
     }
-    assert sent["timeout"] == 5
+    assert sent.timeout == 5
 
 
 def test_probe_generation_reports_a_hung_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    def hang(*_a: object, **_k: object) -> httpx.Response:
-        raise httpx.ReadTimeout("timed out")
-
-    monkeypatch.setattr(httpx, "post", hang)
+    sent = _patch_posts(monkeypatch, httpx.ReadTimeout("timed out"))
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=600)
     assert verdict.reason == "timeout"
+    assert len(sent) == 1  # a timeout is not retried
     with pytest.raises(ModelUnavailableError, match="600s"):
         mc.raise_if_unavailable("red-team", "m", "https://x/v1", verdict)
 
 
 def test_probe_generation_reports_a_server_error(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_get(monkeypatch, httpx.Response(404))
-    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(404, text="model not found"))
+    _patch_posts(monkeypatch, httpx.Response(404, text="model not found"))
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
     assert verdict.reason == "error"
     assert "model not found" in verdict.detail
 
 
-def _patch_posts(monkeypatch: pytest.MonkeyPatch, *responses: httpx.Response) -> list[float]:
-    """Answer successive probe requests with *responses*; return the sleeps between them."""
-    queue = list(responses)
-    sleeps: list[float] = []
-    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: queue.pop(0))
-    monkeypatch.setattr(mc.time, "sleep", sleeps.append)
-    return sleeps
-
-
 def test_probe_generation_rides_out_a_brief_overload(monkeypatch: pytest.MonkeyPatch) -> None:
-    sleeps = _patch_posts(monkeypatch, httpx.Response(503), httpx.Response(429), httpx.Response(200, json={}))
+    sent = _patch_posts(
+        monkeypatch,
+        httpx.Response(503),
+        httpx.Response(429, headers={"retry-after": "2"}),
+        httpx.Response(200, json={}),
+    )
     assert mc.probe_generation("m", "https://x/v1", "k", timeout=5).ok
-    assert sleeps == [5.0, 15.0]
+    assert sent.sleeps == [5.0, 2.0]
 
 
 def test_probe_generation_fails_a_backend_that_stays_down(monkeypatch: pytest.MonkeyPatch) -> None:
-    down = httpx.Response(503, headers={"retry-after": "600"}, json={"error": {"message": "backend unavailable"}})
-    sleeps = _patch_posts(monkeypatch, down, down, down)
+    down = httpx.Response(503, json={"error": {"message": "backend unavailable"}})
+    sent = _patch_posts(monkeypatch, down, down, down)
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
     assert verdict.reason == "error"
     assert verdict.detail == "HTTP 503 after 3 attempts: backend unavailable"
-    assert sleeps == [60.0, 60.0]  # Retry-After honoured, but capped
+    assert sent.sleeps == [5.0, 15.0]
+
+
+def test_probe_generation_gives_up_on_a_rate_limit_that_outlasts_its_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    limited = httpx.Response(429, headers={"retry-after": "600"}, json={"error": {"message": "slow down"}})
+    sent = _patch_posts(monkeypatch, limited, limited)
+    verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
+    assert verdict.detail == "HTTP 429 after retrying for up to 20s: slow down"
+    assert sent.sleeps == [20.0]  # Retry-After honoured, but only within the probe's budget
 
 
 _DENIED = {"error": {"message": "The requested model 'm' is not available for this API key", "code": "403"}}
@@ -171,7 +201,7 @@ def test_probe_generation_reports_an_unlisted_model_as_unknown_not_as_a_bad_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_get(monkeypatch, httpx.Response(200, json={"data": [{"id": "real"}]}))
-    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(403, json=_DENIED))
+    _patch_posts(monkeypatch, httpx.Response(403, json=_DENIED))
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
     assert verdict.reason == "unknown_model"
     with pytest.raises(ModelUnavailableError, match="Reachable models: real"):
@@ -180,7 +210,7 @@ def test_probe_generation_reports_an_unlisted_model_as_unknown_not_as_a_bad_key(
 
 def test_probe_generation_keeps_the_server_message_for_a_rejected_key(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_get(monkeypatch, httpx.Response(200, json={"data": [{"id": "m"}]}))
-    monkeypatch.setattr(httpx, "post", lambda *_a, **_k: httpx.Response(403, json=_DENIED))
+    _patch_posts(monkeypatch, httpx.Response(403, json=_DENIED))
     verdict = mc.probe_generation("m", "https://x/v1", "k", timeout=5)
     assert verdict.reason == "auth"
     assert verdict.detail == f"HTTP 403: {_DENIED['error']['message']}"

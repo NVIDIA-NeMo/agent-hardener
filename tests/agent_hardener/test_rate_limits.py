@@ -7,15 +7,17 @@ import asyncio
 import email.utils
 import logging
 import time
+from collections.abc import Callable
 
 import httpx
 import pytest
 
 from agent_hardener import rate_limits
 from agent_hardener.rate_limits import (
-    AsyncRateLimitRetryTransport,
+    AsyncRetryTransport,
     RateLimitError,
-    RateLimitRetryTransport,
+    RetryPolicy,
+    RetryTransport,
     is_rate_limited_response,
     raise_for_rate_limit_response,
     rate_limit_error_from_exception,
@@ -96,25 +98,28 @@ _LIMITED = (429, None, {"status": 429, "title": "Too Many Requests"})
 _OK = (200, None, {"ok": True})
 
 
-def _post_sync(provider: _Provider, *, max_wait: float = 600) -> tuple[httpx.Response, list[float]]:
+def _post_sync(provider: _Provider, *, policy: RetryPolicy | None = None) -> tuple[httpx.Response, list[float]]:
     slept: list[float] = []
-    transport = RateLimitRetryTransport(httpx.MockTransport(provider), max_wait=max_wait, sleep=slept.append)
+    transport = RetryTransport(httpx.MockTransport(provider), policy=policy, sleep=slept.append)
     with httpx.Client(transport=transport) as client:
         return client.post("https://provider.test/v1/chat", json={"q": 1}), slept
 
 
-def _post_async(provider: _Provider, *, max_wait: float = 600) -> tuple[httpx.Response, list[float]]:
+def _post_async(provider: _Provider, *, policy: RetryPolicy | None = None) -> tuple[httpx.Response, list[float]]:
     slept: list[float] = []
 
     async def sleep(seconds: float) -> None:
         slept.append(seconds)
 
     async def post() -> httpx.Response:
-        transport = AsyncRateLimitRetryTransport(httpx.MockTransport(provider), max_wait=max_wait, sleep=sleep)
+        transport = AsyncRetryTransport(httpx.MockTransport(provider), policy=policy, sleep=sleep)
         async with httpx.AsyncClient(transport=transport) as client:
             return await client.post("https://provider.test/v1/chat", json={"q": 1})
 
     return asyncio.run(post()), slept
+
+
+_Post = Callable[..., tuple[httpx.Response, list[float]]]
 
 
 @pytest.mark.parametrize("post", [_post_sync, _post_async], ids=["sync", "async"])
@@ -137,7 +142,7 @@ def test_other_errors_and_unlimited_503s_pass_through_untouched(post) -> None:  
 
 @pytest.mark.parametrize("post", [_post_sync, _post_async], ids=["sync", "async"])
 def test_the_rate_limited_response_reaches_the_caller_once_the_wait_runs_out(post) -> None:  # type: ignore[no-untyped-def]
-    response, slept = post(_Provider(*[_LIMITED] * 20), max_wait=10)
+    response, slept = post(_Provider(*[_LIMITED] * 20), policy=RetryPolicy(rate_limit_budget_s=10))
 
     assert response.status_code == 429
     assert response.json() == {"status": 429, "title": "Too Many Requests"}  # still readable for the caller
@@ -147,6 +152,28 @@ def test_the_rate_limited_response_reaches_the_caller_once_the_wait_runs_out(pos
 def test_a_quota_503_is_waited_out_like_a_429() -> None:
     response, slept = _post_sync(_Provider((503, None, {"error": "quota exceeded, try again later"}), _OK))
     assert (response.status_code, len(slept)) == (200, 1)
+
+
+@pytest.mark.parametrize("post", [_post_sync, _post_async], ids=["sync", "async"])
+def test_a_server_error_policy_retries_a_5xx_with_its_fixed_delays_then_gives_up(post: _Post) -> None:
+    policy = RetryPolicy(server_error_delays_s=(1.0, 3.0))
+    provider = _Provider(*((500, None, {"error": f"boom {n}"}) for n in range(3)))
+
+    response, slept = post(provider, policy=policy)
+
+    assert (response.status_code, response.json(), slept) == (500, {"error": "boom 2"}, [1.0, 3.0])
+    assert provider.bodies == [b'{"q":1}'] * 3
+
+
+def test_rate_limit_and_server_error_retries_are_counted_separately() -> None:
+    policy = RetryPolicy(rate_limit_budget_s=600, server_error_delays_s=(1.0,))
+    provider = _Provider(_LIMITED, (502, None, {"error": "bad gateway"}), _LIMITED, _OK)
+
+    response, slept = _post_sync(provider, policy=policy)
+
+    assert response.status_code == 200
+    assert slept[1] == 1.0  # the one 5xx retry, between two rate-limit waits
+    assert len(slept) == 3
 
 
 def test_retry_after_is_honoured_in_seconds_or_as_a_date() -> None:

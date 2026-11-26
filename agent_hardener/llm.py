@@ -22,7 +22,7 @@ from langchain_openai import ChatOpenAI
 
 from agent_hardener.env import inference_api_key
 from agent_hardener.llm_telemetry import LlmTelemetryCallback
-from agent_hardener.rate_limits import AsyncRateLimitRetryTransport, RateLimitRetryTransport
+from agent_hardener.rate_limits import AsyncRetryTransport, RetryTransport
 from agent_hardener.relay_plugin.config import no_reasoning_body
 
 if TYPE_CHECKING:
@@ -103,8 +103,8 @@ def _rate_limited_http_clients() -> tuple[openai.DefaultHttpxClient, openai.Defa
     """
     http = _sdk_http_module()
     return (
-        openai.DefaultHttpxClient(transport=RateLimitRetryTransport(http.HTTPTransport())),
-        openai.DefaultAsyncHttpxClient(transport=AsyncRateLimitRetryTransport(http.AsyncHTTPTransport())),
+        openai.DefaultHttpxClient(transport=RetryTransport(http.HTTPTransport())),
+        openai.DefaultAsyncHttpxClient(transport=AsyncRetryTransport(http.AsyncHTTPTransport())),
     )
 
 

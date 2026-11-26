@@ -4,17 +4,19 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 from typing import TYPE_CHECKING
 
 import httpx
 import pytest
 
-from agent_hardener.agents.chat_http import AsyncServerErrorRetryTransport
+from agent_hardener.agents import chat_http
+from agent_hardener.rate_limits import AsyncRetryTransport
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Callable
 
-_RATE_LIMITED_503 = httpx.Response(503, json={"error": "rate limit exceeded"})
+    _Post = Callable[["_Victim"], tuple[httpx.Response, list[float]]]
 
 
 class _Victim:
@@ -29,51 +31,73 @@ class _Victim:
         return self._responses.pop(0)
 
 
-def _post(victim: _Victim) -> tuple[httpx.Response, list[float]]:
-    slept: list[float] = []
+@pytest.fixture
+def post(monkeypatch: pytest.MonkeyPatch) -> _Post:
+    """POST through :func:`chat_http.victim_client` to a mock victim, recording the waits instead of sleeping."""
 
-    async def sleep(seconds: float) -> None:
-        slept.append(seconds)
+    def _post(victim: _Victim) -> tuple[httpx.Response, list[float]]:
+        slept: list[float] = []
 
-    async def post() -> httpx.Response:
-        transport = AsyncServerErrorRetryTransport(httpx.MockTransport(victim), delays=(1.0, 3.0), sleep=sleep)
-        async with httpx.AsyncClient(transport=transport) as client:
-            return await client.post("https://victim.test/v1/chat/completions", json={"q": 1})
+        async def sleep(seconds: float) -> None:
+            slept.append(seconds)
 
-    return asyncio.run(post()), slept
+        transport = functools.partial(AsyncRetryTransport, httpx.MockTransport(victim), sleep=sleep)
+        monkeypatch.setattr(chat_http, "AsyncRetryTransport", transport)
+
+        async def send() -> httpx.Response:
+            async with chat_http.victim_client(timeout=5) as client:
+                return await client.post("https://victim.test/v1/chat/completions", json={"q": 1})
+
+        return asyncio.run(send()), slept
+
+    return _post
 
 
-def test_a_brief_server_error_is_retried_with_the_same_request() -> None:
+@pytest.mark.parametrize(
+    "limited",
+    [
+        httpx.Response(429, json={"error": "Too Many Requests"}),
+        httpx.Response(503, json={"error": "rate limit exceeded"}),
+    ],
+    ids=["429", "rate-limited-503"],
+)
+def test_a_victim_rate_limit_is_waited_out_then_the_answer_returned(post: _Post, limited: httpx.Response) -> None:
+    """A victim passing its model's 429 through used to fail replay validators at once."""
+    victim = _Victim(limited, httpx.Response(200, json={"answer": "hi"}))
+
+    response, slept = post(victim)
+
+    assert (response.status_code, response.json()) == (200, {"answer": "hi"})
+    assert len(slept) == 1
+    assert victim.bodies == [b'{"q":1}'] * 2
+
+
+def test_a_brief_server_error_is_retried_with_the_same_request(post: _Post) -> None:
     victim = _Victim(httpx.Response(502), httpx.Response(200, json={"ok": True}))
 
-    response, slept = _post(victim)
+    response, slept = post(victim)
 
     assert response.status_code == 200
     assert slept == [1.0]
     assert victim.bodies == [b'{"q":1}'] * 2
 
 
-def test_a_persistent_server_error_reaches_the_caller_after_the_last_retry() -> None:
+def test_a_persistent_server_error_reaches_the_caller_after_the_last_retry(post: _Post) -> None:
     victim = _Victim(*(httpx.Response(500, json={"error": f"boom {n}"}) for n in range(3)))
 
-    response, slept = _post(victim)
+    response, slept = post(victim)
 
     assert response.status_code == 500
     assert response.json() == {"error": "boom 2"}
     assert slept == [1.0, 3.0]
 
 
-@pytest.mark.parametrize(
-    "response",
-    [httpx.Response(400, json={"error": "blocked by guardrail"}), _RATE_LIMITED_503],
-    ids=["client-error", "rate-limited-503"],
-)
-def test_responses_that_are_not_victim_failures_are_not_retried(response: httpx.Response) -> None:
-    victim = _Victim(response)
+def test_a_client_error_is_not_retried(post: _Post) -> None:
+    victim = _Victim(httpx.Response(400, json={"error": "blocked by guardrail"}))
 
-    returned, slept = _post(victim)
+    response, slept = post(victim)
 
-    assert (returned.status_code, slept, len(victim.bodies)) == (response.status_code, [], 1)
+    assert (response.status_code, slept, len(victim.bodies)) == (400, [], 1)
 
 
 class _BrokenBody(httpx.AsyncByteStream):
@@ -89,12 +113,12 @@ class _BrokenBody(httpx.AsyncByteStream):
         self.closed = True
 
 
-def test_a_server_error_whose_body_fails_to_read_is_closed_and_not_retried() -> None:
+def test_a_server_error_whose_body_fails_to_read_is_closed_and_not_retried(post: _Post) -> None:
     body = _BrokenBody()
     victim = _Victim(httpx.Response(500, stream=body))
 
     with pytest.raises(httpx.ReadError):
-        _post(victim)
+        post(victim)
 
     assert body.closed
     assert len(victim.bodies) == 1
