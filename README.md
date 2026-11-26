@@ -61,7 +61,7 @@ defenders work from.
 - **OpenShell policy defender:** turns attacks that made the agent reach the network into changes to the
   OpenShell sandbox's network policy. Attacks that stay inside the OpenShell sandbox, such as local shell commands, give it nothing
   to act on.
-- **Traces guardrails defender:** reads each attack's execution trace from NeMo Relay, finds the tool call that
+- **Tools guardrails defender:** reads each attack's execution trace from NeMo Relay, finds the tool call that
   did the harm, and writes a guardrail for that tool. At run time, a safety judge model inside the agent checks
   each guarded tool call before it runs.
 
