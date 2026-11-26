@@ -217,12 +217,26 @@ class DefendersManager:
         errors: list[str] = []
         not_applicable: list[str] = []
 
-        for (defender, _), result in zip(task_meta, results, strict=True):
-            if isinstance(result, BaseException):
-                errors.append(f"Agent {defender.name} raised exception: {result}")
-            elif not result.ok:
-                reasons = not_applicable if result.not_applicable else errors
-                reasons.append(f"Agent {defender.name} {why_no_mitigation(result)}")
+        for (defender, inp), result in zip(task_meta, results, strict=True):
+            if isinstance(result, BaseException) or not result.ok:
+                if not isinstance(result, BaseException) and result.not_applicable:
+                    not_applicable.append(f"Agent {defender.name} {why_no_mitigation(result)}")
+                    continue
+                error = (
+                    f"raised exception: {result}" if isinstance(result, BaseException) else why_no_mitigation(result)
+                )
+                errors.append(f"Agent {defender.name} {error}")
+                # Recorded, not dropped: the final report counts a defender's runs from these records.
+                analyses.append(
+                    DefenderAnalysis(
+                        agent_id=defender.agent_id,
+                        agent_name=defender.name,
+                        ok=False,
+                        error=error,
+                        metadata={"attacked_tool": inp.attacked_tool},
+                        attack_prompt=inp.attack_prompt,
+                    )
+                )
             else:
                 analyses.append(
                     DefenderAnalysis(
@@ -238,15 +252,15 @@ class DefendersManager:
                             # Link this analysis to the specific guardrail it injected + the tool it attacked,
                             # so build_mitigations can pair each custom_guardrail_N with its motivating attack.
                             "guardrail_name": result.guardrail_name,
-                            "attacked_tool": _.attacked_tool,
+                            "attacked_tool": inp.attacked_tool,
                         },
-                        attack_prompt=_.attack_prompt,
+                        attack_prompt=inp.attack_prompt,
                     )
                 )
 
         return DefendersManagerOutput(
-            ok=len(analyses) > 0,
-            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {len(analyses)} analyses.",
+            ok=any(analysis.ok for analysis in analyses),
+            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {sum(analysis.ok for analysis in analyses)} analyses.",
             # Every attack record repeats its defender's error or reason; report each once.
             error=" | ".join(dict.fromkeys(errors)) if errors else None,
             not_applicable=list(dict.fromkeys(not_applicable)),

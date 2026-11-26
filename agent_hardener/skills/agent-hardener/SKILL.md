@@ -82,8 +82,11 @@ agent-hardener init --project-dir <agent project> --dockerfile Dockerfile \
 Without flags it is interactive (answer `?` at a prompt for help); `--yes` takes defaults with no prompts.
 It writes:
 
-- `agent-hardener.yaml` — the manifest (`--output` to rename; `--force` to overwrite).
-- `garak-scan.yaml` — the attacker's config, regenerated each `init` so its port matches.
+- `agent-hardener.yaml` — the manifest (`--output` to rename). Run `init` again to update it in place:
+  the project is checked again, flags you pass are applied, and everything else you set (and your
+  comments) is kept; it prints what changed. A failed update leaves the file untouched. `--force`
+  rewrites it from scratch.
+- `garak-scan.yaml` — the attacker's config, editable; an update keeps it (the run sets its target).
 - the secrets file — prompts (hidden) for any listed secret it does not find.
 
 Then edit the manifest: set `harness: langgraph` or `harness: langchain` and, once Step 2 is done,

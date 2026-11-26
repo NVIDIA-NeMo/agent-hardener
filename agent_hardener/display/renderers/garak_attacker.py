@@ -73,19 +73,21 @@ def _transcript_conversation(transcripts: list[AttemptTranscript]) -> Group:
 
 
 def _attacker_table(stats: dict[str, ScanStats]) -> Table:
-    """Per-scanner attacker-results table (red when exploits got through)."""
+    """Per-scanner attacker-results table (red when exploits got through); scanners that did not run are omitted."""
     table = Table(title="Attacker results", title_justify="left")
-    table.add_column("Scanner")
-    table.add_column("Successful hits", justify="right")
+    table.add_column("Attacker")
+    table.add_column("Hits", justify="right")
     table.add_column("Probes", overflow="fold")
-    for scanner in SCANNERS_WITH_OTHER:
+    ran = [scanner for scanner in SCANNERS_WITH_OTHER if scan_has_data(stats[scanner])]
+    if not ran:
+        table.add_row(Text("no attacks ran", style="dim"), "", "")
+    for scanner in ran:
         scan = stats[scanner]
-        if scanner == "other" and not scan_has_data(scan):
-            continue
         hits = scan.displayed_successes
+        total = scan.displayed_total
         table.add_row(
             SCANNER_LABELS[scanner],
-            Text(str(hits), style="bold red" if hits else "green"),
+            Text(f"{hits}/{total}" if total else str(hits), style="bold red" if hits else "green"),
             counter_keys(scan.probes) if scan.probes else "",
         )
     return table
