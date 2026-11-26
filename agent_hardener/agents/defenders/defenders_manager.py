@@ -217,10 +217,24 @@ class DefendersManager:
         errors: list[str] = []
 
         for (defender, _), result in zip(task_meta, results, strict=True):
-            if isinstance(result, BaseException):
-                errors.append(f"Agent {defender.name} raised exception: {result}")
-            elif not result.ok:
-                errors.append(f"Agent {defender.name} failed: {result.error_message}")
+            if isinstance(result, BaseException) or not result.ok:
+                error = (
+                    f"raised exception: {result}"
+                    if isinstance(result, BaseException)
+                    else f"failed: {result.error_message}"
+                )
+                errors.append(f"Agent {defender.name} {error}")
+                # Recorded, not dropped: the final report counts a defender's runs from these records.
+                analyses.append(
+                    DefenderAnalysis(
+                        agent_id=defender.agent_id,
+                        agent_name=defender.name,
+                        ok=False,
+                        error=error,
+                        metadata={"attacked_tool": _.attacked_tool},
+                        attack_prompt=_.attack_prompt,
+                    )
+                )
             else:
                 analyses.append(
                     DefenderAnalysis(
@@ -243,8 +257,8 @@ class DefendersManager:
                 )
 
         return DefendersManagerOutput(
-            ok=len(analyses) > 0,
-            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {len(analyses)} analyses.",
+            ok=any(analysis.ok for analysis in analyses),
+            summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {sum(analysis.ok for analysis in analyses)} analyses.",
             error=" | ".join(errors) if errors else None,
             routed_agent_ids=routed_agent_ids,
             analyses=analyses,

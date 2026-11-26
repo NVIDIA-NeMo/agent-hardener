@@ -95,11 +95,12 @@ def test_build_summary_omits_empty_defender_table() -> None:
     assert "Defender results" not in out
 
 
-def test_build_summary_result_is_completed_or_error() -> None:
+def test_build_summary_result_is_completed_failed_or_error() -> None:
     insufficient = {"agent_name": "replay", "kind": "attack", "ok": False, "summary": "blocked 0/2"}
     reports = [
-        # A validator that ran and judged the defense insufficient is a result, not an error.
+        # A validator that ran and judged the defense insufficient is a failed round, not an error.
         {"round_id": "a", "success": False, "iterations": [{"validators": [insufficient]}]},
+        {"round_id": "c", "success": True, "iterations": []},
         {
             "round_id": "b",
             "attacks": [{"agent_name": "agent_breaker", "ok": False, "error": "garak crashed"}],
@@ -107,10 +108,11 @@ def test_build_summary_result_is_completed_or_error() -> None:
         },
     ]
     out = _render_summary(reports, terminal=False)
-    assert re.search(r"│ a +│ ✓ completed", out)
+    assert re.search(r"│ a +│ ✗ failed", out)
+    assert re.search(r"│ c +│ ✓ completed", out)
     assert "✗ error" in out
     assert "agent_breaker: garak crashed (+1 more)" in out
-    assert "2 rounds (1 with errors)" in out
+    assert "3 rounds (1 with errors)" in out
     assert "Iterations" not in out
     assert "Duration" not in out
     assert "errors: agent_breaker: garak crashed; deploy: failed" in render_final_run_log(reports)

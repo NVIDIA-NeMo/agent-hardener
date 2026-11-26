@@ -21,12 +21,16 @@ import tomllib
 from pathlib import PurePath
 from typing import TYPE_CHECKING, Any
 
+from pydantic import ValidationError
+
 from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, SHIM_DIR
 from agent_hardener.relay_plugin.config import (
     DEFAULT_JUDGE_API_KEY_ENV,
+    DEFAULT_JUDGE_BASE_URL,
+    JUDGE_BASE_URL_ENVS,
     PLUGIN_KIND,
     SAFETY_API_KEY_ENV,
-    SAFETY_BASE_URL_ENV,
+    JudgeModel,
 )
 
 if TYPE_CHECKING:
@@ -78,10 +82,11 @@ key the run was given as `{SAFETY_API_KEY_ENV}`, or as `{DEFAULT_JUDGE_API_KEY_E
 Setting only `{DEFAULT_JUDGE_API_KEY_ENV}` in the container is not enough.
 """
 
-#: No base_url in plugins.toml: the judge resolves its endpoint inside the container, like ``judge_endpoint()``.
+#: No base_url in plugins.toml: the judge resolves its endpoint inside the container with ``judge_endpoint()``.
 _DEFAULT_ENDPOINT = (
-    f"the endpoint named by `{SAFETY_BASE_URL_ENV}`, else `AGENT_HARDENER_BASE_URL`, else "
-    "`https://integrate.api.nvidia.com/v1` (`plugins.toml` sets no `base_url`)"
+    "the endpoint named by "
+    + ", else ".join(f"`{env}`" for env in JUDGE_BASE_URL_ENVS)
+    + f", else `{DEFAULT_JUDGE_BASE_URL}` (`plugins.toml` sets no `base_url`)"
 )
 
 _UNREAD_JUDGE_RUNTIME = """\
@@ -234,20 +239,21 @@ def _judge_runtime(plugins_toml: Path) -> str:
     models = [model for entry in entries if (model := _judge_model(entry)) is not None]
     if len(models) != len(entries):
         return _UNREAD_JUDGE_RUNTIME
-    keys = list(dict.fromkeys(str(model.get("api_key_env") or DEFAULT_JUDGE_API_KEY_ENV) for model in models))
-    endpoints = list(
-        dict.fromkeys(f"`{model['base_url']}`" if model.get("base_url") else _DEFAULT_ENDPOINT for model in models)
-    )
+    keys = list(dict.fromkeys(model.api_key_env for model in models))
+    endpoints = list(dict.fromkeys(f"`{model.base_url}`" if model.base_url else _DEFAULT_ENDPOINT for model in models))
     needs = [f"- `{key}`, set to the judge's API key" for key in keys]
     needs += [f"- network reach to {endpoint}" for endpoint in endpoints]
     note = _SAFETY_KEY_NOTE if SAFETY_API_KEY_ENV in keys else ""
     return _JUDGE_RUNTIME.format(needs="\n".join(needs)) + note
 
 
-def _judge_model(entry: dict[str, Any]) -> dict[str, Any] | None:
+def _judge_model(entry: dict[str, Any]) -> JudgeModel | None:
+    """The entry's judge, parsed the way the plugin parses it, so defaults match; ``None`` when invalid."""
     config = entry.get("config")
-    model = config.get("model") if isinstance(config, dict) else None
-    return model if isinstance(model, dict) else None
+    try:
+        return JudgeModel.model_validate(config.get("model") if isinstance(config, dict) else None)
+    except ValidationError:
+        return None
 
 
 def _strip_sandbox_shim(sitecustomize: Path) -> None:

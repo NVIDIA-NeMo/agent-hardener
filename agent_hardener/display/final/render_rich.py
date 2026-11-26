@@ -182,7 +182,7 @@ def _overview_table(reports: list[dict[str, Any]], mission_ids: list[str] | None
         hits = row.outcome.attack_hits
         cells: list[Any] = [
             row.round_id,
-            _outcome(row.errors),
+            _outcome(row.errors, row.success),
             Text(str(hits), style="bold red" if hits else "green"),
             _tally(row.outcome.blocked),
             _tally(row.outcome.benign),
@@ -208,9 +208,16 @@ def _tally(tally: Tally) -> Text:
     return text
 
 
-def _outcome(errors: list[str]) -> Text:
-    """``✓ completed`` when no stage recorded an error, else ``✗ error``."""
-    return Text("✗ error", style="red") if errors else Text("✓ completed", style="green")
+def _outcome(errors: list[str], success: Any) -> Text:
+    """``✗ error`` when a stage recorded an error, ``✗ failed`` when the round did not succeed, else ``✓ completed``.
+
+    A round can fail without an error: its defense ran but the victim or a validator rejected it.
+    """
+    if errors:
+        return Text("✗ error", style="red")
+    if success is False:
+        return Text("✗ failed", style="red")
+    return Text("✓ completed", style="green")
 
 
 def _defender_table(defenders: list[dict[str, Any]]) -> Table:

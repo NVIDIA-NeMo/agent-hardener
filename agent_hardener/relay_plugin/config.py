@@ -34,6 +34,9 @@ PLUGIN_KIND = "agent_hardener.pre_tool_verifier"
 SAFETY_BASE_URL_ENV = "AGENT_HARDENER_SAFETY_BASE_URL"
 SAFETY_API_KEY_ENV = "AGENT_HARDENER_SAFETY_API_KEY"  # pragma: allowlist secret
 DEFAULT_JUDGE_API_KEY_ENV = "INFERENCE_API_KEY"  # pragma: allowlist secret
+#: Where ``judge_endpoint()`` looks, in order, before falling back to ``DEFAULT_JUDGE_BASE_URL``.
+JUDGE_BASE_URL_ENVS = (SAFETY_BASE_URL_ENV, "AGENT_HARDENER_BASE_URL")
+DEFAULT_JUDGE_BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 
 def judge_endpoint() -> str:
@@ -46,11 +49,7 @@ def judge_endpoint() -> str:
     The sandbox allow-lists this host explicitly (``agent_hardener.tools.openshell``): the judge runs
     inside the victim, and egress discovery cannot find an endpoint Agent Hardener itself injected.
     """
-    return (
-        os.environ.get(SAFETY_BASE_URL_ENV)
-        or os.environ.get("AGENT_HARDENER_BASE_URL")
-        or "https://integrate.api.nvidia.com/v1"
-    )
+    return next((url for env in JUDGE_BASE_URL_ENVS if (url := os.environ.get(env))), DEFAULT_JUDGE_BASE_URL)
 
 
 def judge_api_key_env() -> str:
