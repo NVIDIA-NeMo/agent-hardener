@@ -26,8 +26,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
 from agent_hardener.atof import load_records, requested_tools
@@ -472,7 +471,7 @@ class Mission:
         contract = contract_for(self.ctx.session_config.target.base_url, self.ctx.session_config.victim)
 
         async def probe() -> Any:
-            async with httpx.AsyncClient(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
+            async with victim_client(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
                 return await client.post(
                     contract.url, json=contract.request_payload(RELAY_PROBE_PROMPT), headers=contract.headers()
                 )

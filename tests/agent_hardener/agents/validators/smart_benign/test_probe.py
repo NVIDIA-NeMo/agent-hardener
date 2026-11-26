@@ -51,7 +51,7 @@ class _Victim:
         def client(*, timeout: float) -> httpx.AsyncClient:
             return _REAL_CLIENT(timeout=timeout, transport=httpx.MockTransport(respond))
 
-        monkeypatch.setattr(pb.httpx, "AsyncClient", client)
+        monkeypatch.setattr(pb, "victim_client", client)
 
     def questions(self) -> list[str]:
         return [json.loads(r.content)["messages"][0]["content"] for r in self.requests]

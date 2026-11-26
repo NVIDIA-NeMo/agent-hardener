@@ -263,7 +263,7 @@ def test_the_relay_probe_hits_the_victim_and_syncs_the_atof_log_from_the_sandbox
 ) -> None:
     atof = Path("relay/events.atof.jsonl") if relative else tmp_path / "abs" / "events.atof.jsonl"
     _FakeHttpClient.posts = []
-    monkeypatch.setattr(runner.httpx, "AsyncClient", _FakeHttpClient)
+    monkeypatch.setattr(runner, "victim_client", _FakeHttpClient)
     seen: dict[str, Any] = {}
 
     async def fake_check(*, probe: Any, atof_path: Path, sync: Any) -> Any:

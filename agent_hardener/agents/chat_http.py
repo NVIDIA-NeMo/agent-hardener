@@ -23,9 +23,9 @@ from agent_hardener.rate_limits import AsyncRetryTransport, RetryPolicy
 VICTIM_RETRY = RetryPolicy(server_error_delays_s=(1.0, 3.0))
 
 
-def victim_client(*, timeout: float) -> httpx.AsyncClient:
-    """The HTTP client for calls to the victim agent."""
-    return httpx.AsyncClient(transport=AsyncRetryTransport(policy=VICTIM_RETRY), timeout=timeout)
+def victim_client(*, timeout: float, transport: httpx.AsyncBaseTransport | None = None) -> httpx.AsyncClient:
+    """The HTTP client for every call to the victim agent; ``transport`` replaces the network one (tests)."""
+    return httpx.AsyncClient(transport=AsyncRetryTransport(transport, policy=VICTIM_RETRY), timeout=timeout)
 
 
 def response_body_or_text(response: httpx.Response) -> Any:

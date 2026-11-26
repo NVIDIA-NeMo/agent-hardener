@@ -41,11 +41,10 @@ def post(monkeypatch: pytest.MonkeyPatch) -> _Post:
         async def sleep(seconds: float) -> None:
             slept.append(seconds)
 
-        transport = functools.partial(AsyncRetryTransport, httpx.MockTransport(victim), sleep=sleep)
-        monkeypatch.setattr(chat_http, "AsyncRetryTransport", transport)
+        monkeypatch.setattr(chat_http, "AsyncRetryTransport", functools.partial(AsyncRetryTransport, sleep=sleep))
 
         async def send() -> httpx.Response:
-            async with chat_http.victim_client(timeout=5) as client:
+            async with chat_http.victim_client(timeout=5, transport=httpx.MockTransport(victim)) as client:
                 return await client.post("https://victim.test/v1/chat/completions", json={"q": 1})
 
         return asyncio.run(send()), slept

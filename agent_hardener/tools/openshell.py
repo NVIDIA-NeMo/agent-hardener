@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
 import yaml  # type: ignore[import-untyped]
 
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
 from agent_hardener.display.console import failure_excerpt, hint, warn
@@ -351,7 +351,7 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
     lifecycle = OpenShellLifecycle(prepared)
 
     async def probe() -> Any:
-        async with httpx.AsyncClient(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
+        async with victim_client(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
             return await client.post(
                 base_url, json={"model": "victim", "messages": [{"role": "user", "content": RELAY_PROBE_PROMPT}]}
             )

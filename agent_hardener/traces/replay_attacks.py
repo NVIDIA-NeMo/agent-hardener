@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.concurrency import gather_limited_ordered
 from agent_hardener.endpoint import DEFAULT_VICTIM_CONCURRENCY
 from agent_hardener.traces.attacks import RecordedAttackTrace, attack_key, record_prompt
@@ -57,7 +58,7 @@ async def replay_attacks_for_traces(
     if not pending:
         return []
     anchor = trace_clock(await asyncio.to_thread(provider.get_traces))
-    async with httpx.AsyncClient(transport=transport) as client:
+    async with victim_client(timeout=contract.timeout_seconds, transport=transport) as client:
         answers = await gather_limited_ordered(pending, concurrency, lambda prompt: _send(client, contract, prompt))
     traces = traces_since(await asyncio.to_thread(provider.get_traces), anchor)
     claimed: set[str] = set()

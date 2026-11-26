@@ -334,7 +334,7 @@ def test_verification_probes_the_victim_and_pulls_the_atof_log(
 ) -> None:
     atof = tmp_path / "abs" / "events.atof.jsonl" if absolute else Path("rel/events.atof.jsonl")
     _Http.posts = []
-    monkeypatch.setattr(tool.httpx, "AsyncClient", _Http)
+    monkeypatch.setattr(tool, "victim_client", _Http)
     monkeypatch.setattr(tool, "OpenShellLifecycle", _Fetcher)
     seen: dict[str, Any] = {}
 
