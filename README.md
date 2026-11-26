@@ -322,8 +322,10 @@ how many replayed attacks were blocked, and how many benign requests still passe
 | Run log | `<run>/agent-hardener.log` | Everything the run did, including build and OpenShell output. Each command also writes a complete log, printed as `→ log: <path>` when it ends. |
 | Generated benign suite | `.agent-hardener/benign_profiles/<agent name>/requests.csv` | The normal requests the agent must keep answering, with the profile and interview they came from beside it |
 | Landed attacks | `<run>/round_<N>/attacks.json` | The attacks garak sent in that round and which ones landed; garak's own report and hitlog are in `round_<N>/garak/` |
+| Attack traces | `<run>/round_<N>/attack_traces.json` | What each attack made the agent do, step by step, from NeMo Relay. The guardrails defender works from these, and they show whether a landed attack was real or a false positive. |
 | Generated defenses | `<run>/mitigations.json` | The OpenShell sandbox policy and the guardrails before and after hardening |
 | Validation results | `<run>/validation.json` | For each replayed attack, whether it was blocked, and for each benign request, whether it still passed |
+| Round report | `<run>/round_<N>/report.json` | One round's attacks and defense iterations together; useful when a run has more than one round |
 | Hardened image | `<run>/hardened-image/` | A Dockerfile that layers the run's guardrails onto your agent's image, plus the hardened OpenShell sandbox policy and a README on deploying it |
 
 To deploy the hardened image, give it the key named by `api_key_env` in its `plugins.toml`, normally
