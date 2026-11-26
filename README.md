@@ -1,594 +1,353 @@
 # Agent Hardener
 
-Agent Hardener orchestrates a security hardening loop for agentic applications. It loads attack evidence or runs attackers, routes findings to defenders, applies policy and workflow patches to a victim environment, replays the original attacks, runs benign validation, and writes a full session report.
+Agent Hardener is a swarm of attacker and defender agents that find vulnerabilities in a given agent and
+patch them dynamically. Attacker agents probe your agent's tools and record every attack that lands. Defender
+agents turn each landed attack into a fix, either a guardrail on the tool call that did the harm or a tighter
+OpenShell sandbox policy, and apply it to the running agent. Validator agents then replay the same attacks to confirm
+they are blocked and check that normal requests still work. At the end you get a report and a hardened copy of
+your agent's image.
 
-Agent Hardener protects a NeMo Relay-connected agent running inside an OpenShell sandbox. It uses:
+<p align="center">
+  <img src=".github/images/agent-hardener-loop.svg" alt="Agent Hardener loop: attackers attack your agent in an OpenShell sandbox, defenders patch it from the attacks that landed and their NeMo Relay traces, validators replay the attacks and check benign requests, then a report and a hardened image are produced. The next round attacks the hardened agent." width="1000">
+</p>
 
-- Garak-style attack evidence or live Garak attackers.
-- An OpenShell policy defender that creates candidate network policy updates.
-- A traces guardrails defender that reads each attack's execution trace and writes a NeMo Relay guardrail on the tool call that did the harm.
-- OpenShell victim-control that applies policy updates, uploads workflow updates, and restarts the victim.
-- Attack and benign validators that prove the defended agent blocks the attacks without breaking normal requests.
+Agent Hardener is part of [NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix), where it runs as a platform
+plugin from the Studio UI or the `nemo agent-hardener` CLI, and it can also run on its own from this repository.
 
-See [AGENT_CARD.md](AGENT_CARD.md) for the agent transparency card: intended use, limitations, evaluation results and safety considerations.
+Your agent runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and must be connected to
+[NeMo Relay](https://github.com/NVIDIA/NeMo-Relay), which Agent Hardener uses to see what each attack made the
+agent do and to deliver guardrails.
 
-## Contributions
-
-This project is currently not accepting contributions.
+See [AGENT_CARD.md](AGENT_CARD.md) for intended use, limitations, evaluation results and safety considerations.
 
 ## Operating safely
 
-Agent Hardener generates working attacks and runs a deliberately hostile workload against an agent
-you supply. That makes a few things your responsibility.
+Agent Hardener generates working attacks and runs a deliberately hostile workload against an agent you supply.
+That makes a few things your responsibility.
 
-**Only test agents you own or are authorised to test.** The tool aims real attacks at whatever
-endpoint you point it at. Pointing it at someone else's agent is unauthorised testing.
+- **Only test agents you own or are authorised to test.** The tool aims real attacks at whatever endpoint you
+  point it at.
+- **Point the agent at test backends, not production ones.** During a run the agent is under active attack and
+  may be induced to call its tools in ways you did not intend. The OpenShell sandbox restricts egress to the backends you
+  declare in the manifest, so declare test doubles, not the real thing.
+- **A manifest is trusted input.** It names a Dockerfile and compose files that Agent Hardener builds and runs on
+  your machine. Running a manifest you did not write is running that person's code.
+- **Run artifacts are sensitive.** `.agent-hardener/` holds every prompt and response, including the record of
+  which attacks *succeeded* against your agent: a working exploit list for it. The shipped `.gitignore` keeps it
+  out of version control. Treat it like a credential.
+- **Credentials come from the environment.** Keys are read from your environment or `--env-file` when they are
+  used and are never written into run artifacts. Keep `.env` out of version control.
+- **`agent-hardener serve` has no authentication.** It binds `127.0.0.1` for that reason. If you override
+  `--host`, anyone who can reach that interface can drive it.
 
-**Point the agent under test at non-production backends.** During a run the victim is under active
-attack and may be induced to call its tools in ways you did not intend. The sandbox restricts egress
-to the backends you declare in the manifest — so declare test doubles, not the real thing.
+## How it works
 
-**A victim manifest is trusted input.** The manifest names a compose file and image that Agent
-Hardener will build and run on your machine. Running a manifest you did not write is equivalent to
-running that person's code.
+### The hardening loop
 
-**Run artifacts are sensitive.** Everything under `.agent-hardener/` — hitlogs, prompts, model
-responses — includes the record of which attacks *succeeded* against your agent. That is a working
-exploit list for it. The shipped `.gitignore` keeps these directories out of version control; keep
-it that way, and treat the directory like a credential when copying it around.
-
-**Credentials come from the environment.** Keys are read from your environment or `--env-file` at
-the point of use and are never written into run artifacts. Keep `.env` out of version control (it
-is gitignored by default).
-
-**`agent-hardener serve` is unauthenticated.** It binds `127.0.0.1` for that reason. If you override
-`--host`, anyone who can reach that interface can drive it — do not expose it on an untrusted
-network.
-
-## Install
-
-```bash
-pip install nvidia-agent-hardener
+```text
+attack ─▶ defend ─▶ apply defenses ─▶ replay the attacks ─▶ check benign requests ─▶ report
+  ▲                                                                                   │
+  └────────────────────────────── next round attacks the hardened agent ◀─────────────┘
 ```
 
-The distribution is `nvidia-agent-hardener`; the import package and CLI are `agent_hardener` and
-`agent-hardener`.
+A run is one or more rounds (`--rounds`, default 1). Each round attacks the current agent, turns every attack
+that landed into defenses, deploys them, and validates the result. The next round attacks the hardened agent.
 
-After installing, run `agent-hardener setup` once. garak is deliberately not a dependency (see
-[Garak agent_breaker](#garak-agent_breaker)), so a freshly installed copy has no garak until setup
-provisions its dedicated virtual environment.
+### Attackers
 
-To work on Agent Hardener itself rather than consume it, skip this section and follow
-[Environment Setup](#environment-setup) below.
+- **[agent_breaker](https://github.com/NVIDIA/garak/blob/main/garak/probes/agent_breaker.py)** (a garak probe):
+  discovers the agent's tools, plans attacks against each one with a red-team model, sends them, and has a
+  detector model judge which ones landed.
 
-## Quickstart
+### Defenders
 
-### Run Agent Hardener on your own agent
+- **Guardrails defender:** reads each attack's NeMo Relay trace and writes a guardrail on the tool call that
+  did the harm.
+- **OpenShell policy defender:** turns attacks that made the agent reach the network into a tighter OpenShell
+  sandbox network policy.
 
-The easy path. Describe your Relay-connected agent in a thin `agent-hardener.yaml` manifest, then run. Agent Hardener
-builds your agent into an OpenShell sandbox, starts any host backends, runs the hardening loop
-(the garak attacker spawns the `garak` CLI directly), and cleans up. Only your agent runs inside
-the sandbox; backends/DBs stay on the host.
+### Validators
+
+- **Attack replay:** sends every landed attack again to the hardened agent and checks it is now blocked.
+- **Benign validator:** sends a suite of normal requests and checks the agent still answers them.
+
+### Victim control
+
+Agent Hardener builds your agent's image into an OpenShell sandbox, starts any host backends it needs, applies
+policy updates, uploads guardrails, and restarts the agent between stages. Only your agent runs inside the
+OpenShell sandbox; backends stay on the host.
+
+## Setup
+
+Follow the [setup guide](docs/SETUP.md) for step-by-step instructions. In summary, you need:
+
+- **Docker:** runs the OpenShell sandbox that holds your agent. Docker Desktop, or Colima on macOS.
+- **OpenShell:** creates and controls the OpenShell sandbox.
+- **NeMo Helix:** the NeMo platform that hosts Agent Hardener.
+- **Credentials:** an API key for your model provider, in a `.env` file.
+- **Agent Hardener:** the `agent-hardener` CLI, plus a one-time `agent-hardener setup`.
+
+## Quickstart: run directly
+
+Clone the repository and run Agent Hardener on its example agent: a small LangGraph agent with two tools,
+`bash_executor` and `python_executor`, that run inside the OpenShell sandbox. It is connected to NeMo Relay and
+needs no backends.
 
 ```bash
-just setup                        # one-time: Docker/OpenShell checks, credentials, deps
-uv run agent-hardener init            # scaffold agent-hardener.yaml (auto-detects your agent project),
-                                  #   garak-scan.yaml, and .env.example
-                                  #   prompts for port (default 8000); pass --port <N> to skip the prompt
-# ...fill in .env with your keys...
-uv run agent-hardener synth-benign    # generate the benign test suite (brings the sandbox up, interviews
-                                  #   you, writes requests.csv, tears down); --reuse/--no-cleanup available
-uv run agent-hardener run --benign-suite <path/to/requests.csv>   # build, harden, replay + validate, report
+git clone https://github.com/NVIDIA-NeMo/agent-hardener.git
+cd agent-hardener
+just install                     # dependencies, the garak environment and the OpenShell gateway
+
+cd examples/langgraph-victim
+echo "INFERENCE_API_KEY=<your provider key>" > .env
+
+uv run agent-hardener synth-benign
+uv run agent-hardener run --benign-suite .agent-hardener/benign_profiles/langgraph-victim/requests.csv
 ```
 
-`run` is a pure consumer: it validates against the suite you pass and never generates one — use
-`synth-benign` (or the `serve` HITL) to produce it. By default a manifest runs the smart benign validator, so `run`
-needs `--benign-suite` (or `benign_suite_path` in the manifest); without one it stops before building
-anything and prints the `synth-benign` command to run first.
+- `synth-benign` brings the agent up in the OpenShell sandbox, asks you a few questions about what it is for,
+  writes a suite of normal requests to `requests.csv`, and tears the OpenShell sandbox down. Pass
+  `--no-interactive` to skip the questions; the suite is then built from rules only and is smaller.
+- `run` builds the OpenShell sandbox, attacks the agent, hardens it, replays the attacks, runs the benign suite,
+  prints a summary, and cleans up. The attack stage alone takes about 10–12 minutes on the example agent.
 
-A manifest is about ten lines. `examples/agent-hardener.yaml` is the annotated version, built around the
-LangGraph victim bundled in `examples/langgraph-victim/`:
+Both commands read `agent-hardener.yaml` and `.env` from the current directory. To use a provider other than
+NVIDIA Build, add its settings first: see [Model providers](#model-providers).
+
+## Quickstart: run through NeMo Helix
+
+NeMo Helix runs Agent Hardener as a platform plugin, from the Studio UI or the `nemo agent-hardener` CLI. From a
+NeMo Helix checkout, run it on Helix's example agent, `react-agent`:
+
+```bash
+export INFERENCE_API_KEY=<your provider key>
+
+# Start the platform
+uv run nemo services run --service-group all --controllers models,jobs \
+  --host 0.0.0.0 --port 8080 > /tmp/nemo-helix.log 2>&1 &
+
+# Give it a model provider
+printf '%s' "$INFERENCE_API_KEY" | \
+  uv run nemo secrets create nvidia-inference-key --from-file - --workspace default
+uv run nemo inference providers create nvidia-inference --workspace default \
+  --host-url "https://inference-api.nvidia.com/v1" --api-key-secret-name nvidia-inference-key
+
+# Register the example agent, with a model name from `uv run nemo models list --workspace default`
+export NEMO_DEFAULT_MODEL=<model name>
+uv run nemo agents register --name react-agent \
+  --agent-config plugins/nemo-agents/examples/react-agent/react-agent.yml
+
+# Harden it
+uv run nemo agent-hardener setup
+uv run nemo agent-hardener doctor
+uv run nemo agent-hardener init --agent react-agent
+uv run nemo agent-hardener synth-benign --manifest-id react-agent
+uv run nemo agent-hardener run --manifest-id react-agent
+```
+
+To use the UI instead, open `http://localhost:8080/studio/`, go to **Safety → Agent Hardening**, create a
+manifest for `react-agent`, and click **Run war-game**.
+
+See the [NeMo Helix Agent Hardener guide](https://github.com/NVIDIA-NeMo/nemo-helix/blob/main/plugins/nemo-agent-hardener/README.md)
+for the full walkthrough.
+
+## Configuration
+
+### Model providers
+
+Agent Hardener works with any OpenAI-compatible endpoint. The three providers below were each tested with one
+full hardening run (`synth-benign`, then `run --rounds 1`) against the bundled example agent, using Nemotron
+models throughout.
+
+| Provider | Base URL | Attack, analysis and judge model | Example agent's model | Attacks landed | Blocked after hardening | Benign requests OK |
+|---|---|---|---|---|---|---|
+| NVIDIA Build | `https://integrate.api.nvidia.com/v1` | `nvidia/nemotron-3-ultra-550b-a55b` (default) | `nvidia/nemotron-3.5-lightning-30b-a3b` (default) | 8 / 24 | 8 / 8 | 5 / 5 |
+| NVIDIA Inference | `https://inference-api.nvidia.com/v1` | `nvidia/nvidia/nemotron-3-ultra` | `nvidia/nvidia/nemotron-3.5-super-vl` | 10 / 25 | 10 / 10 | 6 / 6 |
+| OpenRouter | `https://openrouter.ai/api/v1` | `nvidia/nemotron-3-ultra-550b-a55b` | `nvidia/nemotron-3-ultra-550b-a55b` | 8 / 23 | 8 / 8 | 6 / 6 |
+
+Results are from one run per provider (2026-11-26, agent-hardener `741b3ec`, OpenShell 0.1.4, garak 0.17.0).
+
+The attack, analysis and agent model groups must all point at the same provider. Your shell's environment never
+reaches the OpenShell sandbox, so your agent's own model must be set under `agent.env` in the manifest.
+
+#### NVIDIA Build
+
+The defaults already point at Build, so only the key is needed. Use a key that can call chat models; some Build
+keys can list models but are refused on chat calls.
+
+```bash
+# .env
+INFERENCE_API_KEY=nvapi-...
+```
+
+#### NVIDIA Inference
+
+Model IDs on this endpoint carry a double `nvidia/nvidia/` prefix, and the key starts with `sk-`.
+
+```bash
+# .env
+INFERENCE_API_KEY=sk-...
+AGENT_HARDENER_BASE_URL=https://inference-api.nvidia.com/v1
+AGENT_HARDENER_MODEL=nvidia/nvidia/nemotron-3-ultra
+GARAK_RED_TEAM_MODEL_URI=https://inference-api.nvidia.com/v1/
+GARAK_RED_TEAM_MODEL_NAME=nvidia/nvidia/nemotron-3-ultra
+GARAK_DETECTOR_MODEL_URI=https://inference-api.nvidia.com/v1/
+GARAK_DETECTOR_MODEL_NAME=nvidia/nvidia/nemotron-3-ultra
+```
+
+```yaml
+# agent-hardener.yaml
+agent:
+  env:
+    INFERENCE_BASE_URL: "https://inference-api.nvidia.com/v1"
+    INFERENCE_MODEL: "nvidia/nvidia/nemotron-3.5-super-vl"
+```
+
+#### OpenRouter
+
+Ultra is the only Nemotron model available on OpenRouter, so it serves both the Agent Hardener model groups and
+the example agent.
+
+```bash
+# .env
+INFERENCE_API_KEY=sk-or-...
+AGENT_HARDENER_BASE_URL=https://openrouter.ai/api/v1
+AGENT_HARDENER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
+GARAK_RED_TEAM_MODEL_URI=https://openrouter.ai/api/v1/
+GARAK_RED_TEAM_MODEL_NAME=nvidia/nemotron-3-ultra-550b-a55b
+GARAK_DETECTOR_MODEL_URI=https://openrouter.ai/api/v1/
+GARAK_DETECTOR_MODEL_NAME=nvidia/nemotron-3-ultra-550b-a55b
+```
+
+```yaml
+# agent-hardener.yaml
+agent:
+  env:
+    INFERENCE_BASE_URL: "https://openrouter.ai/api/v1"
+    INFERENCE_MODEL: "nvidia/nemotron-3-ultra-550b-a55b"
+```
+
+## Run on your own agent
+
+### The manifest
+
+`agent-hardener init` scaffolds an `agent-hardener.yaml` manifest for your agent project:
+
+```bash
+agent-hardener inspect --project-dir ../my-agent    # read-only: what Agent Hardener detects
+agent-hardener init --project-dir ../my-agent       # writes agent-hardener.yaml and garak-scan.yaml
+```
+
+A manifest is about ten lines:
 
 ```yaml
 agent:
-  name: langgraph-victim
-  project_dir: langgraph-victim              # relative to this manifest's directory
+  name: my-agent
+  project_dir: ../my-agent                   # relative to this manifest's directory
   dockerfile: Dockerfile                     # relative to project_dir
   start_command: /usr/local/bin/python /app/server.py
-  binaries: ["/usr/local/bin/python*"]
-  harness: langgraph
+  binaries: ["/usr/local/bin/python*"]      # processes allowed to reach the network
   port: 8000
-  secrets: [INFERENCE_API_KEY]
-# backends:                                  # host services the agent's tools call (the example needs none)
+  secrets: [INFERENCE_API_KEY]               # names of variables in .env passed to your agent
+  env:                                       # other variables your agent needs in the OpenShell sandbox
+    INFERENCE_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b
+# backends:                                  # host services your agent's tools call
 #   - name: ledger
 #     compose_file: services/ledger/docker-compose.yaml
 #     health_url: http://127.0.0.1:8086/health
 #     ports: [8086]
-#   - name: ledger-remote                    # a service that is not on this host: only the route is opened
-#     host: ledger.ns.svc
-#     ports: [8087]
-#     allowed_ips: [10.96.0.0/12]            # private ranges OpenShell would otherwise block
 ```
 
-The minimum a user must supply: `agent.project_dir`, `agent.dockerfile` (your image), `agent.start_command`
-(how it launches in the sandbox), `agent.binaries` (globs of the processes allowed to egress), and
-`agent.secrets` (env-var names pulled from `.env`). Agent Hardener hardens the agent you ship, so it does
-not build one for you; the agent must be connected to NeMo Relay (see `examples/agent-hardener.yaml`).
-Everything else — gateway, sandbox, policy, the attacker/defender/validator suite — is defaulted (override via an `overrides:`
-block or a full session config). Useful commands: `uv run agent-hardener run --rounds N`, `--no-cleanup`,
-`uv run agent-hardener synth-benign` (generate/refresh the benign suite), `uv run agent-hardener up|down|status`.
+Required fields: `project_dir`, `dockerfile`, `start_command`, `binaries` and `secrets`. Agent Hardener scans
+your project for the hosts your agent calls and allows them; add any it cannot find under `agent.egress`.
+[examples/agent-hardener.yaml](examples/agent-hardener.yaml) documents every field.
 
-On a host without Docker, `uv run agent-hardener stage` writes the victim's build context and prints its
-directory. Build and push that directory with any image builder, then pass the result to
-`run --victim-image <ref>` (also accepted by `up` and `synth-benign`). The image must come from the `stage`
-output of the same manifest and agent-hardener version you run with: `run` re-stages the context to derive
-the sandbox policy and launch environment. `stage` stamps a digest of the context into the image, and
-`up`, `run` and `synth-benign` warn (but carry on) when the image's digest is missing or differs.
+### What your agent needs
 
-Garak's agent_breaker probe is run from a `garak-scan.yaml` config that `init` scaffolds and
-`run` regenerates with the resolved victim endpoint. To tune it (models, victim port, attempts), add a
-`garak:` block to the manifest or edit the scaffold — see [Garak agent_breaker](#garak-agent_breaker).
+- **A NeMo Relay connection.** Attach the Relay middleware and activate the Relay plugin at startup
+  (`nemo_relay.plugin.activate(PluginConfig())`, as in the example's `server.py`). Without it the run stops before attacking, because guardrails could not take effect.
+- **An HTTP endpoint.** OpenAI-compatible `/v1/chat/completions` works with no configuration.
+- **An image that runs in the OpenShell sandbox:**
+  - a `sandbox` user and group, and `iproute2`
+  - a writable `/etc/nemo-relay/`, where each round's guardrails are uploaded
+  - everything `start_command` needs on the default `PATH`, because image `ENV` is not applied in the OpenShell sandbox.
+    Use a wrapper script, not a symlink, for a venv's Python.
+  - no `SSL_CERT_FILE` set in the image: it replaces OpenShell's certificate authority and every model call
+    fails.
+- **Its model settings under `agent.env`.** Image `ENV` and your shell's variables do not reach the OpenShell sandbox.
 
+[examples/langgraph-victim/](examples/langgraph-victim/) is a worked example of all of the above.
 
-## Repository Layout
-
-```text
-agent_hardener/
-  orchestrator.py                    Main session loop
-  adapters.py                        In-process, HTTP, and victim-control adapters
-  agents/
-    attackers/agent_breaker/         Garak agent_breaker attacker + config builder
-    defenders/                       OpenShell policy and guardrails defenders
-    validators/                      Attack replay and benign validators
-    victims/                         OpenShell victim helpers
-  openshell/                         OpenShell lifecycle and policy repair code
-  templates/relay-victim/            Packaged assets: default/permissive OpenShell policies,
-                                     seed Relay plugins.toml + repair profile
-  tools/                             CLI helpers and run summaries
-
-examples/
-  agent-hardener.yaml                Annotated manifest for your own agent
-  langgraph-victim/                  Worked LangGraph victim image
-
-tests/
-  agent_hardener/                        Unit, integration, pipeline E2E, smoke tests
-  fixtures/pipeline_e2e/             Minimal deterministic E2E fixture
-```
-
-## Prerequisites
-
-For local development and deterministic tests:
-
-- Python 3.11
-- `uv`
-- `just`
-- `git`
-- Bash and standard coreutils
-
-For the real OpenShell/Garak demo:
-
-- OpenShell compute driver access: Docker, Podman, Kubernetes, or the local macOS VM driver
-- `curl`
-- OpenShell CLI
-- The `garak` CLI (installed into a dedicated venv at `~/.agent-hardener/garak-venv` by `agent-hardener setup`, run for you by `just install`; see [Garak agent_breaker](#garak-agent_breaker))
-- NVIDIA-compatible inference credentials
-- A GitHub token and test repository for the research-agent workflow
-- Free port `8000` (the victim agent)
-- Optional free observability ports `4318` and `6006`
-- Optional `jq` for artifact inspection examples
-
-## Environment Setup
-
-Install OpenShell and verify the local gateway:
+### Generate the benign suite
 
 ```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh
-openshell status
+agent-hardener synth-benign
 ```
 
-> **Upgrading from OpenShell 0.0.x**
->
-> Agent Hardener targets OpenShell 0.1.4. OpenShell 0.1.0 is a breaking release, and the installer refuses to upgrade a 0.0.x install in place. On macOS:
->
-> 1. Delete every 0.0.x sandbox: `openshell sandbox delete --all --gateway <name>` for each registered gateway. 0.0.x sandboxes cannot run under 0.1.
-> 2. Uninstall: `brew services stop nvidia/openshell/openshell && brew uninstall nvidia/openshell/openshell`. Also remove any stray `openshell` / `openshell-gateway` binaries left in `/opt/homebrew/bin` or `~/.local/bin`; the installer stops if it finds a 0.0.x binary on the path.
-> 3. Remove the old state: `$(brew --prefix)/var/openshell` and `~/.local/state/openshell`. A 0.0.x gateway database there crashes the 0.1 gateway at startup.
-> 4. Install with the command above, then run `uv run agent-hardener setup` to configure the Docker driver and register the `auto-defender` gateway.
->
-> On Linux, use `systemctl --user disable --now openshell-gateway` and your package manager in place of the Homebrew commands, and remove `~/.local/state/openshell`.
+It brings your agent up, asks what the agent is for, generates normal requests, checks them against the live
+agent, and writes `.agent-hardener/benign_profiles/<agent name>/requests.csv`. `run` needs this file. Rerun
+`synth-benign` when your agent's behaviour changes.
 
-Do not use `uv tool install -U openshell` for the real E2E path. That installs the CLI only; it does not install or start the local OpenShell gateway service. The native installer installs the CLI plus the gateway service. On macOS and current Linux packages, the local service listens on `https://127.0.0.1:17670` and the installer registers it as the `openshell` gateway.
-
-If you previously installed the CLI with `uv tool install`, it may shadow the native package binary on `PATH`. Remove it with `uv tool uninstall openshell`, or verify that `openshell --version` and the native package version match before running the E2E.
-
-On macOS, configure the gateway to use the Docker driver. `uv run agent-hardener setup` does this for you. To do it by hand, write `~/.config/openshell/gateway.toml` with Docker's socket path (from `docker context inspect --format '{{.Endpoints.docker.Host}}'`, without the `unix://` prefix), then run `brew services restart nvidia/openshell/openshell`:
-
-```toml
-[openshell]
-version = 2
-
-[openshell.gateway]
-compute_driver = "docker"
-
-[openshell.drivers.docker]
-socket_path = "/Users/<you>/.docker/run/docker.sock"
-grpc_endpoint = "https://host.docker.internal:17670"
-```
-
-`grpc_endpoint` is required under Docker Desktop. The driver runs each sandbox's supervisor with host networking, and there that "host" is Docker Desktop's VM, so the gateway's `127.0.0.1` listener is unreachable. Without it, every sandbox fails with `ControlSupervisorStartFailed`. The `OPENSHELL_DRIVERS` / `DOCKER_HOST` launchctl variables used with 0.0.x are deprecated.
-
-The Docker driver runs sandboxes as containers inside Docker Desktop's VM. Avoid the VM driver on macOS — the VM driver uses Homebrew's `e2fsprogs` to create an ext4 rootfs, and the version installed by Homebrew creates a filesystem with features the OpenShell base VM kernel cannot mount read-only.
-
-The final status should report `Status: Connected`. If you plan to use the example config unchanged, also register the same endpoint as `auto-defender`:
+### Run the hardening loop
 
 ```bash
-openshell gateway add https://127.0.0.1:17670 --local --name auto-defender
-openshell status --gateway auto-defender
+agent-hardener run --benign-suite .agent-hardener/benign_profiles/<agent name>/requests.csv
 ```
 
-Install dependencies:
-
-```bash
-just install
-```
-
-`just install` runs `uv sync` (installs agent-hardener's dependencies), provisions the dedicated garak venv (via `agent-hardener setup`), then installs pre-commit hooks. Run it before the main wrapper so `.venv/bin/python3` exists. The wrapper should be run from the repository root. Advanced users can override the interpreter with `PROJECT_PYTHON=/path/to/python`.
-
-garak is **not** an agent-hardener dependency: it pins `litellm -> httpx>=0.28` plus `torch`, which conflict with this project's dependencies. agent-hardener never imports garak — it spawns the garak CLI from a separate venv at `~/.agent-hardener/garak-venv`, provisioned by `agent-hardener setup` (`just garak-venv` is a thin wrapper around it). Override the interpreter with `AGENT_HARDENER_GARAK_PYTHON=/path/to/python`. This is what keeps agent-hardener itself pip-installable with no dependency override.
-
-To work with a custom garak fork instead of the PyPI release, overlay it as an editable install into that venv:
-
-```bash
-just garak-dev /path/to/garak                 # editable overlay into ~/.agent-hardener/garak-venv
-rm -rf ~/.agent-hardener/garak-venv && just garak-venv   # revert to the PyPI version
-```
-
-Create a local `.env` file. Do not commit it.
-
-```bash
-cat > .env <<EOF
-INFERENCE_API_KEY=...
-NIM_API_KEY=...
-VLLM_API_KEY=dummy
-GITHUB_TOKEN=...
-GITHUB_REPOSITORY=owner/repo
-EOF
-```
-
-Notes:
-
-- `INFERENCE_API_KEY` is used by the victim workflow and policy/guardrail model calls.
-- `NIM_API_KEY` is used by Garak detector and judge paths when configured.
-- `GITHUB_TOKEN` should be scoped to a test repository. The research workflow can read issues and write issue comments.
-- `VLLM_API_KEY` can be `dummy` when not used by your runtime.
-
-### Choosing models
-
-Agent Hardener has three model groups, each with a built-in default you can override:
-
-| Group | Covers | Default | Override |
-| --- | --- | --- | --- |
-| Attack | garak red-team + detector | `nvidia/nemotron-3-ultra-550b-a55b` | the `garak:` block or `GARAK_*` env (see [Garak agent_breaker](#garak-agent_breaker)) |
-| Analysis | defenders + benign validator (both synth suite-generation and judging) | `nvidia/nemotron-3-ultra-550b-a55b` | `AGENT_HARDENER_MODEL` / `AGENT_HARDENER_BASE_URL` (the shared lever), or the validator's per-component `config` |
-| Safety | the guardrail judge that runs inside the victim | the analysis model | the guardrails defender's `safety_llm` (model); `AGENT_HARDENER_SAFETY_BASE_URL` / `AGENT_HARDENER_SAFETY_API_KEY` (endpoint and key, else the analysis ones) |
-| Agent | the victim's own LLM | your agent's code | configured inside your agent |
-
-The **analysis** lever is a single pair of env vars that retargets every default-model caller (both
-defenders and the benign validator) at once:
-
-```bash
-export AGENT_HARDENER_MODEL=nvidia/nemotron-3-ultra-550b-a55b
-export AGENT_HARDENER_BASE_URL=https://integrate.api.nvidia.com/v1
-```
-
-**Which value wins.** For `AGENT_HARDENER_MODEL` and `AGENT_HARDENER_BASE_URL`, highest priority first:
-
-1. An explicit value in code or config (for example the validator's per-component `model` / `base_url`).
-2. A variable already set in the process environment (for example `export` in your shell, or injected by CI).
-3. The `--env-file` value (default `.env`, loaded on every command). The file only fills variables that are unset
-   or empty, so a shell export overrides it. When an export differs from the file, the command prints a warning
-   naming the variable (never its value).
-4. The built-in default (`nvidia/nemotron-3-ultra-550b-a55b`, `https://integrate.api.nvidia.com/v1`). An empty value also falls through to the default.
-
-The same order applies to `INFERENCE_API_KEY`, except it has no built-in default. If the warning shows a stale
-export, `unset` it to use the file.
-
-Before a run, `agent-hardener run` preflights any model you overrode (`AGENT_HARDENER_MODEL` or
-`GARAK_RED_TEAM_MODEL_NAME`) against its endpoint and fails fast — listing the models the credentials
-can reach — if the name, URL, or key is wrong, so a typo costs seconds instead of a full sandbox build.
-
-## OpenShell Gateway Config
-
-The OpenShell gateway for the run is configured in YAML at `victim_control.config.gateway`. The example config uses `auto-defender`:
-
-```yaml
-victim_control:
-  type: openshell
-  config:
-    gateway: auto-defender
-```
-
-To use a different gateway, copy or edit the config and change that field. The wrapper prepares loop-specific configs from the YAML, so keep the YAML as the source of truth. The `--gateway` wrapper flag is only for final diagnostic `openshell sandbox list` and `openshell forward list` output.
-
-If you use the default local gateway created by the OpenShell native installer, either change the YAML gateway to `openshell` or register the same local endpoint under the example name:
-
-```bash
-openshell gateway add https://127.0.0.1:17670 --local --name auto-defender
-openshell status --gateway auto-defender
-```
-
-The second command must report `Status: Connected` before running the E2E.
-
-## Garak agent_breaker
-
-Agent Hardener runs garak's **agent_breaker** probe by invoking the `garak` CLI directly — there is no
-Scan API/REST server. garak runs from its own venv (`~/.agent-hardener/garak-venv`, provisioned by
-`agent-hardener setup`), not agent-hardener's, so its heavy/conflicting deps stay out of agent-hardener's
-closure. agent-hardener resolves the interpreter from `$AGENT_HARDENER_GARAK_PYTHON` (else the default
-venv), or you can set `$GARAK_COMMAND` for a full custom invocation. Confirm garak is present with:
-
-```bash
-~/.agent-hardener/garak-venv/bin/python -m garak --list-probes | grep agent_breaker
-```
-
-How a run works:
-
-1. `agent-hardener init` scaffolds an editable `garak-scan.yaml` (a standard garak `--config` file).
-2. On each `agent-hardener run`, the attacker loads that scaffold, overlays the resolved victim endpoint
-   (and the report destination), and writes `.agent-hardener/run-logs/garak-agent-breaker.resolved.yaml`.
-3. It spawns `garak --config <resolved>.yaml`, then reads the report/hitlog garak writes under
-   `report_dir` (default `.agent-hardener/garak_runs`). Logs go to `.agent-hardener/run-logs/garak-agent-breaker.log`.
-
-The probe auto-discovers the victim's tools (no `agent.yaml` needed). Edits you make to
-`garak-scan.yaml` (e.g. model settings) survive; only the target `uri` and reporting keys are
-overwritten each run.
-
-### Override fields
-
-Add a `garak:` block to the manifest (or set the matching field in a full session config's attacker
-`config`). All fields are optional; model-related fields also read a `GARAK_<FIELD>` env var.
-
-| Field | Default | Env override | Purpose |
-|-------|---------|--------------|---------|
-| `config_path` | `garak-scan.yaml` | — | Scaffold config the attacker overlays onto |
-| `report_dir` | `.agent-hardener/garak_runs` | — | Where garak writes report/hitlog (the final log scans here) |
-| `report_prefix` | `agent-breaker` | — | Filename prefix for this run's artifacts |
-| `target_uri` | victim base_url | — | Full victim chat-completions URL (wins over `target_port`) |
-| `target_port` | victim port | — | Override just the port on the victim URL |
-| `red_team_model_type` | `nim.NVOpenAIChat` | `GARAK_RED_TEAM_MODEL_TYPE` | Red-team (attack) model generator type |
-| `red_team_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_RED_TEAM_MODEL_NAME` | Red-team model name |
-| `red_team_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_RED_TEAM_MODEL_URI` | Red-team model endpoint |
-| `detector_model_type` | `nim` | `GARAK_DETECTOR_MODEL_TYPE` | Detector (judge) model generator type |
-| `detector_model_name` | `nvidia/nemotron-3-ultra-550b-a55b` | `GARAK_DETECTOR_MODEL_NAME` | Detector model name |
-| `detector_model_uri` | `https://integrate.api.nvidia.com/v1/` | `GARAK_DETECTOR_MODEL_URI` | Detector model endpoint |
-| `model_timeout` | `600` | `GARAK_MODEL_TIMEOUT` | Client timeout, in seconds, on each red-team or detector model request (a timed-out request may be retried) |
-| `max_attempts_per_tool` | `5` | `GARAK_MAX_ATTEMPTS_PER_TOOL` | Exploit attempts per discovered tool |
-| `generations` | `1` | `GARAK_GENERATIONS` | garak `run.generations` |
-
-`GARAK_COMMAND` overrides the base garak invocation (default `garak`; e.g. `python -m garak`).
-
-Example manifest block (attack a victim on a different port with a custom judge model):
-
-```yaml
-garak:
-  target_port: 9001
-  detector_model_name: nvidia/nemotron-3-ultra-550b-a55b
-  max_attempts_per_tool: 8
-```
-
-The detector model settings the replay validator uses are seeded from these same defaults, so the
-default inference endpoint and model live in one place.
-
-## Tests
-
-Fast deterministic tests:
-
-```bash
-just test-fast
-```
-
-Full local test suite:
-
-```bash
-just test
-```
-
-Run the logical pipeline E2E only:
-
-```bash
-just test-pipeline-e2e
-```
-
-That test runs the real orchestrator with real defenders, mocked external model/HTTP boundaries, fake OpenShell command execution, attack replay, benign validation, and artifact assertions.
-
-Optional real OpenShell smoke E2E:
-
-```bash
-AGENT_HARDENER_RUN_OPEN_SHELL_SMOKE=1 \
-uv run pytest tests/agent_hardener/test_openshell_smoke_e2e.py -q -o addopts=""
-```
-
-Use this only when Docker/OpenShell are available and the gateway is healthy. It creates a small real OpenShell sandbox and verifies policy update, workflow update, validators, and report output.
-
-Lint and format:
-
-```bash
-uv run ruff check .
-uv run ruff format --check .
-```
-
-## E2E Readiness
-
-Before running the real OpenShell/Garak cycle, confirm:
-
-- Docker daemon is reachable: `docker info`
-- OpenShell CLI and gateway are available: `openshell status --gateway auto-defender`
-- The `auto-defender` gateway is registered and connected
-- `.env` exists with real values for every name listed under `agent.secrets` in your manifest
-- The `garak` CLI is installed (`uv run garak --list-probes | grep agent_breaker`)
-- The victim's port (`agent.port`, default `8000`) is free
-
-## Run The Main OpenShell/Garak Cycle
-
-The main operator command is:
-
-```bash
-uv run agent-hardener run \
-  --config agent-hardener.yaml \
-  --env-file .env \
-  --no-cleanup
-```
-
-What this does:
-
-1. Loads `.env`.
-2. Prepares a per-round directory under `.agent-hardener/run-logs/<run-id>/round_<N>/`.
-3. Renders the per-round garak config; the agent_breaker attacker spawns the `garak` CLI when it runs.
-4. Runs the OpenShell policy defender and guardrails defender in parallel.
-5. Applies the candidate policy with `openshell policy set`.
-6. Uploads the candidate Relay `plugins.toml` (the guardrails) into the sandbox.
-7. Restarts the victim agent and waits for health.
-8. Replays attack hits and, when a benign suite is supplied via `--benign-suite`, the benign requests.
-9. Writes artifacts and a final summary.
-
-Useful run controls:
-
-```text
---rounds N         Carry generated policy and guardrails forward across N hardening rounds.
---replay           Skip live attackers; replay hits from the latest run instead. Their recorded attack
-                   traces are loaded; attacks with none are sent to the agent once to record them.
---with-traces PATH With --replay: load the attack traces from PATH instead.
---reuse            Skip sandbox rebuild if it is already running; a --victim-image sandbox is reused as-is.
---victim-image     Create the sandbox from a pre-built image (see `agent-hardener stage`) instead of docker build.
---no-cleanup       Leave sandbox running after the run.
---verbose          Show raw output and full report detail.
-```
-
-Results are written under:
-
-```text
-.agent-hardener/run-logs/<run-id>/
-```
-
-The most important artifacts are:
-
-```text
-round_<N>/attacks.json        Attack records for the round
-round_<N>/attack_traces.json  What the victim did for each attack, read from Relay
-round_<N>/report.json         The round's full machine-readable report (attacks, defenders, victim-control, validators)
-round_<N>/round.log           Human-readable round log
-round_<N>/events.jsonl        Structured event log for the round
-mitigations.json              The run's before/after policy and guardrails
-validation.json              Final per-item attack and benign validation results
-events.jsonl                  Structured event log for the whole run
-```
-
-## Check That A Run Really Updated The Sandbox
-
-After a successful run, inspect the deploy result in the round report:
-
-```bash
-jq ".iterations[] | {ok: .victim_control.ok, summary: .victim_control.summary, error: .victim_control.error}" \
-  .agent-hardener/run-logs/<run-id>/round_1/report.json
-```
-
-`ok` must be `true` for every iteration. `mitigations.json` in the run directory shows the policy and
-guardrails the run ended with.
-
-Inspect the live sandbox directly. Find its name with `openshell sandbox list --gateway auto-defender`
-(it is `ah-<agent-name>-<digest>`), then check the active policy and the guardrails the victim loaded:
-
-```bash
-openshell sandbox get <sandbox> --gateway auto-defender --policy-only
-openshell sandbox exec --gateway auto-defender --name <sandbox> --no-tty -- cat /etc/nemo-relay/plugins.toml
-```
-
-Check victim health (use `agent.port` from your manifest):
-
-```bash
-curl -i http://127.0.0.1:8000/health
-```
-
-## OpenShell Helpers
-
-The OpenShell tool wrapper can manage the configured sandbox directly:
-
-```bash
-uv run python -m agent_hardener.tools.openshell ensure-provider --config agent-hardener.yaml
-uv run python -m agent_hardener.tools.openshell up              --config agent-hardener.yaml
-uv run python -m agent_hardener.tools.openshell status          --config agent-hardener.yaml
-uv run python -m agent_hardener.tools.openshell restart         --config agent-hardener.yaml
-uv run python -m agent_hardener.tools.openshell down            --config agent-hardener.yaml
-```
-
-For a fresh service host:
-
-```bash
-./scripts/bootstrap-openshell-victim.sh --config agent-hardener.yaml --smoke-chat
-```
-
-or:
-
-```bash
-just openshell-bootstrap --config agent-hardener.yaml --smoke-chat
-```
-
-`just openshell-reset --config agent-hardener.yaml` recreates that manifest's sandbox and provider from scratch.
-It leaves every other sandbox on the gateway alone.
-
-## Replaying Saved Attacks Versus Live Attacks
-
-By default `run` uses the live garak attacker, which generates fresh attacks (it runs the `garak` CLI and calls
-the configured red-team/detector models).
-
-For faster defender iteration with saved evidence, replay a previous run's hits instead:
-
-```bash
-uv run agent-hardener run --replay                      # the latest run's hitlog
-uv run agent-hardener run --replay path/to/hitlog.jsonl # a specific hitlog
-```
-
-Replay skips the attacker. It is faster and more deterministic; live attacks are slower but exercise the real
-attacker path.
-
-## Cleanup
-
-Project cleanup:
-
-```bash
-just clean
-```
-
-Docker/OpenShell cleanup should be careful. Start with:
-
-```bash
-docker builder prune
-docker image prune
-```
-
-For old unused images only:
-
-```bash
-docker image prune -a --filter "until=24h"
-```
-
-Avoid `docker system prune -a --volumes` while debugging unless you intentionally want broad cleanup.
-
-## Current Stable Check
-
-Before merging a refactor, run:
-
-```bash
-just test-fast
-just test-pipeline-e2e
-uv run pytest -q -o addopts=""
-```
-
-For OpenShell changes, also run the main cycle once and confirm:
-
-```text
-report.success = true
-victim-control ok = true (in round_<N>/report.json)
-attack validation = blocked all original hits
-benign validation = all requests complied
-```
+| Flag | Use |
+|---|---|
+| `--rounds N` | Number of hardening rounds (default 1) |
+| `--config PATH` | Manifest to use (default `agent-hardener.yaml`) |
+| `--env-file PATH` | Credentials file (default `.env`) |
+| `--no-cleanup` | Leave the OpenShell sandbox and backends up for inspection |
+| `--reuse` | Skip the rebuild when a matching OpenShell sandbox is already running |
+| `--replay [PATH]` | Skip the attacker and replay the last run's attacks |
+| `--victim-image REF` | Use a pre-built image instead of building one (see below) |
+| `--debug` | Print every log record to the console |
+
+To control the OpenShell sandbox by hand: `agent-hardener up`, `agent-hardener status`, `agent-hardener down`.
+
+On a host without Docker, `agent-hardener stage` writes your agent's build context and prints its directory.
+Build and push that directory with any image builder, then pass the image to `run --victim-image <ref>`. The
+image must come from the `stage` output of the same manifest and Agent Hardener version.
+
+## Reading the results
+
+At the end of a run Agent Hardener prints a summary: the attacks that landed, the defenses each defender wrote,
+how many replayed attacks were blocked, and how many benign requests still passed. Everything it wrote is under
+`.agent-hardener/` in the working directory; `<run>` below is `.agent-hardener/run-logs/<run id>`.
+
+| What | Where | What's in it |
+|---|---|---|
+| Run log | `<run>/agent-hardener.log` | Everything the run did, including build and OpenShell output. Each command also writes a complete log, printed as `→ log: <path>` when it ends. |
+| Generated benign suite | `.agent-hardener/benign_profiles/<agent name>/requests.csv` | The normal requests the agent must keep answering, with the profile and interview they came from beside it |
+| Landed attacks | `<run>/round_<N>/attacks.json` | The attacks garak sent in that round and which ones landed; garak's own report and hitlog are in `round_<N>/garak/` |
+| Attack traces | `<run>/round_<N>/attack_traces.json` | What each attack made the agent do, step by step, from NeMo Relay. The guardrails defender works from these, and they show whether a landed attack was real or a false positive. |
+| Generated defenses | `<run>/mitigations.json` | The OpenShell sandbox policy and the guardrails before and after hardening |
+| Validation results | `<run>/validation.json` | For each replayed attack, whether it was blocked, and for each benign request, whether it still passed |
+| Round report | `<run>/round_<N>/report.json` | One round's attacks and defense iterations together; useful when a run has more than one round |
+| Hardened image | `<run>/hardened-image/` | A Dockerfile that layers the run's guardrails onto your agent's image, plus the hardened OpenShell sandbox policy and a README on deploying it |
+
+To deploy the hardened image, give it the key named by `api_key_env` in its `plugins.toml`, normally
+`AGENT_HARDENER_SAFETY_API_KEY`. Without that key the guardrail judge fails and every tool call is allowed.
+
+## Troubleshooting
+
+Every classified failure prints a category, a message and a suggested fix. Common ones:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `model_unavailable` before the OpenShell sandbox builds | Wrong model name, base URL or key | Check the values against [Model providers](#model-providers) |
+| HTTP 401 or 403 from a model during the run | A stale `NIM_API_KEY` or `AGENT_HARDENER_SAFETY_API_KEY`, or a Build key that cannot call chat models | Unset the stale variable, or use a key that can call chat models |
+| `unrecognized subcommand`, or gRPC `UNIMPLEMENTED` from OpenShell | OpenShell older than v0.1.4 | Upgrade OpenShell; see the [setup guide](docs/SETUP.md) |
+| `sandbox` error, gateway not connected | Docker is not running, or the gateway was not set up | Start Docker, then rerun `agent-hardener setup` |
+| `victim_unavailable` at build | Wrong `project_dir` or Dockerfile, or the image is missing what the OpenShell sandbox needs | See [What your agent needs](#what-your-agent-needs) |
+| `victim_not_instrumented` | The agent is not connected to NeMo Relay | Attach the Relay middleware and activate the Relay plugin |
+| Every model call from the agent fails, but health checks pass | `SSL_CERT_FILE` is set in the image | Remove it from the image |
+| `benign_suite_failed` | `run` was started without a benign suite | Run `agent-hardener synth-benign` and pass `--benign-suite` |
+| `no_attacks_generated` | The red-team model returned an empty attack plan | Rerun |
+| `garak_crashed` or `attacker_failed` after a timeout | The agent did not answer an attack within garak's limit | Rerun; lower `garak.max_attempts_per_tool` for a slow agent |
+| A model change has no effect | A shell export overrides `.env`, or `garak-scan.yaml` sets the model | `unset` the export; edit or delete `garak-scan.yaml` |
+| An OpenShell sandbox is still running after `--no-cleanup` or an interrupted run | Cleanup was skipped | `agent-hardener down` |
+
+For more, see the [troubleshooting reference](agent_hardener/skills/agent-hardener/references/troubleshooting.md).
