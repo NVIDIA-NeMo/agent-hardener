@@ -134,5 +134,5 @@ printf 'build: %s (%s) from %s\n' "${TAG}" "${PLATFORM}" "${HELIX}"
 docker buildx build --load --platform "${PLATFORM}" -f "${HERE}/helix-room/Dockerfile" --build-context ahd="${HERE}" \
   --build-arg "AH_ROOM_IMAGE=${BASE}" --build-arg "AH_ROOM_BUILD=${RECORD}" "${LABELS[@]}" -t "${TAG}" "${HELIX}"
 
-docker run --rm --entrypoint cat "${TAG}" /usr/local/share/ah-room/versions.json
+"${HERE}/helix-room/ah-room" version --image "${TAG}"
 printf 'build: done: %s\n' "${TAG}"

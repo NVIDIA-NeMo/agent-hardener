@@ -64,6 +64,10 @@ def source(path: Path, repo: str, ref: str) -> dict[str, str | bool]:
     }
 
 
+def now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
 def actor(repo: Path) -> str:
     """Who is building or publishing: AH_ROOM_BUILT_BY, the GitHub Actions run, else REPO's git user.email."""
     if os.environ.get("AH_ROOM_BUILT_BY"):
@@ -84,7 +88,7 @@ def cmd_build(args: argparse.Namespace) -> None:
     record = {
         "image": args.image,
         "platform": args.platform,
-        "built": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "built": now(),
         "built_by": actor(Path(args.room)),
         "agent_hardener": {"version": version, **source(ah, args.ah_repo, args.ah_ref)},
         "nemo_helix": source(Path(args.helix), args.helix_repo, args.helix_ref),

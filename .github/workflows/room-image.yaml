@@ -87,7 +87,7 @@ jobs:
         {
           docker image ls "${image}" --format '{{.Repository}}:{{.Tag}} {{.Size}}'
           printf '\n```json\n'
-          docker run --rm --entrypoint cat "${image}" /usr/local/share/ah-room/versions.json
+          agent-hardener/docker/helix-room/ah-room version --image "${image}"
           printf '```\n'
         } >> "${GITHUB_STEP_SUMMARY}"
         df -h /
