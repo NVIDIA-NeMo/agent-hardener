@@ -3,7 +3,7 @@
 Agent Hardener is a swarm of attacker and defender agents that finds vulnerabilities in a given agent and
 patches them dynamically. Attacker agents probe your agent's tools and record every attack that lands. Defender
 agents turn each landed attack into a fix, either a guardrail on the tool call that did the harm or a tighter
-sandbox policy, and apply it to the running agent. Validator agents then replay the same attacks to confirm
+OpenShell sandbox policy, and apply it to the running agent. Validator agents then replay the same attacks to confirm
 they are blocked and check that normal requests still work. At the end you get a report and a hardened copy of
 your agent's image.
 
@@ -25,7 +25,7 @@ That makes a few things your responsibility.
 - **Only test agents you own or are authorised to test.** The tool aims real attacks at whatever endpoint you
   point it at.
 - **Point the agent at test backends, not production ones.** During a run the agent is under active attack and
-  may be induced to call its tools in ways you did not intend. The sandbox restricts egress to the backends you
+  may be induced to call its tools in ways you did not intend. The OpenShell sandbox restricts egress to the backends you
   declare in the manifest, so declare test doubles, not the real thing.
 - **A manifest is trusted input.** It names a Dockerfile and compose files that Agent Hardener builds and runs on
   your machine. Running a manifest you did not write is running that person's code.
@@ -59,7 +59,7 @@ defenders work from.
 ### Defenders
 
 - **OpenShell policy defender:** turns attacks that made the agent reach the network into changes to the
-  sandbox's network policy. Attacks that stay inside the sandbox, such as local shell commands, give it nothing
+  OpenShell sandbox's network policy. Attacks that stay inside the OpenShell sandbox, such as local shell commands, give it nothing
   to act on.
 - **Traces guardrails defender:** reads each attack's execution trace from NeMo Relay, finds the tool call that
   did the harm, and writes a guardrail for that tool. At run time, a safety judge model inside the agent checks
@@ -74,7 +74,7 @@ defenders work from.
 
 Agent Hardener builds your agent's image into an OpenShell sandbox, starts any host backends it needs, applies
 policy updates, uploads guardrails, and restarts the agent between stages. Only your agent runs inside the
-sandbox; backends stay on the host.
+OpenShell sandbox; backends stay on the host.
 
 ## Prerequisites
 
@@ -94,8 +94,8 @@ To work on Agent Hardener itself you also need `uv`, `just` and `git`.
 
 Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summary, you need:
 
-- **Docker:** runs the sandbox that holds your agent. Docker Desktop, or Colima on macOS.
-- **OpenShell:** creates and controls that sandbox.
+- **Docker:** runs the OpenShell sandbox that holds your agent. Docker Desktop, or Colima on macOS.
+- **OpenShell:** creates and controls the OpenShell sandbox.
 - **NeMo Helix:** the NeMo platform that hosts Agent Hardener.
 - **Credentials:** an API key for your model provider, in a `.env` file.
 - **Agent Hardener:** the `agent-hardener` CLI, plus a one-time `agent-hardener setup`.
@@ -103,7 +103,7 @@ Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summar
 ## Quickstart: run on the example agent
 
 The repository includes a small LangGraph agent with two tools, `bash_executor` and `python_executor`, that run
-inside the sandbox. It is connected to NeMo Relay and needs no backends.
+inside the OpenShell sandbox. It is connected to NeMo Relay and needs no backends.
 
 ```bash
 git clone https://github.com/NVIDIA-NeMo/agent-hardener.git
@@ -114,10 +114,10 @@ agent-hardener synth-benign
 agent-hardener run --benign-suite .agent-hardener/benign_profiles/langgraph-victim/requests.csv
 ```
 
-- `synth-benign` brings the agent up in the sandbox, asks you a few questions about what it is for, writes a
-  suite of normal requests to `requests.csv`, and tears the sandbox down. Pass `--no-interactive` to skip the
+- `synth-benign` brings the agent up in the OpenShell sandbox, asks you a few questions about what it is for, writes a
+  suite of normal requests to `requests.csv`, and tears the OpenShell sandbox down. Pass `--no-interactive` to skip the
   questions; the suite is then built from rules only and is smaller.
-- `run` builds the sandbox, attacks the agent, hardens it, replays the attacks, runs the benign suite, prints a
+- `run` builds the OpenShell sandbox, attacks the agent, hardens it, replays the attacks, runs the benign suite, prints a
   summary, and cleans up. The attack stage alone takes about 10–12 minutes on the example agent.
 
 Both commands read `agent-hardener.yaml` and `.env` from the current directory. To use a provider other than
@@ -180,7 +180,7 @@ models throughout.
 Results are from one run per provider (2026-11-26, agent-hardener `741b3ec`, OpenShell 0.1.4, garak 0.17.0).
 
 The attack, analysis and agent model groups must all point at the same provider. Your shell's environment never
-reaches the sandbox, so your agent's own model must be set under `agent.env` in the manifest.
+reaches the OpenShell sandbox, so your agent's own model must be set under `agent.env` in the manifest.
 
 #### NVIDIA Build
 
@@ -298,7 +298,7 @@ agent:
   binaries: ["/usr/local/bin/python*"]      # processes allowed to reach the network
   port: 8000
   secrets: [INFERENCE_API_KEY]               # names of variables in .env passed to your agent
-  env:                                       # other variables your agent needs in the sandbox
+  env:                                       # other variables your agent needs in the OpenShell sandbox
     INFERENCE_MODEL: nvidia/nemotron-3.5-lightning-30b-a3b
 # backends:                                  # host services your agent's tools call
 #   - name: ledger
@@ -316,14 +316,14 @@ your project for the hosts your agent calls and allows them; add any it cannot f
 - **A NeMo Relay connection.** Attach the Relay middleware and activate the Relay plugin at startup
   (`nemo_relay.plugin.activate(PluginConfig())`, as in the example's `server.py`). Without it the run stops before attacking, because guardrails could not take effect.
 - **An HTTP endpoint.** OpenAI-compatible `/v1/chat/completions` works with no configuration.
-- **An image that runs in the sandbox:**
+- **An image that runs in the OpenShell sandbox:**
   - a `sandbox` user and group, and `iproute2`
   - a writable `/etc/nemo-relay/`, where each round's guardrails are uploaded
-  - everything `start_command` needs on the default `PATH`, because image `ENV` is not applied in the sandbox.
+  - everything `start_command` needs on the default `PATH`, because image `ENV` is not applied in the OpenShell sandbox.
     Use a wrapper script, not a symlink, for a venv's Python.
   - no `SSL_CERT_FILE` set in the image: it replaces OpenShell's certificate authority and every model call
     fails.
-- **Its model settings under `agent.env`.** Image `ENV` and your shell's variables do not reach the sandbox.
+- **Its model settings under `agent.env`.** Image `ENV` and your shell's variables do not reach the OpenShell sandbox.
 
 [examples/langgraph-victim/](examples/langgraph-victim/) is a worked example of all of the above.
 
@@ -348,13 +348,13 @@ agent-hardener run --benign-suite .agent-hardener/benign_profiles/<agent name>/r
 | `--rounds N` | Number of hardening rounds (default 1) |
 | `--config PATH` | Manifest to use (default `agent-hardener.yaml`) |
 | `--env-file PATH` | Credentials file (default `.env`) |
-| `--no-cleanup` | Leave the sandbox and backends up for inspection |
-| `--reuse` | Skip the rebuild when a matching sandbox is already running |
+| `--no-cleanup` | Leave the OpenShell sandbox and backends up for inspection |
+| `--reuse` | Skip the rebuild when a matching OpenShell sandbox is already running |
 | `--replay [PATH]` | Skip the attacker and replay the last run's attacks |
 | `--victim-image REF` | Use a pre-built image instead of building one (see below) |
 | `--debug` | Print every log record to the console |
 
-To control the sandbox by hand: `agent-hardener up`, `agent-hardener status`, `agent-hardener down`.
+To control the OpenShell sandbox by hand: `agent-hardener up`, `agent-hardener status`, `agent-hardener down`.
 
 On a host without Docker, `agent-hardener stage` writes your agent's build context and prints its directory.
 Build and push that directory with any image builder, then pass the image to `run --victim-image <ref>`. The
@@ -376,7 +376,7 @@ how many replayed attacks were blocked, and how many benign requests still passe
 | OpenShell command logs | `.agent-hardener/openshell-logs/` |
 
 The **hardened image bundle** is a Dockerfile that layers the run's guardrails (`plugins.toml`) onto your image,
-plus the hardened sandbox policy (`openshell-policy.yaml`) and a README on deploying it. The guardrail judge
+plus the hardened OpenShell sandbox policy (`openshell-policy.yaml`) and a README on deploying it. The guardrail judge
 inside the image needs the key named by `api_key_env` in `plugins.toml`, normally
 `AGENT_HARDENER_SAFETY_API_KEY`. Without that key the judge fails and every tool call is allowed.
 
@@ -386,17 +386,17 @@ Every classified failure prints a category, a message and a suggested fix. Commo
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `model_unavailable` before the sandbox builds | Wrong model name, base URL or key | Check the values against [Model providers](#model-providers) |
+| `model_unavailable` before the OpenShell sandbox builds | Wrong model name, base URL or key | Check the values against [Model providers](#model-providers) |
 | HTTP 401 or 403 from a model during the run | A stale `NIM_API_KEY` or `AGENT_HARDENER_SAFETY_API_KEY`, or a Build key that cannot call chat models | Unset the stale variable, or use a key that can call chat models |
 | `unrecognized subcommand`, or gRPC `UNIMPLEMENTED` from OpenShell | OpenShell older than v0.1.4 | Upgrade OpenShell; see the [setup guide](docs/setup.md) |
 | `sandbox` error, gateway not connected | Docker is not running, or the gateway was not set up | Start Docker, then rerun `agent-hardener setup` |
-| `victim_unavailable` at build | Wrong `project_dir` or Dockerfile, or the image is missing what the sandbox needs | See [What your agent needs](#what-your-agent-needs) |
+| `victim_unavailable` at build | Wrong `project_dir` or Dockerfile, or the image is missing what the OpenShell sandbox needs | See [What your agent needs](#what-your-agent-needs) |
 | `victim_not_instrumented` | The agent is not connected to NeMo Relay | Attach the Relay middleware and activate the Relay plugin |
 | Every model call from the agent fails, but health checks pass | `SSL_CERT_FILE` is set in the image | Remove it from the image |
 | `benign_suite_failed` | `run` was started without a benign suite | Run `agent-hardener synth-benign` and pass `--benign-suite` |
 | `no_attacks_generated` | The red-team model returned an empty attack plan | Rerun |
 | `garak_crashed` or `attacker_failed` after a timeout | The agent did not answer an attack within garak's limit | Rerun; lower `garak.max_attempts_per_tool` for a slow agent |
 | A model change has no effect | A shell export overrides `.env`, or `garak-scan.yaml` sets the model | `unset` the export; edit or delete `garak-scan.yaml` |
-| A sandbox is still running after `--no-cleanup` or an interrupted run | Cleanup was skipped | `agent-hardener down` |
+| An OpenShell sandbox is still running after `--no-cleanup` or an interrupted run | Cleanup was skipped | `agent-hardener down` |
 
 For more, see the [troubleshooting reference](agent_hardener/skills/agent-hardener/references/troubleshooting.md).
