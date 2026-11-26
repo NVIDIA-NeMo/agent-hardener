@@ -17,10 +17,17 @@ import httpx
 
 from agent_hardener.agents.chat_http import response_body_or_text
 from agent_hardener.endpoint import EndpointContract
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.rate_limits import raise_for_rate_limit_response
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    from agent_hardener.agents.validators.garak_replay.error_streak import ErrorStreak
+
+
+#: Every victim 5xx counts as the same error, whatever its body, so a run of them trips an :class:`ErrorStreak`.
+VICTIM_5XX = "the victim returned HTTP 5xx"
 
 
 class ReplayHTTPConfig(Protocol):
@@ -53,7 +60,11 @@ async def replay_prompt(
     error_excerpt: Callable[[str], str],
     session_id: str | None = None,
 ) -> ReplayResult:
-    """Replay a prompt against a victim endpoint and normalize the response."""
+    """Replay a prompt against a victim endpoint and normalize the response.
+
+    Raises :class:`VictimUnavailableError` on a 5xx (after the client's retries); the caller decides with
+    :func:`count_victim_5xx` whether it is one prompt's error or the end of the run.
+    """
     if not config.replay_url:
         msg = "validator replay_url is not configured and target.base_url is empty"
         raise ValueError(msg)
@@ -67,6 +78,8 @@ async def replay_prompt(
     raise_for_rate_limit_response(response, source=rate_limit_source)
     body = response_body_or_text(response)
     text = contract.extract_text(body)
+    if response.status_code >= 500:
+        raise VictimUnavailableError(f"victim replay returned HTTP {response.status_code}: {error_excerpt(str(body))}")
     if response.status_code >= 400:
         raise httpx.HTTPStatusError(
             f"victim replay returned HTTP {response.status_code}: {error_excerpt(str(body))}",
@@ -74,6 +87,13 @@ async def replay_prompt(
             response=response,
         )
     return ReplayResult(ok=True, text=text, status_code=response.status_code, body=body)
+
+
+def count_victim_5xx(streak: ErrorStreak, exc: VictimUnavailableError) -> str:
+    """Count one prompt's victim 5xx and return its error; raise once ``streak.limit`` prompts in a row got one."""
+    if streak.record_error(VICTIM_5XX):
+        raise VictimUnavailableError(f"{streak.abort_reason}; last: {exc}") from exc
+    return str(exc)
 
 
 def contract_from(config: ReplayHTTPConfig) -> EndpointContract:

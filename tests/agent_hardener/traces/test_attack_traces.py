@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 import types
 from datetime import UTC, datetime, timedelta
@@ -158,7 +159,7 @@ def _round(config: SessionConfig, provider: FakeTraceProvider | None) -> bool:
 def test_the_round_records_the_attack_traces_and_hands_each_defender_its_trace(tmp_path: Path) -> None:
     provider = _provider()
     assert _round(_config(tmp_path), provider)
-    assert provider.calls == 2
+    assert provider.calls == 4  # the attack window's two reads, then the validation stage's two
     (entry,) = load_recording(tmp_path / ATTACK_TRACES_FILENAME)
     assert entry.trace.trace_id == "live"  # the stale attempt before the anchor is not picked
     assert [inp.attack_trace.trace_id for inp in CAPTURED] == ["live"]
@@ -172,7 +173,7 @@ def test_no_provider_or_no_live_attackers_records_nothing(tmp_path: Path) -> Non
     provider = _provider()
     (tmp_path / "replay").mkdir()
     _round(_config(tmp_path / "replay", live=False), provider)
-    assert provider.calls == 0
+    assert provider.calls == 2  # only the validation stage's window: no attack traces are recorded
 
 
 class BrokenProvider(FakeTraceProvider):
@@ -184,3 +185,27 @@ def test_a_failing_provider_never_fails_the_round(tmp_path: Path) -> None:
     assert _round(_config(tmp_path), BrokenProvider())
     assert not (tmp_path / ATTACK_TRACES_FILENAME).exists()
     assert [inp.attack_trace for inp in CAPTURED] == [None]
+
+
+def test_hits_that_match_no_trace_are_counted_and_warned_about(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The victim recorded a request, but not the one the attacker sent: the match loses every hit.
+    other = _trace("other", "an unrelated request", "moved", at=10)
+    provider = FakeTraceProvider(batches=[[], [other]])
+
+    with caplog.at_level(logging.WARNING):
+        assert _round(_config(tmp_path), provider)
+
+    assert "0 of 1 attack hits matched a victim trace (1 traces fetched, 1 in the attack window)" in caplog.text
+    written = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+        if '"artifact_written"' in line and ATTACK_TRACES_FILENAME in line
+    ]
+    assert {key: written[0][key] for key in ("count", "hits", "fetched", "in_window")} == {
+        "count": 0,
+        "hits": 1,
+        "fetched": 1,
+        "in_window": 1,
+    }

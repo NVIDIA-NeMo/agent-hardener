@@ -11,10 +11,9 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.errors import VictimPortInUseError, VictimUnavailableError
+from agent_hardener.errors import SandboxProvisioningError, VictimPortInUseError, VictimUnavailableError
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.runtime import runner
-from agent_hardener.runtime.runner import MissionError
 
 if TYPE_CHECKING:
     from conftest import BuildMission
@@ -74,10 +73,10 @@ def test_a_backend_that_fails_to_start_surfaces_the_error_and_stops_the_run(buil
     harness = build_mission(backends=("db",), no_cleanup=True)
     harness.backends.up_result = _failed("port in use")
 
-    with pytest.raises(MissionError, match="backend startup failed"):
+    with pytest.raises(SandboxProvisioningError, match="backend startup failed:\nport in use") as caught:
         harness.run()
 
-    assert "port in use" in harness.lines
+    assert "docker compose logs" in caught.value.remediation
     assert harness.lifecycle.calls == []
 
 
@@ -171,10 +170,9 @@ def test_a_sandbox_that_fails_to_start_surfaces_its_output_and_is_never_trusted_
     failed = build_mission(no_cleanup=True)
     failed.lifecycle.up_result = _failed("docker build failed")
 
-    with pytest.raises(MissionError, match="OpenShell sandbox failed to start"):
+    with pytest.raises(SandboxProvisioningError, match="victim sandbox failed to start:\ndocker build failed"):
         failed.run()
 
-    assert "docker build failed" in failed.lines
     retried = build_mission(skip_initial_up=True, no_cleanup=True)
     retried.run()
     assert any(_REBUILDING in line for line in retried.lines)
@@ -186,11 +184,12 @@ def test_a_long_failed_build_shows_only_its_tail_and_keeps_all_of_it_in_the_run_
     failed = build_mission(no_cleanup=True)
     failed.lifecycle.up_result = _failed("\n".join(f"layer {i}" for i in range(40)))
 
-    with pytest.raises(MissionError):
+    with pytest.raises(SandboxProvisioningError) as caught:
         failed.run()
 
-    (shown,) = [line for line in failed.lines if "layer 39" in line]
-    assert shown.splitlines()[0] == "… 25 other line(s) in the log"
+    shown = str(caught.value)
+    assert shown.splitlines()[1] == "… 25 other line(s) in the log"
+    assert "layer 39" in shown
     assert "layer 24" not in shown
     assert "layer 0" in failed.run_log
 
@@ -264,7 +263,7 @@ def test_the_relay_probe_hits_the_victim_and_syncs_the_atof_log_from_the_sandbox
 ) -> None:
     atof = Path("relay/events.atof.jsonl") if relative else tmp_path / "abs" / "events.atof.jsonl"
     _FakeHttpClient.posts = []
-    monkeypatch.setattr(runner.httpx, "AsyncClient", _FakeHttpClient)
+    monkeypatch.setattr(runner, "victim_client", _FakeHttpClient)
     seen: dict[str, Any] = {}
 
     async def fake_check(*, probe: Any, atof_path: Path, sync: Any) -> Any:

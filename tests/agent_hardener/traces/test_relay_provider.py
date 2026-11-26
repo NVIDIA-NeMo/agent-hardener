@@ -127,6 +127,30 @@ def test_a_canned_blocked_answer_or_a_latch_mark_sets_guardrail_latched() -> Non
     assert not build_traces(load_records(REAL_STREAM))[0].guardrail_latched
 
 
+def test_judge_error_marks_are_counted_on_their_request_by_tool() -> None:
+    def judge_error(parent: str) -> dict:
+        data = {"guardrail": "g", "tool_name": "transfer_funds", "error": "AuthenticationError"}
+        return {
+            "atof_version": "0.1",
+            "kind": "mark",
+            "name": "agent_hardener.judge_error",
+            "parent_uuid": parent,
+            "data": data,
+        }
+
+    records = [
+        _scope("start", "agent", "r1", "p", "00"),
+        _scope("start", "tool", "t1", "r1", "01", name="transfer_funds"),
+        judge_error("t1"),
+        _scope("end", "tool", "t1", "r1", "02"),
+        _scope("end", "agent", "r1", "p", "03"),
+        _scope("start", "agent", "r2", "p", "04"),
+        _scope("end", "agent", "r2", "p", "05"),
+    ]
+    first, second = build_traces(records)
+    assert (first.judge_error_tools, second.judge_error_tools) == (["transfer_funds"], [])
+
+
 def test_nested_scopes_belong_to_their_request_and_text_parts_are_joined() -> None:
     records = [
         _scope(

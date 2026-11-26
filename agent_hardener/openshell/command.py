@@ -19,7 +19,13 @@ import tempfile
 import time
 from typing import TYPE_CHECKING
 
-from agent_hardener.openshell.config import OpenShellCommandResult, SubprocessCommandRunner
+from agent_hardener.errors import SETUP_HINT, SandboxProvisioningError
+from agent_hardener.openshell.config import (
+    OpenShellCommandResult,
+    SubprocessCommandRunner,
+    command_label,
+    timeout_message,
+)
 from agent_hardener.openshell.support import safe_path_token
 
 if TYPE_CHECKING:
@@ -28,6 +34,20 @@ if TYPE_CHECKING:
     from agent_hardener.openshell.config import CommandRunner, OpenShellConfig
 
 logger = logging.getLogger("agent_hardener.session")
+
+
+def openshell_not_found(openshell_bin: str) -> SandboxProvisioningError:
+    """The classified error for an OpenShell CLI that is not installed where ``openshell_bin`` points."""
+    return SandboxProvisioningError(
+        f"OpenShell CLI not found: {openshell_bin!r} is not an executable on PATH.",
+        remediation=f"Install the OpenShell CLI, or set openshell_bin to its path. {SETUP_HINT}",
+    )
+
+
+def _raise_if_missing_binary(exc: OSError, command: list[str]) -> None:
+    # A missing cwd raises FileNotFoundError too; only the executable's own name means "not installed".
+    if isinstance(exc, FileNotFoundError) and exc.filename == command[0]:
+        raise openshell_not_found(command[0]) from exc
 
 
 class OpenShellCommandExecutor:
@@ -46,14 +66,14 @@ class OpenShellCommandExecutor:
             if error is not None:
                 logger.info(
                     "openshell command failed op=%s duration_seconds=%.3f error=%s",
-                    _command_label(args),
+                    command_label(args),
                     duration,
                     error,
                 )
-                return OpenShellCommandResult(ok=False, command=command, output=str(error))
+                return OpenShellCommandResult(ok=False, command=command, output=error)
             logger.info(
                 "openshell command completed op=%s ok=%s exit_code=%s duration_seconds=%.3f",
-                _command_label(args),
+                command_label(args),
                 completed.returncode == 0,
                 completed.returncode,
                 duration,
@@ -66,6 +86,7 @@ class OpenShellCommandExecutor:
                 else self.runner.run(command, cwd=self.config.cwd)
             )
         except OSError as exc:
+            _raise_if_missing_binary(exc, command)
             return OpenShellCommandResult(ok=False, command=command, output=str(exc))
         return OpenShellCommandResult.from_completed(command, completed)
 
@@ -78,14 +99,14 @@ class OpenShellCommandExecutor:
             if error is not None:
                 logger.info(
                     "openshell logged command failed op=%s duration_seconds=%.3f error=%s",
-                    _command_label(args),
+                    command_label(args),
                     duration,
                     error,
                 )
-                return OpenShellCommandResult(ok=False, command=command, output=str(error))
+                return OpenShellCommandResult(ok=False, command=command, output=error)
             logger.info(
                 "openshell logged command completed op=%s ok=%s exit_code=%s duration_seconds=%.3f log=%s",
-                _command_label(args),
+                command_label(args),
                 completed.returncode == 0,
                 completed.returncode,
                 duration,
@@ -113,13 +134,13 @@ class OpenShellCommandExecutor:
 
     def _run_to_file(
         self, command: list[str], *, log_file: Path | None, env: dict[str, str] | None = None
-    ) -> tuple[subprocess.CompletedProcess[str] | None, str, float, OSError | None]:
+    ) -> tuple[subprocess.CompletedProcess[str] | None, str, float, str | None]:
         """Run ``command`` capturing stdout+stderr to a stream, avoiding inherited-pipe hangs.
 
         With ``log_file`` the output is written to that stable path (with a command header) and the
         returned captured text is empty (callers tail the file); without it, output is captured in a
         tempfile and returned. Returns ``(completed, captured_text, duration_seconds, error)`` where
-        exactly one of ``completed`` / ``error`` is set.
+        exactly one of ``completed`` / ``error`` is set; a command past ``command_timeout_s`` is an error.
         """
         started_at = time.monotonic()
         try:
@@ -135,6 +156,7 @@ class OpenShellCommandExecutor:
                         text=True,
                         stdout=stream,
                         stderr=subprocess.STDOUT,
+                        timeout=self.config.command_timeout_s,
                     )
                 captured = ""
             else:
@@ -147,11 +169,15 @@ class OpenShellCommandExecutor:
                         text=True,
                         stdout=stream,
                         stderr=subprocess.STDOUT,
+                        timeout=self.config.command_timeout_s,
                     )
                     stream.seek(0)
                     captured = stream.read()
         except OSError as exc:
-            return None, "", time.monotonic() - started_at, exc
+            _raise_if_missing_binary(exc, command)
+            return None, "", time.monotonic() - started_at, str(exc)
+        except subprocess.TimeoutExpired:
+            return None, "", time.monotonic() - started_at, timeout_message(command, self.config.command_timeout_s)
         return completed, captured, time.monotonic() - started_at, None
 
     def _tail_file(self, path: Path, line_count: int = 80, max_chars: int = 12000) -> str:
@@ -164,8 +190,3 @@ class OpenShellCommandExecutor:
         if len(tail) > max_chars:
             tail = tail[-max_chars:]
         return tail
-
-
-def _command_label(args: list[str]) -> str:
-    """Return a short non-secret command label for timing logs."""
-    return " ".join(args[:3]) if args else "<empty>"

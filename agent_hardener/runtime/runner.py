@@ -26,24 +26,22 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.validators.smart_benign import synthesize
 from agent_hardener.agents.victims.openshell_victim import contract_for
 from agent_hardener.atof import load_records, requested_tools
 from agent_hardener.bundle import write_hardened_bundle
-from agent_hardener.display.console import failure_excerpt, line_text
+from agent_hardener.display.console import line_text
 from agent_hardener.display.final.render_plain import render_final_run_log
 from agent_hardener.display.final.render_rich import print_final_summary
-from agent_hardener.errors import AgentHardenerError, AtofSyncError, BenignSuiteError, VictimUnavailableError
+from agent_hardener.errors import AtofSyncError, BenignSuiteError, VictimUnavailableError
 from agent_hardener.events import EventType
 from agent_hardener.final_log.mitigations import build_mitigations
 from agent_hardener.final_log.validation_summary import build_validation
 from agent_hardener.ids import generate_round_id
 from agent_hardener.loggers import FILE_ONLY, EventBus, capture_run_log, emit_event, using_event_sink
 from agent_hardener.models import AgentRunInput, RelayVictimSpec
-from agent_hardener.openshell._forward import port_in_use_error
-from agent_hardener.openshell.lifecycle import OpenShellLifecycle
+from agent_hardener.openshell.lifecycle import OpenShellLifecycle, SubprocessCommandRunner
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.preflight.relay import (
     RELAY_PROBE_PROMPT,
@@ -67,6 +65,7 @@ from agent_hardener.swarm_tracker import (
 from agent_hardener.tools.openshell import (
     openshell_config,
     prepare_relay_victim,
+    startup_error,
     target_health_url,
     wait_for_health,
 )
@@ -80,16 +79,12 @@ if TYPE_CHECKING:
     from agent_hardener.traces import TraceProvider
 
 
+_BACKEND_REMEDIATION = "Check the Docker daemon and the backends' compose services (`docker compose logs`), then retry."
+
+
 async def _no_interview_answers(_questions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Default answer provider: supply nothing (non-interactive runs never interrupt anyway)."""
     return []
-
-
-class MissionError(AgentHardenerError):
-    """Raised when an infrastructure step (sandbox/backend) fails mid-run."""
-
-    category = "sandbox"
-    default_remediation = "Check the Docker daemon, the OpenShell gateway, and any host backends, then retry."
 
 
 @dataclass
@@ -126,6 +121,22 @@ def _log_event(event: str, payload: dict[str, Any]) -> None:
 def _is_smart_benign(agent: AgentConfig) -> bool:
     """True when a benign validator is backed by the smart benign package."""
     return (agent.implementation or "").startswith(SMART_BENIGN_IMPL_PREFIX)
+
+
+def recorded_victim_image(session_config: SessionConfig, config: OpenShellConfig) -> str | None:
+    """The image recorded for this sandbox, when no image is configured and the agent has not changed since.
+
+    A ``--reuse`` of a Ready sandbox adopts it instead of building, so a host without Docker can reuse a
+    sandbox it created from a pre-built image.
+    """
+    if config.image is not None:
+        return None
+    cwd = config.cwd or Path.cwd()
+    recorded = read_victim_image(cwd, config.sandbox)
+    if recorded is None:
+        return None
+    fingerprint = _agent_fingerprint(session_config, replace(config, image=recorded))
+    return recorded if _read_fingerprint(agent_fingerprint_path(cwd, config.sandbox)) == fingerprint else None
 
 
 def _agent_fingerprint(session_config: SessionConfig, openshell_config: OpenShellConfig) -> str:
@@ -297,7 +308,12 @@ class Mission:
         self._openshell_uploader, self._relay_uploader = build_uploaders(cfg.victim_control, self._lifecycle)
         self._backend_specs = list(self._base_config.relay_victim.backends) if self._base_config.relay_victim else []
         self._backend_cwd = self._base_config.cwd or Path.cwd()
-        self._backend_manager = BackendManager() if self._backend_specs else None
+        # `compose up --build` is bounded by the same command_timeout_s as the sandbox image build.
+        self._backend_manager = (
+            BackendManager(SubprocessCommandRunner(self._base_config.command_timeout_s))
+            if self._backend_specs
+            else None
+        )
 
     def _recorded_victim_image(self) -> str | None:
         """The pre-built image the running sandbox was created from, when ``--victim-image`` is not repeated.
@@ -306,19 +322,7 @@ class Mission:
         sandbox down, and fall into a local ``docker build`` on the very host that has no Docker. Adopted only
         while the recorded fingerprint still matches, so a changed agent is rebuilt from the configured source.
         """
-        if self._base_config.image is not None:
-            return None
-        cwd = self._base_config.cwd or Path.cwd()
-        recorded = read_victim_image(cwd, self._base_config.sandbox)
-        if recorded is None:
-            return None
-        adopted = replace(self._base_config, image=recorded)
-        fingerprint = _agent_fingerprint(self.ctx.session_config, adopted)
-        return (
-            recorded
-            if _read_fingerprint(agent_fingerprint_path(cwd, self._base_config.sandbox)) == fingerprint
-            else None
-        )
+        return recorded_victim_image(self.ctx.session_config, self._base_config)
 
     def _open_sinks(self, sinks: contextlib.ExitStack) -> None:
         """Wire the per-run agent-hardener.log capture and the multicast structured-event bus onto *sinks*."""
@@ -363,12 +367,6 @@ class Mission:
             payload["elapsed"] = round(elapsed, 3)
         emit_event(EventType.OUTPUT, payload)
 
-    def _announce_failure_output(self, output: str) -> None:
-        """Show the error lines of a failed build/compose blob (:func:`failure_excerpt`); the log has all of it."""
-        self._detail(output, console=False)
-        if excerpt := failure_excerpt(output):
-            self._announce(excerpt, level="output")
-
     @contextlib.contextmanager
     def _status(self, label: str) -> Iterator[None]:
         """Bracket a blocking step with ``status_started``/``status_completed`` events (a spinner)."""
@@ -393,8 +391,8 @@ class Mission:
         with self._timed() as elapsed, self._status("Starting backends"):
             backend_up = self._backend_manager.up(self._backend_specs, self._backend_cwd)
         if not backend_up.ok:
-            self._announce_failure_output(backend_up.output)  # the real error: shown even by default
-            raise MissionError("backend startup failed")
+            self._detail(backend_up.output, console=False)
+            raise startup_error("backend startup failed", backend_up.output, remediation=_BACKEND_REMEDIATION)
         self._detail(backend_up.output)
         self._announce("Backends ready", level="ok", elapsed=elapsed())
 
@@ -425,8 +423,8 @@ class Mission:
             with self._timed() as elapsed, self._status("Building and starting sandbox"):
                 result = self._lifecycle.up(None)
             if not result.ok:
-                self._announce_failure_output(result.output)  # the real error: shown even by default
-                raise port_in_use_error(result.output) or MissionError("OpenShell sandbox failed to start")
+                self._detail(result.output, console=False)
+                raise startup_error("the victim sandbox failed to start", result.output)
             self._detail(result.output)
             self._announce("Sandbox ready", level="ok", elapsed=elapsed())
             self._announce(f"sandbox {self._base_config.sandbox}", level="detail")
@@ -436,8 +434,8 @@ class Mission:
             # health check and Relay probe below reach whatever else does, and pass or fail on its behalf.
             result = self._lifecycle.ensure_forward()
             if not result.ok:
-                self._announce_failure_output(result.output)
-                raise port_in_use_error(result.output) or MissionError("the reused sandbox's port forward failed")
+                self._detail(result.output, console=False)
+                raise startup_error("the reused sandbox's port forward failed", result.output)
             self._announce("Reusing the running sandbox (agent fingerprint matches)", level="ok")
         drift = self._lifecycle.image_context_drift()
         if drift:
@@ -473,7 +471,7 @@ class Mission:
         contract = contract_for(self.ctx.session_config.target.base_url, self.ctx.session_config.victim)
 
         async def probe() -> Any:
-            async with httpx.AsyncClient(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
+            async with victim_client(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
                 return await client.post(
                     contract.url, json=contract.request_payload(RELAY_PROBE_PROMPT), headers=contract.headers()
                 )

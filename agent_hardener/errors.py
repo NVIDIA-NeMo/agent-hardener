@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Path the caller sets for a structured failure dump; unset for an interactive run.
 ERROR_FILE_ENVVAR = "AGENT_HARDENER_ERROR_FILE"
 
+#: The remediation tail for a host prerequisite that ``agent-hardener setup`` provisions or checks.
+SETUP_HINT = "Run `agent-hardener setup`, then retry."
+
 
 class AgentHardenerError(RuntimeError):
     """Base for a classified, operator-facing war-game failure.
@@ -42,6 +45,26 @@ class AgentHardenerError(RuntimeError):
     def __init__(self, message: str, *, remediation: str | None = None) -> None:
         super().__init__(message)
         self.remediation = self.default_remediation if remediation is None else remediation
+
+
+class ConfigError(AgentHardenerError):
+    """A file or command the run was configured with is missing on this host.
+
+    Raised before the sandbox build (an explicit ``--env-file``, a backend compose file, the garak
+    interpreter), so a typo fails in seconds instead of minutes into a run.
+    """
+
+    category = "config"
+    default_remediation = "Fix the path in the manifest or on the command line, then retry."
+
+
+class SetupError(AgentHardenerError):
+    """``agent-hardener setup`` could not provision a prerequisite (the garak venv)."""
+
+    category = "setup"
+    default_remediation = (
+        "Fix the cause above (often network or proxy access to PyPI), then run `agent-hardener setup --force`."
+    )
 
 
 class SandboxProvisioningError(AgentHardenerError):
@@ -95,7 +118,7 @@ class VictimNotInstrumentedError(AgentHardenerError):
 
     category = "victim_not_instrumented"
     default_remediation = (
-        "Attach NeMo Relay to the agent (middleware + nemo_relay.plugin.initialize() at startup) "
+        "Attach NeMo Relay to the agent (middleware + nemo_relay.plugin.activate() held open for the process's life) "
         "and confirm it writes events.atof.jsonl to the configured artifacts directory."
     )
 
@@ -125,6 +148,47 @@ class AttackerIneffectiveError(AgentHardenerError):
     default_remediation = (
         "Make the attacks target the victim's tools: check that the attacker sees the victim's tool "
         "descriptions, or raise attack_intensity (garak.max_attempts_per_tool)."
+    )
+
+
+class DefendersFailedError(AgentHardenerError):
+    """No defender produced a mitigation, so there is nothing new to deploy or validate.
+
+    Validating the unchanged victim would report the attacks still landing, which reads as weak
+    defenders rather than defenders that never ran.
+    """
+
+    category = "defenders_failed"
+    default_remediation = (
+        "Check the defenders' model endpoint and key, and the per-defender errors in the round log, then retry."
+    )
+
+
+class DefendersNotApplicableError(AgentHardenerError):
+    """Every defender abstained: this round's attacks are outside what the configured defenders can mitigate.
+
+    The defenders worked, so this is not :class:`DefendersFailedError`; but there is still nothing to
+    deploy, and validating the unchanged victim would report the attacks landing as if a defense had failed.
+    """
+
+    category = "attacks_out_of_scope"
+    default_remediation = (
+        "Add a defender that covers these attacks (e.g. the guardrails defender alongside the network-policy "
+        "one), or point the attacks at the surface the configured defenders protect."
+    )
+
+
+class GuardrailJudgeError(AgentHardenerError):
+    """The guardrails' safety judge failed on most of the calls it should have scored.
+
+    A guardrail allows a call its judge cannot score, so a dead judge lets every attack through and
+    the round reads as guardrails that do not work rather than a judge that was never reached.
+    """
+
+    category = "guardrail_judge_failed"
+    default_remediation = (
+        "Check AGENT_HARDENER_SAFETY_API_KEY and AGENT_HARDENER_SAFETY_BASE_URL (or the inference key and "
+        "endpoint they fall back to), and that the sandbox can reach that endpoint."
     )
 
 

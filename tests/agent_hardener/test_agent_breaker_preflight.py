@@ -12,7 +12,7 @@ from agent_hardener import model_check
 from agent_hardener.agents.attackers.agent_breaker import preflight, run_agent_breaker
 from agent_hardener.agents.attackers.agent_breaker.config import build_agent_breaker_config
 from agent_hardener.errors import ModelUnavailableError
-from agent_hardener.models import AgentConfig, AgentRunInput, TargetInput
+from agent_hardener.models import ARTIFACT_DIR_KEY, AgentConfig, AgentRunInput, TargetInput
 from agent_hardener.runtime.stages.attack import raise_on_attacker_failure
 
 if TYPE_CHECKING:
@@ -26,7 +26,7 @@ def _record_probes(monkeypatch: pytest.MonkeyPatch, verdict: model_check.Validat
         probes.append({"model": model, "uri": uri, "api_key": api_key, **kwargs})
         return verdict
 
-    monkeypatch.setattr(preflight, "probe_generation", fake_probe)
+    monkeypatch.setattr(model_check, "probe_generation", fake_probe)
     monkeypatch.setenv("NIM_API_KEY", "nim-key")
     return probes
 
@@ -114,3 +114,25 @@ def test_a_failed_preflight_reaches_the_operator_as_a_model_error(monkeypatch: p
     with pytest.raises(ModelUnavailableError, match="detector down") as exc_info:
         raise_on_attacker_failure([agent], [record])
     assert exc_info.value.remediation == "fix the detector"
+
+
+@pytest.mark.parametrize(
+    ("context", "probed"), [({}, True), ({ARTIFACT_DIR_KEY: "run/garak"}, False)], ids=["standalone", "in-a-run"]
+)
+def test_models_are_probed_only_outside_a_run_that_preflighted_them(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, context: dict[str, Any], probed: bool
+) -> None:
+    preflights: list[Any] = []
+
+    async def fake_scan(**kwargs: Any) -> run_agent_breaker.ScanResult:
+        preflights.append(kwargs["preflight"])
+        return run_agent_breaker.ScanResult(return_code=0, hits=[{"prompt": "p"}], config_path="c.yaml")
+
+    monkeypatch.setattr(run_agent_breaker, "run_agent_breaker_scan", fake_scan)
+    request = AgentRunInput(
+        round_id="r1", target=TargetInput(name="victim", base_url="http://127.0.0.1:8000/v1"), context=context
+    )
+    agent = AgentConfig(name="garak-agent-breaker", role="attacker", config={"report_dir": str(tmp_path)})
+    asyncio.run(run_agent_breaker.run(request, agent))
+
+    assert preflights == [preflight.check_model_endpoints if probed else None]

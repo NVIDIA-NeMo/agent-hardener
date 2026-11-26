@@ -31,9 +31,9 @@ RUN uv pip install --system --no-cache \
 
 COPY agent.py server.py /app/
 
-# Where each round's guardrails are uploaded, and where the ATOF stream is written. Both must exist
-# and be writable by the runtime user before the victim starts — a missing /etc/nemo-relay fails the
-# run at deploy with `mkdir: cannot create directory '/etc/nemo-relay': Permission denied`.
+# Where each round's guardrails are uploaded, and where the ATOF stream is written. Agent Hardener
+# creates both when it stages the build; creating them here as well keeps an image built on its own
+# (outside `agent-hardener stage`) war-gameable.
 RUN mkdir -p /etc/nemo-relay /tmp/agent-hardener/relay \
  && chown -R sandbox:sandbox /etc/nemo-relay /tmp/agent-hardener /app
 

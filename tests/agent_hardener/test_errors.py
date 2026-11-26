@@ -52,13 +52,25 @@ def test_write_run_error_serializes_non_exception_failure(tmp_path, monkeypatch:
     assert payload == {"category": "sandbox", "message": "ok=false", "remediation": "check docker", "stack": ""}
 
 
-def test_boundary_serializes_agent_hardener_error_and_exits(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _concrete_errors(base: type[AgentHardenerError] = AgentHardenerError) -> list[type[AgentHardenerError]]:
+    return [cls for sub in base.__subclasses__() for cls in (sub, *_concrete_errors(sub))]
+
+
+@pytest.mark.parametrize("error_type", _concrete_errors(), ids=lambda cls: cls.__name__)
+def test_boundary_writes_the_contract_the_platform_reads(
+    error_type: type[AgentHardenerError], tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every classified error reaches the caller with the cause and a fix, never a bare category."""
     path = tmp_path / "run-error.json"
     monkeypatch.setenv(ERROR_FILE_ENVVAR, str(path))
     with pytest.raises(typer.Exit) as exc_info, cli_error_boundary():
-        raise SandboxProvisioningError("docker down")
+        raise error_type("it broke")
     assert exc_info.value.exit_code == 1
-    assert json.loads(path.read_text(encoding="utf-8"))["category"] == "sandbox"
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    assert set(payload) == {"category", "message", "remediation", "stack"}
+    assert payload["category"] == error_type.category != AgentHardenerError.category
+    assert payload["message"] == "it broke"
+    assert payload["remediation"].strip()
 
 
 def test_boundary_prints_bracketed_text_verbatim(capsys: pytest.CaptureFixture[str]) -> None:

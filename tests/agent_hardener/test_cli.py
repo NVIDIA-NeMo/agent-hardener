@@ -16,6 +16,7 @@ from typer.testing import CliRunner
 from agent_hardener.cli import app
 from agent_hardener.config import load_config
 from agent_hardener.display.interview import auto_answer_provider, tty_answer_provider
+from agent_hardener.errors import SandboxProvisioningError
 from agent_hardener.manifest import build_backend, build_manifest, render_manifest_yaml
 from agent_hardener.models import AgentConfig, SessionConfig, VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
@@ -29,6 +30,7 @@ from agent_hardener.project import (
     missing_secrets,
 )
 from agent_hardener.runtime.runner import SMART_BENIGN_IMPL_PREFIX
+from agent_hardener.tools import openshell as openshell_tool
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,7 +81,7 @@ def _patch_run_command(monkeypatch: pytest.MonkeyPatch, session_config: SessionC
         return SimpleNamespace(success=True)
 
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _c: False)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: session_config)
     monkeypatch.setattr("agent_hardener.runtime.runner.run_mission", fake_run_mission)
@@ -219,6 +221,25 @@ def test_run_without_a_benign_suite_says_how_to_make_one(tmp_path: Path, monkeyp
     assert "none was given" in result.output
     assert "agent-hardener synth-benign --config my.yaml --env-file my.env" in result.output
     assert "agent-hardener run --config my.yaml --env-file my.env --benign-suite <requests.csv>" in result.output
+
+
+@pytest.mark.parametrize(
+    ("args", "exit_code"), [([], 0), (["--env-file", ".env"], 1), (["--env-file", "missing.env"], 1)]
+)
+def test_run_requires_only_a_named_env_file_to_exist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, args: list[str], exit_code: int
+) -> None:
+    real_load_local_env = openshell_tool.load_local_env
+    monkeypatch.chdir(tmp_path)
+    captured = _patch_run_command(monkeypatch, _replay_session_config(tmp_path))
+    monkeypatch.setattr(openshell_tool, "load_local_env", real_load_local_env)
+
+    result = runner.invoke(app, ["run", *args])
+
+    assert result.exit_code == exit_code
+    if exit_code:
+        assert "does not exist" in result.output
+        assert captured == []
 
 
 def test_run_rejects_removed_synth_flags(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1048,7 +1069,7 @@ def test_init_yes_does_not_prompt_or_write_env(tmp_path: Path, monkeypatch: pyte
 
 def _patch_common(monkeypatch: pytest.MonkeyPatch, base_config: object) -> None:
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: base_config)
     monkeypatch.setattr("agent_hardener.tools.openshell.prepare_relay_victim", lambda cfg: cfg)
     monkeypatch.setattr(
@@ -1298,13 +1319,15 @@ def _fake_run_session_config() -> SimpleNamespace:
         target=SimpleNamespace(base_url="http://127.0.0.1:8000/v1/chat/completions"),
         benign_suite_path=None,
         benign_validators=[],
+        attackers=[],
+        defenders=[],
     )
 
 
 def test_run_command_wires_run_mission(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, object] = {}
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _c: False)
     monkeypatch.setattr("agent_hardener.tools.openshell.openshell_config", lambda _vc: "cfg")
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: _fake_run_session_config())
@@ -1320,15 +1343,14 @@ def test_run_command_wires_run_mission(monkeypatch: pytest.MonkeyPatch) -> None:
     assert captured["kwargs"]["rounds"] == 2  # type: ignore[index]
 
 
-def test_run_command_mission_error_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
-    from agent_hardener.runtime.runner import MissionError  # noqa: PLC0415
+def test_run_command_sandbox_error_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: _fake_run_session_config())
 
     def boom(*_a: object, **_k: object) -> None:
-        raise MissionError("sandbox down")
+        raise SandboxProvisioningError("sandbox down")
 
     monkeypatch.setattr("agent_hardener.runtime.runner.run_mission", boom)
     result = runner.invoke(app, ["run"])

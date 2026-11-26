@@ -70,7 +70,7 @@ def captured(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> list[SessionCon
         victim={"name": "victim", "role": "victim", "implementation": "pkg:run"},
     )
     monkeypatch.setattr("agent_hardener.tools.openshell.configure_local_docker_host", lambda: None)
-    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda _p: None)
+    monkeypatch.setattr("agent_hardener.tools.openshell.load_local_env", lambda *_a, **_k: None)
     monkeypatch.setattr("agent_hardener.tools.openshell.sandbox_is_ready", lambda _c: False)
     monkeypatch.setattr("agent_hardener.config.load_config", lambda _p, **_kw: session)
     monkeypatch.setattr(

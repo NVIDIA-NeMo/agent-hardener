@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
-from agent_hardener.errors import VictimBuildError, VictimPortInUseError, VictimUnavailableError
+from agent_hardener.errors import ConfigError, VictimBuildError, VictimPortInUseError, VictimUnavailableError
 from agent_hardener.models import VictimControlConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
 from agent_hardener.relay_plugin.victim import SANDBOX_ARTIFACTS_DIR
@@ -146,32 +146,41 @@ def test_unknown_commands_are_rejected() -> None:
 # --- host environment --------------------------------------------------------------------------------------
 
 
-def test_docker_host_is_left_alone_when_already_set(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_docker_host_is_left_alone_when_already_set(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DOCKER_HOST", "tcp://remote:2375")
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    (tmp_path / ".colima/default").mkdir(parents=True)
-    (tmp_path / ".colima/default/docker.sock").touch()
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: pytest.fail("an explicit DOCKER_HOST wins"))
 
     tool.configure_local_docker_host()
 
     assert tool.os.environ["DOCKER_HOST"] == "tcp://remote:2375"
 
 
-def test_docker_host_falls_back_to_the_colima_socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "endpoint",
+    [
+        "unix:///Users/me/.colima/work/docker.sock",
+        "unix:///Users/me/.docker/run/docker.sock",
+        "unix:///Users/me/.orbstack/run/docker.sock",
+    ],
+    ids=["colima-profile", "docker-desktop", "orbstack"],
+)
+def test_docker_host_follows_the_active_docker_context(monkeypatch: pytest.MonkeyPatch, endpoint: str) -> None:
     monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    socket = tmp_path / ".colima/default/docker.sock"
-    socket.parent.mkdir(parents=True)
-    socket.touch()
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: endpoint)
 
     tool.configure_local_docker_host()
 
-    assert tool.os.environ["DOCKER_HOST"] == f"unix://{socket}"
+    assert tool.os.environ["DOCKER_HOST"] == endpoint
 
 
-def test_docker_host_stays_unset_without_a_colima_socket(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "endpoint", [None, "tcp://build-host:2376", "ssh://me@build-host"], ids=["no-context", "tls-tcp", "ssh"]
+)
+def test_docker_host_stays_unset_unless_the_context_is_a_local_socket(
+    monkeypatch: pytest.MonkeyPatch, endpoint: str | None
+) -> None:
     monkeypatch.delenv("DOCKER_HOST", raising=False)
-    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    monkeypatch.setattr(tool, "docker_endpoint", lambda **_kw: endpoint)
 
     tool.configure_local_docker_host()
 
@@ -188,6 +197,11 @@ def test_loading_a_missing_env_file_changes_nothing(
     tool.load_local_env(path)
 
     assert dict(tool.os.environ) == before
+
+
+def test_a_missing_env_file_the_operator_named_raises(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match=r"absent\.env does not exist"):
+        tool.load_local_env(tmp_path / "absent.env", explicit=True)
 
 
 def test_env_file_values_never_override_the_existing_environment(
@@ -325,7 +339,7 @@ def test_verification_probes_the_victim_and_pulls_the_atof_log(
 ) -> None:
     atof = tmp_path / "abs" / "events.atof.jsonl" if absolute else Path("rel/events.atof.jsonl")
     _Http.posts = []
-    monkeypatch.setattr(tool.httpx, "AsyncClient", _Http)
+    monkeypatch.setattr(tool, "victim_client", _Http)
     monkeypatch.setattr(tool, "OpenShellLifecycle", _Fetcher)
     seen: dict[str, Any] = {}
 

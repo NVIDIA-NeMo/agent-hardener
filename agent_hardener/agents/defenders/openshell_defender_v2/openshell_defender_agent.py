@@ -30,7 +30,7 @@ from .extraction.attack import build_harm_certificate, extract_attack_tuples, se
 from .extraction.benign import predict_benign_tuples
 from .extraction.environment import endpoint_is_protected, extract_environment
 from .feedback import interpret
-from .models import AbstainReason, Candidate, DefenderContext, Selection
+from .models import AbstainCode, AbstainReason, Candidate, DefenderContext, Selection
 from .nodes import get_node
 from .policy.lint import assert_contraction
 from .policy.loader import current_policy_text, dump_policy_yaml, load_policy_from_yaml
@@ -39,6 +39,8 @@ from .policy.query import endpoint_is_inspectable, find_endpoint, find_entry_for
 from .telemetry import log_candidate, log_selection
 
 logger = logging.getLogger(__name__)
+
+_OUT_OF_SCOPE: frozenset[AbstainCode] = frozenset({"out_of_scope", "unobservable", "protected_endpoint"})
 
 
 def run(defender_input: DefenderInput) -> DefenderOutput:
@@ -212,9 +214,13 @@ def _abstain_output(ctx: DefenderContext, reason: AbstainReason) -> DefenderOutp
     detail = reason.detail
     if reason.per_node_reasons:
         detail += " (" + "; ".join(f"{k}: {v}" for k, v in reason.per_node_reasons.items()) + ")"
+    message = f"{reason.code}: {detail}"
+    # These abstentions mean the attack is outside what a network policy can close; the rest are failures.
+    failed = reason.code not in _OUT_OF_SCOPE
     return DefenderOutput(
         ok=False,
-        error_message=f"{reason.code}: {detail}",
+        error_message=message if failed else None,
+        not_applicable=None if failed else message,
         new_policy_yaml=None,
         iteration_count=ctx.iteration,
         resource_type=None,

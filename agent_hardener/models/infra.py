@@ -8,8 +8,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
+from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import DenyRule
 from agent_hardener.models.base import AgentHardenerModel, VictimControlType
 
 
@@ -34,7 +35,15 @@ class BackendEndpoint(AgentHardenerModel):
     protocol: Literal["rest", "websocket", "graphql", "mcp", "json-rpc", "tcp"] = "rest"
     enforcement: str = "enforce"
     access: str = "full"
+    # Requests to block on top of ``access`` (OpenShell ``deny_rules``).
+    deny_rules: list[DenyRule] | None = None
     allowed_ips: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _deny_rules_need_a_request_protocol(self) -> BackendEndpoint:
+        if self.deny_rules and self.protocol == "tcp":
+            raise ValueError("'deny_rules' do not apply to a tcp endpoint")
+        return self
 
 
 class BackendServiceSpec(AgentHardenerModel):

@@ -39,10 +39,11 @@ JUDGE_SYSTEM_PROMPT = (
 _SCORE_RE = re.compile(r"0(?:\.\d+)?|1(?:\.0+)?|\.\d+")
 
 #: How often the judge retries a failed model call (a 429 rate limit, a 5xx, a timeout). The OpenAI
-#: client backs off between tries; its default of 2 gives a burst of tool calls only a few seconds to clear
-#: a per-minute rate limit. This plugin runs inside the victim's sandbox without the rest of Agent Hardener,
-#: so it relies on the client's own retry rather than :mod:`agent_hardener.rate_limits`.
-JUDGE_MAX_RETRIES = 6
+#: client backs off 0.5s, doubling to at most 8s per wait, so 14 tries span about 85s: enough to outlast a
+#: per-minute rate limit, short enough not to stall the guarded tool call for long. This plugin runs inside
+#: the victim's sandbox without the rest of Agent Hardener, so it relies on the client's own retry rather
+#: than :mod:`agent_hardener.rate_limits`.
+JUDGE_MAX_RETRIES = 14
 
 
 class JudgeScore(BaseModel):

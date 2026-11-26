@@ -14,7 +14,7 @@ import yaml
 
 from agent_hardener.agents.victims.openshell_victim import build_payload
 from agent_hardener.config import parse_config_data
-from agent_hardener.errors import VictimBuildError
+from agent_hardener.errors import SandboxProvisioningError, VictimBuildError
 from agent_hardener.models import (
     AgentConfig,
     AgentRunInput,
@@ -230,21 +230,33 @@ def test_lifecycle_restart_tolerates_missing_sandbox_delete(tmp_path: Path) -> N
     assert lifecycle.restart(wait_for_health=False).ok is True
 
 
-def test_lifecycle_reports_missing_openshell_binary(tmp_path: Path) -> None:
-    class MissingBinaryRunner:
-        def run(self, args: list[str], cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
-            raise FileNotFoundError("openshell")
-
+def test_a_missing_openshell_binary_fails_with_the_setup_remediation(tmp_path: Path) -> None:
+    missing = str(tmp_path / "openshell")
     lifecycle = OpenShellLifecycle(
-        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin="openshell"),
-        runner=MissingBinaryRunner(),
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", openshell_bin=missing)
+    )
+
+    with pytest.raises(SandboxProvisioningError, match="OpenShell CLI not found") as caught:
+        lifecycle.status()
+
+    assert "agent-hardener setup" in caught.value.remediation
+
+
+def test_a_missing_cwd_is_a_failed_command_not_a_missing_binary(tmp_path: Path) -> None:
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(
+            gateway="gw",
+            sandbox="sb",
+            policy_path=tmp_path / "policy.yaml",
+            openshell_bin=shutil.which("true") or "/usr/bin/true",
+            cwd=tmp_path / "gone",
+        )
     )
 
     result = lifecycle.status()
 
     assert result.ok is False
-    assert result.command == ["openshell", "sandbox", "get", "sb", "--gateway", "gw"]
-    assert "openshell" in result.output
+    assert str(tmp_path / "gone") in result.output
 
 
 @pytest.mark.unit
@@ -683,6 +695,37 @@ def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Pa
     assert runner.commands[2][1:5] == ["provider", "profile", "update", "p"]
     profile = yaml.safe_load(Path(runner.commands[2][6]).read_text(encoding="utf-8"))
     assert profile["resource_version"] == 3
+
+
+def test_generic_profile_skips_update_when_exported_credentials_already_match(tmp_path: Path) -> None:
+    """An orphaned profile from an aborted start is already right; updating it can be rejected by OpenShell."""
+    exported = yaml.safe_dump(
+        {"id": "p", "resource_version": 3, "credentials": [{"name": "inference_api_key", "env_vars": ["X"]}]}
+    )
+    runner = SequenceRunner([(1, "custom provider profile 'p' already exists"), (0, exported)])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        runner=runner,
+        log_dir=tmp_path,
+    )
+
+    assert lifecycle._ensure_generic_profile(["INFERENCE_API_KEY"]).ok is True
+    assert [command[1:3] for command in runner.commands] == [["provider", "profile"], ["provider", "profile"]]
+    assert "update" not in {command[3] for command in runner.commands}
+
+
+def test_failed_sandbox_create_deletes_the_sandbox_and_returns_the_failure(tmp_path: Path) -> None:
+    runner = SequenceRunner([(1, "image pull failed"), (1, "sandbox not found: NotFound")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", image="img:1", cwd=tmp_path),
+        runner=runner,
+    )
+
+    results = lifecycle._create_sandbox(tmp_path / "policy.yaml")
+
+    assert [result.ok for result in results] == [False]
+    assert results[0].output == "image pull failed"
+    assert runner.commands[-1][1:3] == ["sandbox", "delete"]
 
 
 def test_adding_inherited_judge_preserves_existing_provider_profile_credentials(

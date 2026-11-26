@@ -60,7 +60,7 @@ class Agent:
         self.in_flight -= 1
         prompt = body["messages"][0]["content"] if "messages" in body else body["input"]
         if prompt == self.fail:
-            return httpx.Response(500, json={"error": "boom"})
+            return httpx.Response(400, json={"error": "rejected"})
         return httpx.Response(200, json={"choices": [{"message": {"content": f"done: {prompt}"}}]})
 
 

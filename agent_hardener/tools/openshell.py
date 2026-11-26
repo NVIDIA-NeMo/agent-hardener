@@ -17,13 +17,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit, urlunsplit
 
-import httpx
 import yaml  # type: ignore[import-untyped]
 
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import parse_policy
 from agent_hardener.config import load_config
 from agent_hardener.display.console import failure_excerpt, hint, warn
-from agent_hardener.errors import SandboxProvisioningError
+from agent_hardener.errors import AgentHardenerError, ConfigError, SandboxProvisioningError
 from agent_hardener.loggers import CLI_LOGS_DIR
 from agent_hardener.openshell._forward import port_in_use_error
 from agent_hardener.openshell.egress import (
@@ -33,6 +33,7 @@ from agent_hardener.openshell.egress import (
     EgressSource,
     ManualEgressSource,
 )
+from agent_hardener.openshell.gateway import docker_endpoint
 from agent_hardener.openshell.lifecycle import OpenShellConfig, OpenShellLifecycle, read_env_file, wait_for_http_health
 from agent_hardener.openshell.policy_egress import (
     apply_victim_binaries,
@@ -99,25 +100,45 @@ def main(argv: list[str] | None = None) -> int:
     return 0 if result.ok else 1
 
 
+#: Bound on resolving the docker endpoint: a wedged docker CLI must not hang the command before it starts.
+DOCKER_ENDPOINT_TIMEOUT_S = 15.0
+
+
 def configure_local_docker_host() -> None:
-    """Use the common Colima Docker socket when DOCKER_HOST is unset."""
+    """Pin ``DOCKER_HOST`` to the daemon of the active ``docker context`` when it is unset.
+
+    Follows whichever runtime the operator selected rather than guessing one, so a leftover socket of a
+    stopped runtime (e.g. Colima's next to a running Docker Desktop) is never picked over the live one.
+    Only a local socket is pinned: a tcp or ssh context also carries TLS or ssh settings that
+    ``DOCKER_HOST`` cannot, so the docker CLI is left to follow that context itself.
+    """
     if os.environ.get("DOCKER_HOST"):
         return
-    colima_socket = Path.home() / ".colima/default/docker.sock"
-    if colima_socket.exists():
-        os.environ["DOCKER_HOST"] = f"unix://{colima_socket}"
+    endpoint = docker_endpoint(timeout_s=DOCKER_ENDPOINT_TIMEOUT_S)
+    if endpoint and endpoint.startswith("unix://"):
+        os.environ["DOCKER_HOST"] = endpoint
 
 
-def load_local_env(path: Path | str | None) -> None:
+def load_local_env(path: Path | str | None, *, explicit: bool = False) -> None:
     """Load dotenv values into this process without printing secrets.
 
     The file only fills variables that are unset or empty: a value already in the environment (a shell
     ``export``, CI) wins, because ``--env-file`` defaults to ``.env`` and is loaded on every command, so a
     stray file must not override a deliberate export. When the two differ, a warning names the key (never
     the value, which may be a secret) so an ignored file entry is not silent.
+
+    A missing default file is fine; a missing file the operator named (``explicit``) raises
+    :class:`~agent_hardener.errors.ConfigError`, since every key it was meant to supply would be absent.
     """
     env_path = Path(path) if path else None
-    if env_path is None or not env_path.exists():
+    if env_path is None:
+        return
+    if not env_path.exists():
+        if explicit:
+            raise ConfigError(
+                f"--env-file {env_path} does not exist.",
+                remediation="Pass an existing dotenv file, or omit --env-file to load ./.env when present.",
+            )
         return
     for key, value in read_env_file(env_path).items():
         current = os.environ.get(key)
@@ -332,7 +353,7 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
     lifecycle = OpenShellLifecycle(prepared)
 
     async def probe() -> Any:
-        async with httpx.AsyncClient(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
+        async with victim_client(timeout=RELAY_PROBE_TIMEOUT_SECONDS) as client:
             return await client.post(
                 base_url, json={"model": "victim", "messages": [{"role": "user", "content": RELAY_PROBE_PROMPT}]}
             )
@@ -343,6 +364,13 @@ def verify_relay_instrumentation(prepared: OpenShellConfig, *, base_url: str | N
             atof_path=atof_path,
             sync=lambda: lifecycle.fetch_file(f"{SANDBOX_ARTIFACTS_DIR}/{atof_path.name}", atof_path),
         )
+    )
+
+
+def startup_error(what: str, output: str, *, remediation: str | None = None) -> AgentHardenerError:
+    """The classified error for a failed sandbox/backend start: a taken port, or ``what`` plus the output's error lines."""
+    return port_in_use_error(output) or SandboxProvisioningError(
+        f"{what}:\n{failure_excerpt(output)}", remediation=remediation
     )
 
 
@@ -376,7 +404,7 @@ def managed_victim_sandbox(
     result = lifecycle.ensure_forward() if reused else lifecycle.up()
     if not result.ok:
         what = "the reused sandbox's port forward failed" if reused else "the victim sandbox failed to start"
-        raise port_in_use_error(result.output) or SandboxProvisioningError(f"{what}:\n{failure_excerpt(result.output)}")
+        raise startup_error(what, result.output)
     try:
         drift = lifecycle.image_context_drift()
         if drift:

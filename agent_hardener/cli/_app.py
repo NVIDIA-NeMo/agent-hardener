@@ -72,6 +72,18 @@ DEFAULT_MANIFEST = Path("agent-hardener.yaml")
 DEFAULT_ENV_FILE = Path(".env")
 
 
+ENV_FILE_OPTION = typer.Option(None, "--env-file", help=f"Dotenv file with secrets [default: {DEFAULT_ENV_FILE}].")
+
+
+def load_cli_env_file(env_file: Path | None) -> Path:
+    """Load ``--env-file`` (or the default); only a file the operator named must exist."""
+    from agent_hardener.tools.openshell import load_local_env
+
+    path = env_file or DEFAULT_ENV_FILE
+    load_local_env(path, explicit=env_file is not None)
+    return path
+
+
 def _victim_image(value: str | None) -> str | None:
     if value is None:
         return None

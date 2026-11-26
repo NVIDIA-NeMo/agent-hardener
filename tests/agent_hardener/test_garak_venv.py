@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,7 @@ from typer.testing import CliRunner
 
 from agent_hardener import garak_venv
 from agent_hardener.cli import app
+from agent_hardener.errors import ConfigError, SetupError
 
 runner = CliRunner()
 
@@ -119,8 +121,16 @@ def test_resolve_garak_venv_dir_is_python_grandparent(monkeypatch: pytest.Monkey
 
 def test_provision_requires_uv(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(garak_venv.shutil, "which", lambda _: None)
-    with pytest.raises(RuntimeError, match="uv not found"):
+    with pytest.raises(ConfigError, match="uv not found") as caught:
         garak_venv.provision_garak_venv()
+    assert "docs.astral.sh/uv" in caught.value.remediation
+
+
+def test_failed_provisioning_command_is_a_setup_error_with_its_stderr() -> None:
+    failing = [sys.executable, "-c", "import sys; sys.stderr.write('no route to pypi'); sys.exit(1)"]
+    with pytest.raises(SetupError, match="no route to pypi") as caught:
+        garak_venv._run(failing)
+    assert "agent-hardener setup --force" in caught.value.remediation
 
 
 def test_provision_idempotent_when_present(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -156,6 +166,7 @@ def test_provision_creates_and_installs(tmp_path: Path, monkeypatch: pytest.Monk
     assert calls[0][-1] == str(tmp_path / "garak-venv")
     assert calls[1][:3] == ["uv", "pip", "install"]
     assert garak_venv.GARAK_PINNED_SPEC in calls[1]
+    assert calls[1][calls[1].index("--torch-backend") + 1] == "cpu"  # no CUDA libraries in the venv
 
 
 def test_pinned_spec_carries_the_wheel_hash() -> None:
@@ -178,10 +189,12 @@ def test_setup_command_success(monkeypatch: pytest.MonkeyPatch) -> None:
     assert "garak ready" in result.stdout
 
 
-def test_setup_command_failure_exits_nonzero(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_setup_command_failure_shows_the_remediation(monkeypatch: pytest.MonkeyPatch) -> None:
     def boom(*, force: bool) -> Path:
-        raise RuntimeError("uv not found — install it")
+        raise SetupError("command failed (uv pip install)")
 
     monkeypatch.setattr(garak_venv, "provision_garak_venv", boom)
     result = runner.invoke(app, ["setup"])
     assert result.exit_code == 1
+    assert "command failed (uv pip install)" in result.output
+    assert "agent-hardener setup --force" in result.output

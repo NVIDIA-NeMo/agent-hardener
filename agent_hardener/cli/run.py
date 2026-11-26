@@ -15,10 +15,11 @@ from typer.core import TyperCommand
 
 from agent_hardener.cli._app import (
     ALLOW_CONTEXT_DRIFT_OPTION,
-    DEFAULT_ENV_FILE,
     DEFAULT_MANIFEST,
+    ENV_FILE_OPTION,
     VICTIM_IMAGE_OPTION,
     app,
+    load_cli_env_file,
 )
 from agent_hardener.display.console import detail, fail, ok, section, warn
 
@@ -193,7 +194,7 @@ def _apply_benign_suite(benign_suite: Path | None, session_config: SessionConfig
 @app.command(cls=ReplayCommand)
 def run(
     config: Path = typer.Option(DEFAULT_MANIFEST, "--config", "-c", help="Manifest or full session config."),
-    env_file: Path = typer.Option(DEFAULT_ENV_FILE, "--env-file", help="Dotenv file with secrets."),
+    env_file: Path | None = ENV_FILE_OPTION,
     rounds: int = typer.Option(1, "--rounds", help="Number of iterative hardening rounds."),
     mission_id: str | None = typer.Option(None, "--mission-id", help="Mission id prefix."),
     reuse: bool = typer.Option(
@@ -253,11 +254,10 @@ def run(
     from agent_hardener.cli._errors import cli_error_boundary
     from agent_hardener.config import load_config
     from agent_hardener.display.progress import build_console_renderer
-    from agent_hardener.model_check import preflight_configured_models
+    from agent_hardener.preflight.run import preflight_run
     from agent_hardener.runtime.runner import run_mission
     from agent_hardener.tools.openshell import (
         configure_local_docker_host,
-        load_local_env,
         openshell_config,
         sandbox_is_ready,
         with_victim_image,
@@ -268,9 +268,7 @@ def run(
     with cli_error_boundary():
         section("Setup")
         configure_local_docker_host()
-        load_local_env(env_file)
-        # Fail fast on a mistyped/unreachable operator-overridden model before building the sandbox.
-        preflight_configured_models()
+        env_file = load_cli_env_file(env_file)
         _apply_initial_overrides(relay_plugins, policy)
         session_config = load_config(str(config), relay_plugins=relay_plugins, policy=policy)
         ok(f"Config loaded: {config}", markup=False)
@@ -285,6 +283,8 @@ def run(
                     )
                 }
             )
+        # Fail fast on a missing host tool or a model that won't answer, before building the sandbox.
+        preflight_run(session_config, reuse=reuse)
 
         # --reuse resolves to the skip_initial_up primitive: skip the rebuild only if a Ready sandbox
         # is already running, otherwise build fresh.
@@ -296,7 +296,7 @@ def run(
                 warn("No Ready sandbox to reuse; building a fresh one")
 
         # One subscriber renders all one-way presentation (output lines, spinners, phase banners); the
-        # runner emits everything as events. MissionError/VictimUnavailableError propagate to the boundary.
+        # runner emits everything as events. Its AgentHardenerErrors propagate to the boundary.
         result = run_mission(
             session_config,
             rounds=rounds,

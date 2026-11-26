@@ -9,11 +9,12 @@ import asyncio
 import logging
 from typing import TYPE_CHECKING
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.rate_limits import raise_for_rate_limit_response
 
 if TYPE_CHECKING:
+    import httpx
+
     from ..state import ApiProberState
 
 logger = logging.getLogger(__name__)
@@ -51,7 +52,7 @@ async def probe(state: ApiProberState) -> dict[str, object]:
     responses: list[tuple[str, str]] = []
     errors: list[str] = []
 
-    async with httpx.AsyncClient(timeout=state.timeout_seconds) as client:
+    async with victim_client(timeout=state.timeout_seconds) as client:
         results = await asyncio.gather(
             *(_probe_once(state.target_url, q, state.probe_model, client) for q in questions),
             return_exceptions=True,

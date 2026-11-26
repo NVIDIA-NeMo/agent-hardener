@@ -100,7 +100,7 @@ def check_tool_path(records: Iterable[dict[str, Any]], *, before: Collection[str
             "attacks were served by a process Relay is not attached to.",
             remediation=(
                 "Check the victim log for a Relay error after startup, and that every worker process serving "
-                "requests calls nemo_relay.plugin.initialize() and runs inside a Relay scope."
+                "requests holds nemo_relay.plugin.activate() open and runs inside a Relay scope."
             ),
         )
     raise AttackerIneffectiveError(

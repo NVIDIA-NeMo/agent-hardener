@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-from agent_hardener.agents.chat_http import response_body_or_text
+from agent_hardener.agents.chat_http import response_body_or_text, victim_client
 from agent_hardener.endpoint import EndpointContract
 from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.models import AgentConfig, AgentRunInput, VictimResult
@@ -34,8 +34,8 @@ async def run(request: AgentRunInput, agent: AgentConfig) -> VictimResult:
     # rather than correlated by arrival order, which concurrency makes meaningless.
     headers = contract.headers(f"{request.round_id}-{agent.agent_id}")
     try:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, json=payload, timeout=contract.timeout_seconds, headers=headers)
+        async with victim_client(timeout=contract.timeout_seconds) as client:
+            response = await client.post(url, json=payload, headers=headers)
         raise_for_rate_limit_response(response, source=f"victim {agent.name}")
         body = response_body_or_text(response)
         return VictimResult(

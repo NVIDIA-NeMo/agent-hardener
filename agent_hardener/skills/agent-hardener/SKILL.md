@@ -35,7 +35,7 @@ Confirm before anything destructive: `agent-hardener down`, deleting `.agent-har
 | --- | --- |
 | Python 3.11–3.13 | `python --version` |
 | Docker running | `docker info` |
-| OpenShell CLI + gateway service (0.1.4) | `openshell --version`, then `openshell status` → `Status: Connected` |
+| OpenShell CLI + gateway service (0.1.6 or newer) | `openshell --version`, then `openshell status` → `Status: Connected` |
 | A model key | `INFERENCE_API_KEY` in `.env` or the shell |
 
 Install OpenShell with its native installer, not `uv tool install openshell` — that installs the CLI only,

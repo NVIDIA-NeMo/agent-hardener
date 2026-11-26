@@ -77,3 +77,18 @@ def test_normal_response_returns_victim_result(monkeypatch: pytest.MonkeyPatch) 
     result = asyncio.run(ov.run(_request(), _agent()))
     assert isinstance(result, VictimResult)
     assert result.ok is True  # a real response is still a normal result, not an abort
+
+
+def test_victim_5xx_is_a_soft_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A reply, even a 5xx, means the victim is up; only the validators' 5xx streak ends the run."""
+    response = httpx.Response(502, text="bad gateway", request=httpx.Request("POST", _URL))
+    _patch_client(monkeypatch, _FakeClient(response=response))
+    result = asyncio.run(ov.run(_request(), _agent()))
+    assert result.ok is False
+    assert result.error == "bad gateway"
+
+
+def test_victim_4xx_is_a_soft_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    response = httpx.Response(400, text="bad request", request=httpx.Request("POST", _URL))
+    _patch_client(monkeypatch, _FakeClient(response=response))
+    assert asyncio.run(ov.run(_request(), _agent())).ok is False

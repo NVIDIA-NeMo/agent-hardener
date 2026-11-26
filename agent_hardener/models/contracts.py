@@ -92,6 +92,9 @@ class DefenderOutput(AgentHardenerModel):
     # For the guardrails defender: the ``custom_guardrail_N`` guardrail it generated, so the manager can
     # link this specific guardrail back to the attack that motivated it (see build_mitigations).
     guardrail_name: str | None = None
+    #: Why this defender does not apply to the attack (e.g. no network signature for a policy defender).
+    #: Set only when ``ok`` is False; such a defender abstained, it did not fail.
+    not_applicable: str | None = None
 
 
 class DefendersManagerInput(AgentHardenerModel):
@@ -130,6 +133,8 @@ class DefendersManagerOutput(AgentHardenerModel):
     ok: bool = True
     summary: str = ""
     error: str | None = None
+    #: Why each abstaining defender did not apply; abstentions are not failures, so they stay out of ``error``.
+    not_applicable: list[str] = Field(default_factory=list)
     routed_agent_ids: list[str] = Field(default_factory=list)
     analyses: list[DefenderAnalysis] = Field(default_factory=list)
 

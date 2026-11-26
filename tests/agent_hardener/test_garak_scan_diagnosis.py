@@ -233,6 +233,7 @@ def _run(
     tmp_path: Path,
     scans: list[tuple[int, str, int]],
     hits: list[dict[str, Any]] | None = None,
+    stdout: str = "boom",
 ) -> tuple[AttackRecord, int]:
     """Run the attacker over scripted scans of ``(attempts, detailed log, exit code)``."""
     monkeypatch.chdir(tmp_path)
@@ -245,7 +246,9 @@ def _run(
         calls += 1
         report_dir = tmp_path / kwargs["report_dir"]
         report_dir.mkdir(parents=True, exist_ok=True)
-        (report_dir / run_agent_breaker.STDOUT_LOG_NAME).write_text(f"📜 logging to {detail}\nboom\n", encoding="utf-8")
+        (report_dir / run_agent_breaker.STDOUT_LOG_NAME).write_text(
+            f"📜 logging to {detail}\n{stdout}\n", encoding="utf-8"
+        )
         detail.write_text(log, encoding="utf-8")
         report = _write_report(tmp_path / f"report-{calls}.jsonl", attempts)
         return run_agent_breaker.ScanResult(
@@ -295,6 +298,25 @@ def test_a_crash_with_no_hits_fails_with_garaks_output(monkeypatch: pytest.Monke
     assert record.error is not None
     assert "exited 2 after 1 attack(s)" in record.error
     assert "boom" in record.error
+
+
+def test_a_victim_turn_that_outruns_request_timeout_is_named(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """The generic crash text hid the cause: garak 0.17 does not catch the victim's read timeout.
+
+    The cap named is the one garak ran with, here set outside the attacker's config (env or scaffold).
+    """
+    traceback = """\
+Traceback (most recent call last):
+  File "/venv/lib/python3.12/site-packages/garak/generators/rest.py", line 349, in _call_model
+    resp = self.http_function(self.uri, **req_kArgs)
+requests.exceptions.ReadTimeout: HTTPConnectionPool(host='127.0.0.1', port=8000): Read timed out. (read timeout=1200)"""
+    record, _ = _run(monkeypatch, tmp_path, [(2, _log(), 1)], stdout=traceback)
+
+    assert record.ok is False
+    assert record.metadata["failure_code"] == "victim_turn_timeout"
+    assert record.error is not None
+    assert "after 2 attack(s)" in record.error
+    assert "1200s (garak.request_timeout)" in record.error
 
 
 def test_hits_are_kept_when_the_report_counts_no_attempts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

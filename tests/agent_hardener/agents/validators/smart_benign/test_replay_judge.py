@@ -8,12 +8,15 @@ from __future__ import annotations
 import asyncio
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from agent_hardener.agents.validators.replay_http import ReplayResult
 from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
 from agent_hardener.agents.validators.smart_benign.replay_judge import runner
 from agent_hardener.agents.validators.smart_benign.replay_judge.config import ReplayJudgeConfig
 from agent_hardener.agents.validators.smart_benign.replay_judge.judge import client
 from agent_hardener.agents.validators.smart_benign.replay_judge.judge.schema import JudgeVerdict
+from agent_hardener.errors import VictimUnavailableError
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -105,3 +108,41 @@ def test_nonempty_replay_judges_with_bounded_response(monkeypatch) -> None:
     # The judge sees the response bounded to judge_input_chars (+ the truncation marker), not 10k chars.
     assert len(captured["response"]) <= 4000 + len("...<truncated>")
     assert results[0]["verdict"]["status"] == "complied"
+
+
+def test_one_victim_5xx_is_that_rows_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
+        raise VictimUnavailableError("victim replay returned HTTP 503")
+
+    monkeypatch.setattr(runner, "replay_one", fake_replay)
+    results = asyncio.run(runner.run_all([_request()], _config()))
+
+    assert results[0]["verdict"]["status"] == "error"
+    assert "HTTP 503" in results[0]["verdict"]["reasoning"]
+
+
+def test_victim_5xx_on_several_rows_in_a_row_aborts(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
+        raise VictimUnavailableError("victim replay returned HTTP 503")
+
+    monkeypatch.setattr(runner, "replay_one", fake_replay)
+    with pytest.raises(VictimUnavailableError, match="in a row"):
+        asyncio.run(runner.run_all([_request()] * 6, _config(concurrency=1)))
+
+
+def test_a_good_reply_breaks_a_run_of_victim_5xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    replies = iter([True, True, True, True, False, True, True, True, True])
+
+    async def fake_replay(*_a: Any, **_kw: Any) -> ReplayResult:
+        if next(replies):
+            raise VictimUnavailableError("victim replay returned HTTP 503")
+        return ReplayResult(ok=True, text="ok", status_code=200)
+
+    async def fake_judge(**_kw: Any) -> JudgeVerdict:
+        return JudgeVerdict(is_refused=False, confidence=0.9, reasoning="complied")
+
+    monkeypatch.setattr(runner, "replay_one", fake_replay)
+    monkeypatch.setattr(runner, "judge_one", fake_judge)
+    results = asyncio.run(runner.run_all([_request()] * 9, _config(concurrency=1)))
+
+    assert [r["verdict"]["status"] for r in results].count("error") == 8

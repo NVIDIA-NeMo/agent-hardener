@@ -20,6 +20,7 @@ from typing import Any, Literal
 import yaml  # type: ignore[import-untyped]
 from pydantic import Field, field_validator, model_validator
 
+from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import DenyRule
 from agent_hardener.config import parse_config_data
 from agent_hardener.models import (
     AgentHardenerModel,
@@ -40,6 +41,8 @@ DEFAULT_POLICY_PATH = _TEMPLATES / "openshell-policy-permissive.yaml"
 # The victim starts unguarded so attackers establish a baseline; the guardrails defender appends to
 # this, and the deploy stage uploads the result to RELAY_PLUGINS_UPLOAD_DEST.
 DEFAULT_RELAY_PLUGINS_PATH = _TEMPLATES / "plugins.toml"
+AGENT_BREAKER_IMPLEMENTATION = "agent_hardener.agents.attackers.agent_breaker:run"
+GUARDRAILS_DEFENDER_IMPLEMENTATION = "agent_hardener.agents.defenders.guardrails_defender:run"
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +62,8 @@ class BackendManifest(AgentHardenerModel):
     host: str | None = None
     # OpenShell blocks private addresses (e.g. a cluster service IP) unless they are listed here.
     allowed_ips: list[str] = Field(default_factory=list)
+    # Requests the agent may not make on any port, e.g. {method: "*", path: "/apis/secrets/**"}.
+    deny_rules: list[DenyRule] = Field(default_factory=list)
 
     @field_validator("host")
     @classmethod
@@ -141,6 +146,8 @@ def _backend_endpoint(backend: BackendManifest, port: int) -> dict[str, Any]:
         endpoint["host"] = backend.host
     if backend.allowed_ips:
         endpoint["allowed_ips"] = backend.allowed_ips
+    if backend.deny_rules:
+        endpoint["deny_rules"] = [rule.model_dump(exclude_none=True) for rule in backend.deny_rules]
     return endpoint
 
 
@@ -251,7 +258,7 @@ def _default_attackers(garak: GarakSettings) -> list[dict[str, Any]]:
     return [
         {
             "name": "garak-agent-breaker",
-            "implementation": "agent_hardener.agents.attackers.agent_breaker:run",
+            "implementation": AGENT_BREAKER_IMPLEMENTATION,
             "timeout_seconds": inner_timeout + 300,
             "config": config,
         }
@@ -290,7 +297,7 @@ def _default_defenders(agent: AgentSpec, defenders_settings: DefenderSettings) -
     defenders.append(
         {
             "name": "defender-guardrails",
-            "implementation": "agent_hardener.agents.defenders.guardrails_defender:run",
+            "implementation": GUARDRAILS_DEFENDER_IMPLEMENTATION,
             "timeout_seconds": timeout,
             "capabilities": (
                 "Mitigates prompt injection, unsafe tool invocations, sensitive content disclosure, "
@@ -393,7 +400,8 @@ def expand(
                 "provider_type": "generic",
                 "provider_env_file": agent.secrets_file,
                 "provider_credentials": list(agent.secrets),
-                "forward": f"0.0.0.0:{agent.port}",
+                # Loopback only: the victim chat is unauthenticated and runs commands in the sandbox.
+                "forward": f"127.0.0.1:{agent.port}",
                 "start_command": _start_command(agent),
                 "health_url": f"http://127.0.0.1:{agent.port}/health",
                 "health_timeout": 120,
@@ -501,7 +509,8 @@ def render_manifest_yaml(manifest: dict) -> str:
         "  # Agent Hardener appends the aiohttp egress shim to your Dockerfile.\n"
         "  #\n"
         "  # The agent must be NeMo Relay-connected: attach NemoRelayMiddleware AND call\n"
-        "  # nemo_relay.plugin.initialize() at startup, or delivered guardrails never activate.\n"
+        "  # hold nemo_relay.plugin.activate(PluginConfig()) open for the process's life, or delivered\n"
+        "  # guardrails never activate.\n"
     )
     base = base.replace("\nbackends:", "\n" + agent_stubs + "\nbackends:", 1)
 
@@ -514,6 +523,7 @@ def render_manifest_yaml(manifest: dict) -> str:
             "#   compose_project: my-project               # optional\n"
             "#   host: my-service.ns.svc                   # optional: reach a service that is not on this host\n"
             "#   allowed_ips: [10.96.0.0/12]               # optional: private ranges OpenShell may otherwise block\n"
+            "#   deny_rules: [{method: '*', path: /admin/**}]  # optional: requests to block ('*' = any method)\n"
         )
         base = base.replace("backends: []\n", "backends: []\n" + backend_stubs, 1)
 

@@ -215,13 +215,15 @@ class DefendersManager:
 
         analyses: list[DefenderAnalysis] = []
         errors: list[str] = []
+        not_applicable: list[str] = []
 
-        for (defender, _), result in zip(task_meta, results, strict=True):
+        for (defender, inp), result in zip(task_meta, results, strict=True):
             if isinstance(result, BaseException) or not result.ok:
+                if not isinstance(result, BaseException) and result.not_applicable:
+                    not_applicable.append(f"Agent {defender.name} {why_no_mitigation(result)}")
+                    continue
                 error = (
-                    f"raised exception: {result}"
-                    if isinstance(result, BaseException)
-                    else f"failed: {result.error_message}"
+                    f"raised exception: {result}" if isinstance(result, BaseException) else why_no_mitigation(result)
                 )
                 errors.append(f"Agent {defender.name} {error}")
                 # Recorded, not dropped: the final report counts a defender's runs from these records.
@@ -231,8 +233,8 @@ class DefendersManager:
                         agent_name=defender.name,
                         ok=False,
                         error=error,
-                        metadata={"attacked_tool": _.attacked_tool},
-                        attack_prompt=_.attack_prompt,
+                        metadata={"attacked_tool": inp.attacked_tool},
+                        attack_prompt=inp.attack_prompt,
                     )
                 )
             else:
@@ -250,16 +252,18 @@ class DefendersManager:
                             # Link this analysis to the specific guardrail it injected + the tool it attacked,
                             # so build_mitigations can pair each custom_guardrail_N with its motivating attack.
                             "guardrail_name": result.guardrail_name,
-                            "attacked_tool": _.attacked_tool,
+                            "attacked_tool": inp.attacked_tool,
                         },
-                        attack_prompt=_.attack_prompt,
+                        attack_prompt=inp.attack_prompt,
                     )
                 )
 
         return DefendersManagerOutput(
             ok=any(analysis.ok for analysis in analyses),
             summary=f"Routed to {len(all_selected_by_id)} defenders across {len(actionable_attacks)} attacks. Generated {sum(analysis.ok for analysis in analyses)} analyses.",
-            error=" | ".join(errors) if errors else None,
+            # Every attack record repeats its defender's error or reason; report each once.
+            error=" | ".join(dict.fromkeys(errors)) if errors else None,
+            not_applicable=list(dict.fromkeys(not_applicable)),
             routed_agent_ids=routed_agent_ids,
             analyses=analyses,
         )
@@ -315,3 +319,10 @@ class DefendersManager:
         patch. A more selective routing rule can replace this later without changing that contract.
         """
         return [(attack, list(available)) for attack in attacks] if available else []
+
+
+def why_no_mitigation(result: DefenderOutput) -> str:
+    """How a defender that produced nothing is reported: an abstention is not a failure."""
+    if result.not_applicable:
+        return f"did not apply: {result.not_applicable}"
+    return f"failed: {result.error_message}"

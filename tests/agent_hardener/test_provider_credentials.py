@@ -290,3 +290,16 @@ def test_without_a_provider_there_is_nothing_to_drift(tmp_path: Path) -> None:
 
     assert lifecycle.credentials_drift() is None
     assert lifecycle._provider_revision() is None
+
+
+def test_an_env_file_without_the_victims_secrets_fails_even_with_a_judge_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(_JUDGE, "judge-key")
+    lifecycle = _lifecycle(tmp_path, SequenceRunner([]), key="")
+
+    credentials, error = lifecycle._provider_credentials()
+
+    assert credentials == {}
+    assert error is not None
+    assert "no configured provider credentials found" in error.output

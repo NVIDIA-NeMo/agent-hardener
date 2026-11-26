@@ -21,8 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from agent_hardener.errors import VictimPortInUseError
-from agent_hardener.openshell.command import _command_label
-from agent_hardener.openshell.config import OpenShellCommandResult, SubprocessCommandRunner
+from agent_hardener.openshell.config import OpenShellCommandResult, SubprocessCommandRunner, command_label
 from agent_hardener.openshell.support import _poll_until, combine_results, safe_path_token
 
 if TYPE_CHECKING:
@@ -301,14 +300,14 @@ class ForwardMixin:
         except OSError as exc:
             logger.info(
                 "openshell background command failed op=%s duration_seconds=%.3f error=%s",
-                _command_label(args),
+                command_label(args),
                 time.monotonic() - started_at,
                 exc,
             )
             return OpenShellCommandResult(ok=False, command=command, output=str(exc))
         logger.info(
             "openshell background command started op=%s pid=%s duration_seconds=%.3f",
-            _command_label(args),
+            command_label(args),
             process.pid,
             time.monotonic() - started_at,
         )

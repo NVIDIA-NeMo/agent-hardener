@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import re
 import threading
-import tomllib
 from typing import TYPE_CHECKING, Any
 
 import tomli_w
@@ -23,8 +22,10 @@ from agent_hardener.relay_plugin.config import (
     DEFAULT_GUARDRAIL_THRESHOLD,
     PLUGIN_KIND,
     GuardrailsComponentConfig,
+    JudgeModel,
     judge_api_key_env,
     judge_endpoint,
+    read_plugins_document,
 )
 
 from ..schemas import Outcome
@@ -89,7 +90,7 @@ def append_guardrail(
     no judge model yet; ``None`` means :func:`agent_hardener.llm.default_model`.
     """
     with _PLUGINS_LOCK:
-        document = _load(target)
+        document = read_plugins_document(target)
         config = _component_config(document, judge_model)
         guardrails = config.setdefault("guardrails", [])
         name = f"custom_guardrail_{_next_index(guardrails)}"
@@ -110,11 +111,9 @@ def append_guardrail(
     return name, rendered
 
 
-def _load(target: Path | None) -> dict[str, Any]:
-    if target is not None and target.exists():
-        with target.open("rb") as handle:
-            return tomllib.load(handle)
-    return {"version": 1}
+def planned_judge(relay_plugins: Path | None, safety_llm: str | None) -> JudgeModel:
+    """The judge the victim will call: the one already in ``relay_plugins``, else the one a rail would write."""
+    return JudgeModel.model_validate(_component_config(read_plugins_document(relay_plugins), safety_llm)["model"])
 
 
 def _component_config(document: dict[str, Any], judge_model: str | None) -> dict[str, Any]:

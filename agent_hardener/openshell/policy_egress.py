@@ -20,6 +20,7 @@ from agent_hardener.openshell.egress.host_gateway import HOST_GATEWAY_ALIAS, hos
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import DenyRule
     from agent_hardener.models import BackendEndpoint
     from agent_hardener.openshell.egress.base import PolicyEndpoint
 
@@ -51,12 +52,21 @@ def normalize_host_gateway_allowed_ips(policy: dict) -> dict:
 
 
 def _endpoint_dict(
-    host: str, port: int, *, protocol: str, enforcement: str, access: str, allowed_ips: list[str] | None
+    host: str,
+    port: int,
+    *,
+    protocol: str,
+    enforcement: str,
+    access: str,
+    allowed_ips: list[str] | None,
+    deny_rules: list[DenyRule] | None = None,
 ) -> dict[str, object]:
     entry: dict[str, object] = {"host": host, "port": port, "protocol": protocol}
     # OpenShell rejects request-level fields on an L4 (``tcp``) endpoint.
     if protocol != "tcp":
         entry |= {"enforcement": enforcement, "access": access}
+        if deny_rules:
+            entry["deny_rules"] = [rule.model_dump(exclude_none=True) for rule in deny_rules]
     if allowed_ips:
         entry["allowed_ips"] = list(allowed_ips)
     return entry
@@ -84,7 +94,13 @@ def build_backend_egress_block(endpoints: list[BackendEndpoint], binaries: list[
     """Build the ``relay_victim_backends`` network-policy block."""
     entries = [
         _endpoint_dict(
-            e.host, e.port, protocol=e.protocol, enforcement=e.enforcement, access=e.access, allowed_ips=e.allowed_ips
+            e.host,
+            e.port,
+            protocol=e.protocol,
+            enforcement=e.enforcement,
+            access=e.access,
+            allowed_ips=e.allowed_ips,
+            deny_rules=e.deny_rules,
         )
         for e in endpoints
     ]

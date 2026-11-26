@@ -49,8 +49,8 @@ _HELP = {
         "Path to the Dockerfile Agent Hardener builds for the victim image (relative to the project\n"
         "dir), e.g. deploy/agent/Dockerfile.\n"
         "\n"
-        "Your image must satisfy four requirements. Agent Hardener injects the last one for you; the\n"
-        "other three are yours, and a missing one fails at sandbox start rather than at build:\n"
+        "Your image must satisfy these requirements, and a missing one fails at sandbox start rather\n"
+        "than at build:\n"
         "  1) a 'sandbox' user and group, e.g.\n"
         "       RUN groupadd --system sandbox \\\n"
         "           && useradd --system --gid sandbox --create-home \\\n"
@@ -58,11 +58,15 @@ _HELP = {
         "     Missing -> the container crash-loops with 'sandbox user not found in image'.\n"
         "  2) iproute2 (the `ip` binary), e.g. apt-get install -y --no-install-recommends iproute2\n"
         "     Missing -> 'Network namespace creation failed ... trusted ip helper not found'.\n"
-        "  3) `nat` on the DEFAULT PATH (e.g. /usr/local/bin). Setting ENV PATH is NOT enough:\n"
-        "     OpenShell replaces the image's PATH with its own. If you install into a venv,\n"
-        "     symlink it: RUN ln -s /app/.venv/bin/nat /usr/local/bin/nat\n"
-        "     Missing -> \"env: 'nat': No such file or directory\".\n"
-        "  4) the aiohttp egress shim on PYTHONPATH - appended to your Dockerfile automatically."
+        "  3) the agent serving GET /health (2xx within 120s of start) and OpenAI-style\n"
+        "     POST /v1/chat/completions on the victim port.\n"
+        "  4) NeMo Relay attached: the nemo-relay package with your framework's extra (e.g.\n"
+        "     nemo-relay[langgraph]), its middleware on the agent, and\n"
+        "     nemo_relay.plugin.activate(PluginConfig()) held open for the process's life. Without it\n"
+        "     the run sees no tool calls and cannot be scored.\n"
+        "Agent Hardener adds the rest to your Dockerfile: the guardrail plugin, the egress shim, and\n"
+        "the directories a run writes to (/etc/nemo-relay and its artifacts directory).\n"
+        "Working example: examples/langgraph-victim/Dockerfile."
     ),
     "binaries": (
         "Glob patterns for executables/libraries kept in the sandboxed image (comma-separated),\n"
@@ -74,11 +78,11 @@ _HELP = {
     ),
     "port": (
         "The victim agent serves HTTP on this port inside the sandbox; garak attacks\n"
-        "http://127.0.0.1:<port>/v1/chat/completions. Match your workflow's serve port (default 8000)."
+        "http://127.0.0.1:<port>/v1/chat/completions. Match the port your agent serves on (default 8000)."
     ),
     "secrets_file": (
-        "A dotenv file holding the agent's secret values (API keys, tokens) — separate from Iron\n"
-        "Swarm's own --env-file. init seeds the secret NAMES from it and offers to fill missing ones."
+        "A dotenv file holding the agent's secret values (API keys, tokens) — separate from Agent\n"
+        "Hardener's own --env-file. init seeds the secret NAMES from it and offers to fill missing ones."
     ),
     "egress": (
         "Extra external hosts the agent must reach, comma-separated (host or host:port; 443 if the\n"

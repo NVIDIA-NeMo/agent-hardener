@@ -117,3 +117,24 @@ def test_mixed_attacker_outputs_skip_only_explicit_zero_hits() -> None:
     assert output.ok is True
     assert output.summary == "Routed to 1 defenders across 2 attacks. Generated 2 analyses."
     assert len(output.analyses) == 2
+
+
+def test_abstentions_are_reported_once_and_not_as_errors() -> None:
+    async def abstain(_agent: AgentConfig, _input: DefenderInput) -> DefenderOutput:
+        return DefenderOutput(ok=False, not_applicable="out_of_scope: no network signature")
+
+    attack = AttackRecord(agent_id="garak", agent_name="garak", records=[{"prompt": "a"}, {"prompt": "b"}])
+    output = _run_manager([attack], abstain)
+
+    assert output.ok is False
+    assert output.error is None
+    assert output.not_applicable == ["Agent defender did not apply: out_of_scope: no network signature"]
+
+
+def test_a_defender_failing_on_every_record_is_reported_once() -> None:
+    async def fail(_agent: AgentConfig, _input: DefenderInput) -> DefenderOutput:
+        return DefenderOutput(ok=False, error_message="401")
+
+    attack = AttackRecord(agent_id="garak", agent_name="garak", records=[{"prompt": "a"}, {"prompt": "b"}])
+
+    assert _run_manager([attack], fail).error == "Agent defender failed: 401"

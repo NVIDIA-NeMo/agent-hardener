@@ -17,24 +17,27 @@ from pathlib import Path
 from time import perf_counter
 from typing import TYPE_CHECKING, Any, cast
 
-import httpx
-
+from agent_hardener.agents.chat_http import victim_client
 from agent_hardener.agents.validators.args_judge import build_args_judge
 from agent_hardener.agents.validators.garak_replay import detectors, parsing, redaction, verdict
 from agent_hardener.agents.validators.garak_replay import traces as trace_section
 from agent_hardener.agents.validators.garak_replay.config import ReplayConfig, build_config, validator_kind
+from agent_hardener.agents.validators.garak_replay.error_streak import ErrorStreak
 from agent_hardener.agents.validators.garak_replay.parsing import AttackType, GitHubIssueTarget
-from agent_hardener.agents.validators.replay_http import ReplayResult
+from agent_hardener.agents.validators.replay_http import ReplayResult, count_victim_5xx
 from agent_hardener.agents.validators.replay_http import replay_prompt as replay_http_prompt
 from agent_hardener.agents.validators.trace_step import final_status, open_trace_window
 from agent_hardener.concurrency import gather_limited_ordered
 from agent_hardener.env import GARAK_REPO_PATH
+from agent_hardener.errors import VictimUnavailableError
 from agent_hardener.garak_venv import GARAK_PYTHON_ENVVAR, garak_subprocess_env, resolve_garak_python
 from agent_hardener.llm_telemetry import emit_agent_exchange
 from agent_hardener.models import AgentConfig, AgentRunInput, ValidatorReport
 from agent_hardener.rate_limits import RateLimitError, raise_for_rate_limit_response
 
 if TYPE_CHECKING:
+    import httpx
+
     from agent_hardener.runtime.run_context import RunContext
 
 __all__ = [
@@ -89,17 +92,20 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     # Opened before any replay so the window excludes everything the victim did earlier.
     window = await open_trace_window(ctx)
     detector_cache: dict[AttackType, Any] = {}
+    streak = ErrorStreak()
     worker = PersistentGarakWorker(
         repo_path=str(config.garak_repo_path) if config.garak_repo_path else os.getenv(GARAK_REPO_PATH),
         timeout_seconds=config.timeout_seconds,
     )
     try:
-        async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
+        async with victim_client(timeout=config.timeout_seconds) as client:
             indexed_hits = list(enumerate(supported_hits, start=1))
             hit_results = await gather_limited_ordered(
                 indexed_hits,
                 config.concurrency,
-                lambda item: _validate_hit_timed(item[0], item[1], request, config, client, worker, detector_cache),
+                lambda item: _validate_hit_timed(
+                    item[0], item[1], request, config, client, worker, detector_cache, streak
+                ),
             )
             attack_results = [cast("dict[str, Any]", result) for result in hit_results]
             traced = window is not None and await trace_section.apply_traces(
@@ -146,6 +152,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         summary=f"blocked {blocked_count}/{len(attack_results)} original Garak attack hits",
         findings=findings,
         false_negatives=false_negatives,
+        error=streak.abort_reason,
         metadata={
             "total_attacks": len(attack_results),
             "blocked_count": blocked_count,
@@ -166,6 +173,7 @@ async def _validate_hit_timed(
     client: httpx.AsyncClient,
     worker: PersistentGarakWorker,
     detector_cache: dict[AttackType, Any],
+    streak: ErrorStreak,
 ) -> dict[str, Any]:
     started_at = perf_counter()
     result = await _validate_hit(
@@ -176,6 +184,7 @@ async def _validate_hit_timed(
         client=client,
         worker=worker,
         detector_cache=detector_cache,
+        streak=streak,
     )
     result["duration_seconds"] = round(perf_counter() - started_at, 6)
     logger.info(
@@ -205,21 +214,21 @@ async def _validate_hit(
     client: httpx.AsyncClient,
     worker: PersistentGarakWorker,
     detector_cache: dict[AttackType, Any],
+    streak: ErrorStreak,
 ) -> dict[str, Any]:
     hit = hit_context["hit"]
-    attack_type = cast("AttackType", hit_context["attack_type"])
+    if streak.abort_reason is not None:
+        return _error_result(
+            hit_context=hit_context,
+            aggregate_index=aggregate_index,
+            config=config,
+            error=streak.abort_reason,
+            prompt=parsing.extract_prompt(hit),
+        )
+    direct = cast("AttackType", hit_context["attack_type"]) == "direct_prompt_injection"
+    validate = _validate_direct_hit if direct else _validate_indirect_hit
     try:
-        if attack_type == "direct_prompt_injection":
-            return await _validate_direct_hit(
-                hit_context=hit_context,
-                aggregate_index=aggregate_index,
-                request=request,
-                config=config,
-                client=client,
-                worker=worker,
-                detector_cache=detector_cache,
-            )
-        return await _validate_indirect_hit(
+        result = await validate(
             hit_context=hit_context,
             aggregate_index=aggregate_index,
             request=request,
@@ -230,14 +239,21 @@ async def _validate_hit(
         )
     except RateLimitError:
         raise
+    except VictimUnavailableError as exc:
+        error = count_victim_5xx(streak, exc)
     except Exception as exc:
-        return _error_result(
-            hit_context=hit_context,
-            aggregate_index=aggregate_index,
-            config=config,
-            error=str(exc) or exc.__class__.__name__,
-            prompt=parsing.extract_prompt(hit),
-        )
+        error = str(exc) or exc.__class__.__name__
+        streak.record_error(error)
+    else:
+        streak.record_success()
+        return result
+    return _error_result(
+        hit_context=hit_context,
+        aggregate_index=aggregate_index,
+        config=config,
+        error=error,
+        prompt=parsing.extract_prompt(hit),
+    )
 
 
 async def _validate_direct_hit(

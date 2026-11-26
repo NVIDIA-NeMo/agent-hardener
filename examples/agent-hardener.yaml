@@ -5,12 +5,13 @@
 # Secrets live in .env (never here); list their env-var names under `agent.secrets`.
 #
 # ─── What Agent Hardener requires of your agent ─────────────────────────────────────────────────────
-# 1. It is connected to NeMo Relay: attach the middleware AND call nemo_relay.plugin.initialize()
-#    at startup, e.g.
+# 1. It is connected to NeMo Relay: attach the middleware AND hold nemo_relay.plugin.activate() open
+#    for the process's life (e.g. in the server's lifespan), e.g.
 #        agent = create_agent(..., middleware=[NemoRelayMiddleware()])
-#        await nemo_relay.plugin.initialize(nemo_relay.plugin.PluginConfig())
+#        async with nemo_relay.plugin.activate(nemo_relay.plugin.PluginConfig()):
+#            ...  # serve requests
 #    Agent Hardener reads Relay's ATOF stream to see which tools an attack actually reached, and
-#    delivers guardrails as Relay plugin config. The initialize() call is what activates them —
+#    delivers guardrails as Relay plugin config. The activate() block is what turns them on —
 #    without it a delivered guardrail is inert, so the run is failed up front rather than reported
 #    as clean.
 # 2. It exposes an HTTP endpoint. OpenAI-compatible /v1/chat/completions needs no configuration;

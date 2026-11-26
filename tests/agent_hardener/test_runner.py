@@ -18,11 +18,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from agent_hardener.errors import BenignSuiteError
+from agent_hardener.errors import BenignSuiteError, SandboxProvisioningError
 from agent_hardener.models import TargetInput, TracesConfig
-from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.openshell.lifecycle import OpenShellCommandResult, SubprocessCommandRunner
 from agent_hardener.runtime import runner as runner_module
-from agent_hardener.runtime.runner import Mission, MissionError, run_mission
+from agent_hardener.runtime.runner import Mission, run_mission
 
 if TYPE_CHECKING:
     from conftest import BuildMission
@@ -71,6 +71,7 @@ def _base_config(relay_victim: object = None) -> SimpleNamespace:
         relay_victim=relay_victim,
         cwd=None,
         health_timeout=120.0,
+        command_timeout_s=1800.0,
         sandbox="agent-hardener-test",
         start_command="run",
         build_context=None,
@@ -375,7 +376,12 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
             restarts.append((policy, wait_for_health))
             return _ok("restart")
 
+    backend_runners: list[SubprocessCommandRunner] = []
+
     class FakeBackendManager:
+        def __init__(self, runner: SubprocessCommandRunner) -> None:
+            backend_runners.append(runner)
+
         def up(self, _specs: object, _cwd: object) -> OpenShellCommandResult:
             return _ok("backends-up")
 
@@ -391,6 +397,8 @@ def test_run_mission_loops_and_backends(monkeypatch: pytest.MonkeyPatch) -> None
     assert "Backends ready" in outputs  # the "backends-up" blob is teed to the log, not an output event
     assert captured["rounds"] == 2  # rounds flows to a single run_rounds as the round count
     assert restarts == []  # the runner no longer restarts between rounds — the orchestrator owns the loop
+    # `compose up --build` is bounded by the victim's command timeout, like the image build.
+    assert [r.timeout_s for r in backend_runners] == [base_config.command_timeout_s]
 
 
 def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -420,7 +428,7 @@ def test_run_mission_sandbox_failure_raises_and_cleans_up(monkeypatch: pytest.Mo
 
     monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
 
-    with pytest.raises(MissionError, match="failed to start"):
+    with pytest.raises(SandboxProvisioningError, match="failed to start:\nup-failed"):
         run_mission(_session())
     assert downs  # lifecycle.down called in cleanup
 
@@ -448,6 +456,9 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
             return _ok("down")
 
     class FakeBackendManager:
+        def __init__(self, _runner: object) -> None:
+            pass
+
         def up(self, _specs: object, _cwd: object) -> OpenShellCommandResult:
             return _fail("backend-boom")
 
@@ -456,7 +467,7 @@ def test_run_mission_backend_failure_raises(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
     monkeypatch.setattr("agent_hardener.runtime.runner.BackendManager", FakeBackendManager)
-    with pytest.raises(MissionError, match="backend startup failed"):
+    with pytest.raises(SandboxProvisioningError, match="backend startup failed:\nbackend-boom"):
         run_mission(_session())
 
 
@@ -535,37 +546,6 @@ def test_run_mission_tees_detail_to_log_and_surfaces_errors(monkeypatch: pytest.
     assert "UP-BLOB" in log_text  # success blob teed to the log file, never inline
     assert "UP-BLOB" not in highlights
     assert "Sandbox ready" in highlights  # explicit highlight shown even when quiet
-
-
-def test_run_mission_failure_output_surfaced_to_highlights(monkeypatch: pytest.MonkeyPatch) -> None:
-    base_config = _base_config()
-    _patch_common(monkeypatch, base_config)
-    _patch_orchestrator(monkeypatch)
-
-    class FakeLifecycle:
-        def credentials_drift(self) -> str | None:
-            return None
-
-        def image_context_drift(self) -> None:
-            return None
-
-        def __init__(
-            self, _cfg: object, runner: object = None, log_dir: object = None, active_state_dir: object = None
-        ) -> None:
-            pass
-
-        def down(self) -> OpenShellCommandResult:
-            return _ok("down")
-
-        def up(self, _policy: object) -> OpenShellCommandResult:
-            return _fail("BOOM")
-
-    monkeypatch.setattr("agent_hardener.runtime.runner.OpenShellLifecycle", FakeLifecycle)
-
-    highlights: list[str] = []
-    with pytest.raises(MissionError, match="failed to start"):
-        run_mission(_session(), on_event=_collect_output(highlights))
-    assert "BOOM" in highlights  # a real failure surfaces inline even in quiet mode
 
 
 def test_run_mission_uploaders_use_prepared_lifecycle(monkeypatch: pytest.MonkeyPatch) -> None:

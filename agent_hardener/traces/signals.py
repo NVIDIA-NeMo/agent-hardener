@@ -35,6 +35,9 @@ BLOCKED_RESPONSE_MARKERS = (DEFAULT_BLOCKED_MESSAGE, BLOCKED_RESPONSE_ID)
 #: The Relay mark the plugin records when it latches a request (relay_plugin/plugin.py).
 LATCH_EVENT = "agent_hardener.latched"
 
+#: The Relay mark the plugin records for a call its judge could not score (relay_plugin/plugin.py).
+JUDGE_ERROR_EVENT = "agent_hardener.judge_error"
+
 #: How an egress denial by the OpenShell proxy reaches a tool: its 403, or a refused/failed proxy
 #: connection. OpenShell writes no trace event for a denial, so this text is the only evidence.
 NETWORK_DENIAL_PATTERNS = (

@@ -5,7 +5,7 @@ import httpx
 
 from agent_hardener import llm
 from agent_hardener.llm import build_chat_model
-from agent_hardener.rate_limits import AsyncRateLimitRetryTransport, RateLimitRetryTransport
+from agent_hardener.rate_limits import AsyncRetryTransport, RetryTransport
 
 
 def test_nemotron_analysis_model_runs_without_reasoning() -> None:
@@ -24,8 +24,8 @@ def test_caller_extra_body_wins() -> None:
 
 def test_every_chat_model_waits_out_rate_limits_on_shared_clients() -> None:
     first, second = build_chat_model(api_key="k"), build_chat_model(api_key="k")
-    assert isinstance(first.http_client._transport, RateLimitRetryTransport)
-    assert isinstance(first.http_async_client._transport, AsyncRateLimitRetryTransport)
+    assert isinstance(first.http_client._transport, RetryTransport)
+    assert isinstance(first.http_async_client._transport, AsyncRetryTransport)
     assert first.http_async_client is second.http_async_client  # one connection pool, not one per model
     assert first.max_retries == 0  # the transport owns retries; the SDK's would restart its wait budget
 

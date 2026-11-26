@@ -15,8 +15,10 @@ from typing import Any, cast
 
 import pytest
 
+from agent_hardener import model_check
 from agent_hardener.models import TracesConfig
 from agent_hardener.openshell.lifecycle import OpenShellCommandResult
+from agent_hardener.preflight import run as preflight_run
 from agent_hardener.runtime import runner
 from agent_hardener.runtime.runner import Mission, MissionResult
 from agent_hardener.swarm_tracker import write_victim_image
@@ -46,6 +48,44 @@ def _isolated_cli_logging(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> It
     console.set_debug(False)
 
 
+@pytest.fixture(autouse=True)
+def _offline_model_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the pre-run model check off the network: CLI tests would otherwise send it a real request."""
+    monkeypatch.setattr(model_check, "probe_generation", lambda *_a, **_k: model_check.Validation(ok=True))
+
+
+@pytest.fixture(autouse=True)
+def _offline_host_preflight(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the pre-run host check off this machine: CLI tests would otherwise need openshell, Docker and garak."""
+    monkeypatch.setattr(preflight_run, "preflight_host", lambda _session, **_options: None)
+
+
+#: A one-token model check as sent: model, endpoint and key.
+ModelProbe = tuple[str, str, str | None]
+
+
+@pytest.fixture
+def model_probes(monkeypatch: pytest.MonkeyPatch) -> list[ModelProbe]:
+    """Answer every one-token model check with ok and record it, starting from an env with only the run's key."""
+    sent: list[ModelProbe] = []
+
+    def probe(model: str, base_url: str, api_key: str | None, **_kwargs: object) -> model_check.Validation:
+        sent.append((model, base_url, api_key))
+        return model_check.Validation(ok=True)
+
+    for name in (
+        "AGENT_HARDENER_MODEL",
+        "AGENT_HARDENER_BASE_URL",
+        "AGENT_HARDENER_SAFETY_BASE_URL",
+        "AGENT_HARDENER_SAFETY_API_KEY",
+        "NIM_API_KEY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("INFERENCE_API_KEY", "run-key")
+    monkeypatch.setattr(model_check, "probe_generation", probe)
+    return sent
+
+
 def command_result(output: str = "", *, ok: bool = True) -> OpenShellCommandResult:
     return OpenShellCommandResult(ok=ok, command=[], output=output)
 
@@ -62,6 +102,7 @@ class FakeOpenShellConfig:
     image: str | None
     policy_path: Path | None
     health_timeout: float = 5.0
+    command_timeout_s: float = 1800.0
 
 
 class FakeLifecycle:
@@ -238,7 +279,7 @@ def build_mission(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> BuildMissi
         monkeypatch.setattr(
             runner, "build_uploaders", lambda _vc, lifecycle: (("shell", lifecycle), ("relay", lifecycle))
         )
-        monkeypatch.setattr(runner, "BackendManager", lambda: fake_backends)
+        monkeypatch.setattr(runner, "BackendManager", lambda _runner: fake_backends)
         monkeypatch.setattr(runner, "target_health_url", lambda _url: health_url)
         monkeypatch.setattr(runner, "wait_for_health", lambda url, timeout: health_waits.append((url, timeout)))
         monkeypatch.setattr(runner, "Orchestrator", FakeOrchestrator)

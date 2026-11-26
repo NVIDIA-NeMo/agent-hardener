@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from agent_hardener.display.console import emit, fail, get_console, is_rich, ok, say, section, warn
+from agent_hardener.display.console import emit, fail, get_console, info, is_rich, ok, say, section, warn
 from agent_hardener.display.context import DisplayContext
 
 if TYPE_CHECKING:
@@ -244,7 +244,12 @@ class ConsoleRenderer:
         """Close an agent's row: ``✓ name`` or ``✗ name: reason`` (a plain line off a styled terminal)."""
         agent_id = str(payload.get("agent_id") or "")
         agent_name = str(payload.get("agent_name") or agent_id or "<agent>")
-        reason = _failure_reason(payload) if not succeeded else ""
+        not_applicable = _one_line(payload.get("not_applicable"))
+        reason = (
+            (f"not applicable: {not_applicable}" if not_applicable else _failure_reason(payload))
+            if not succeeded
+            else ""
+        )
         note = reason or (_one_line(payload.get("summary")) if payload.get("phase") == "validators" else "")
         label = f"{agent_name}: {note}" if note else agent_name
         key = (agent_name, reason)
@@ -255,15 +260,19 @@ class ConsoleRenderer:
                 return  # the same failure again: counted in the phase headline, and every one is in the log
             duration = payload.get("duration_seconds")
             elapsed = float(duration) if isinstance(duration, (int, float)) else None
-            ok(label, elapsed=elapsed, markup=False) if succeeded else fail(label, markup=False)
+            if succeeded:
+                ok(label, elapsed=elapsed, markup=False)
+            elif not_applicable:
+                info(label, markup=False)
+            else:
+                fail(label, markup=False)
             return
         task_id = self._task_ids.get(agent_id)
         if self._progress is None or task_id is None:
             return
         from rich.markup import escape  # noqa: PLC0415
 
-        mark = "✓" if succeeded else "✗"
-        style = "green" if succeeded else "red"
+        mark, style = ("✓", "green") if succeeded else ("○", "yellow") if not_applicable else ("✗", "red")
         self._progress.update(task_id, description=f"[{style}]{mark} {escape(label)}[/{style}]", total=1, completed=1)
 
     # --- headline highlights --------------------------------------------------------------

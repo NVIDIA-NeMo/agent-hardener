@@ -261,6 +261,7 @@ def test_zero_hit_round_records_successful_noop_defense_and_still_validates(tmp_
     assert manager_output == {
         "analyses": [],
         "error": None,
+        "not_applicable": [],
         "ok": True,
         "routed_agent_ids": [],
         "summary": "No attack hits to defend.",

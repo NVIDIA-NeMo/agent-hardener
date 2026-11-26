@@ -11,41 +11,21 @@ credential, request body and timeout garak will use, turns that into a clear err
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
 from typing import Any
 
 from agent_hardener.agents.attackers.agent_breaker.config import DEFAULT_MODEL_TIMEOUT_SECONDS
 from agent_hardener.env import NIM_API_KEY
 from agent_hardener.garak_venv import garak_subprocess_env
-from agent_hardener.model_check import probe_generation, raise_if_unavailable
-
-
-@dataclass(frozen=True)
-class _ModelCall:
-    label: str
-    model: str
-    uri: str
-    timeout: float
-    extra_body: dict[str, Any] | None
+from agent_hardener.model_check import ModelUse, require_answers
 
 
 async def check_model_endpoints(config: dict[str, Any]) -> None:
     """Raise :class:`~agent_hardener.errors.ModelUnavailableError` when a garak NIM model won't answer."""
-    calls = _model_calls(config)
-    api_key = garak_subprocess_env().get(NIM_API_KEY)
-    verdicts = await asyncio.gather(
-        *(
-            asyncio.to_thread(
-                probe_generation, call.model, call.uri, api_key, timeout=call.timeout, extra_body=call.extra_body
-            )
-            for call in calls
-        )
-    )
-    for call, verdict in zip(calls, verdicts, strict=True):
-        raise_if_unavailable(call.label, call.model, call.uri, verdict)
+    await asyncio.to_thread(require_answers, model_uses(config))
 
 
-def _model_calls(config: dict[str, Any]) -> list[_ModelCall]:
+def model_uses(config: dict[str, Any]) -> list[ModelUse]:
+    """The NIM models a resolved garak config calls, each as garak will call it."""
     plugins = config.get("plugins") or {}
     probe = ((plugins.get("probes") or {}).get("agent_breaker") or {}).get("AgentBreaker") or {}
     detector = ((plugins.get("detectors") or {}).get("agent_breaker") or {}).get("AgentBreakerResult") or {}
@@ -63,25 +43,27 @@ def _model_calls(config: dict[str, Any]) -> list[_ModelCall]:
             detector.get("detector_model_config"),
         ),
     )
-    calls: dict[tuple[str, str], _ModelCall] = {}
+    api_key = garak_subprocess_env().get(NIM_API_KEY)
+    uses = []
     for label, model_type, model, model_config in roles:
         if not str(model_type or "").startswith("nim") or not model or not isinstance(model_config, dict):
             continue
         uri = model_config.get("uri")
         if not uri:
             continue
-        key = (str(uri), str(model))
-        if key in calls:
-            calls[key] = replace(calls[key], label=f"{calls[key].label} and {label}")
-            continue
-        calls[key] = _ModelCall(
-            label=label,
-            model=str(model),
-            uri=str(uri),
-            timeout=float(model_config.get("timeout") or DEFAULT_MODEL_TIMEOUT_SECONDS),
-            extra_body=_request_fields(model_config.get("extra_params")),
+        uses.append(
+            ModelUse(
+                label,
+                str(model),
+                str(uri),
+                api_key,
+                NIM_API_KEY,
+                timeout=float(model_config.get("timeout") or DEFAULT_MODEL_TIMEOUT_SECONDS),
+                extra_body=_request_fields(model_config.get("extra_params")),
+                timeout_setting="garak.model_timeout",
+            )
         )
-    return list(calls.values())
+    return uses
 
 
 def _request_fields(extra_params: Any) -> dict[str, Any] | None:

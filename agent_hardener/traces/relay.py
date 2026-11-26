@@ -30,7 +30,13 @@ from typing import TYPE_CHECKING, Any
 from agent_hardener import atof
 from agent_hardener.models.traces import AgentTrace, LlmCall, ToolCall
 from agent_hardener.traces.provider import TraceProvider
-from agent_hardener.traces.signals import LATCH_EVENT, classify_tool_call, is_blocked_response, text_of
+from agent_hardener.traces.signals import (
+    JUDGE_ERROR_EVENT,
+    LATCH_EVENT,
+    classify_tool_call,
+    is_blocked_response,
+    text_of,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable
@@ -157,13 +163,24 @@ def build_traces(records: Iterable[dict[str, Any]]) -> list[AgentTrace]:
         if root is not None and root != uuid:
             members.setdefault(root, []).append(uuid)
     latched_roots = {root_of(mark.get("parent_uuid")) for mark in marks if LATCH_EVENT in text_of(mark.get("name"))}
+    judge_errors: dict[str | None, list[str]] = {}
+    for mark in marks:
+        if JUDGE_ERROR_EVENT in text_of(mark.get("name")):
+            judge_errors.setdefault(root_of(mark.get("parent_uuid")), []).append(_marked_tool(mark))
 
     traces: list[AgentTrace] = []
     for root, start in starts.items():
         if start.get("category") != "agent" or start.get("parent_uuid") in starts or root not in ends:
             continue  # not a request, or still in flight
-        traces.append(_trace(root, start, ends[root], members.get(root, []), starts, ends, root in latched_roots))
+        trace = _trace(root, start, ends[root], members.get(root, []), starts, ends, root in latched_roots)
+        trace.judge_error_tools = judge_errors.get(root, [])
+        traces.append(trace)
     return sorted(traces, key=lambda trace: trace.started_at)
+
+
+def _marked_tool(mark: dict[str, Any]) -> str:
+    data = mark.get("data")
+    return str(data.get("tool_name") or "") if isinstance(data, dict) else ""
 
 
 def _trace(

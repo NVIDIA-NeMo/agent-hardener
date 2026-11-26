@@ -10,10 +10,12 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from agent_hardener.agents.defenders.openshell_defender_v2.policy.schema import DenyRule
 from agent_hardener.config import load_config
 from agent_hardener.manifest import (
     DEFAULT_DEFENDER_TIMEOUT_SECONDS,
     AgentManifest,
+    BackendManifest,
     expand,
     load_manifest,
     with_session_reclaim,
@@ -131,11 +133,25 @@ def test_expand_builds_relay_victim_and_backends() -> None:
     assert osc.sandbox == sandbox_name("finance")
     assert osc.provider == provider_name("finance")
     assert osc.provider_credentials == ["INFERENCE_API_KEY"]
-    assert osc.forward == "0.0.0.0:8000"
+    assert osc.forward == "127.0.0.1:8000"
     assert osc.relay_victim is not None
     assert osc.relay_victim.agent_env == {"FINANCE_BACKEND_URL": "http://host.docker.internal:8086"}
     assert [b.name for b in osc.relay_victim.backends] == ["finance"]
     assert osc.relay_victim.backends[0].allowlist[0].port == 8086
+
+
+def test_expand_passes_backend_deny_rules_to_every_port_endpoint() -> None:
+    rule = {"method": "*", "path": "/apis/secrets/**"}
+    backend = {**AGENT["backends"][0], "ports": [8086, 8087], "deny_rules": [rule]}
+    manifest = AgentManifest.model_validate({**AGENT, "backends": [backend]})
+    osc = openshell_config(expand(manifest, base_dir=REPO_ROOT).victim_control)
+    assert osc.relay_victim is not None
+    assert [e.deny_rules for e in osc.relay_victim.backends[0].allowlist] == [[DenyRule.model_validate(rule)]] * 2
+
+
+def test_backend_deny_rules_reject_unknown_matcher_keys() -> None:
+    with pytest.raises(ValidationError):
+        BackendManifest.model_validate({"name": "b", "ports": [1], "deny_rules": [{"verb": "GET"}]})
 
 
 def test_expand_points_a_backend_at_a_non_host_address() -> None:
