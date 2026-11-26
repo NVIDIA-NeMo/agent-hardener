@@ -11,6 +11,9 @@ your agent's image.
   <img src=".github/images/agent-hardener-loop.svg" alt="Agent Hardener loop: attackers attack your agent in an OpenShell sandbox, defenders patch it from the attacks that landed and their NeMo Relay traces, validators replay the attacks and check benign requests, then a report and a hardened image are produced. The next round attacks the hardened agent." width="1000">
 </p>
 
+Agent Hardener is part of [NeMo Helix](https://github.com/NVIDIA-NeMo/nemo-helix), where it runs as a platform
+plugin from the Studio UI or the `nemo agent-hardener` CLI, and it can also run on its own from this repository.
+
 Your agent runs inside an [OpenShell](https://github.com/NVIDIA/OpenShell) sandbox and must be connected to
 [NeMo Relay](https://github.com/NVIDIA/NeMo-Relay), which Agent Hardener uses to see what each attack made the
 agent do and to deliver guardrails.
