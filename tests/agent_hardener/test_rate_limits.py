@@ -84,13 +84,16 @@ def test_rate_limit_error_from_text_exception() -> None:
 class _Provider:
     """A mock provider: answers each request with the next queued response, recording what it was sent."""
 
-    def __init__(self, *responses: tuple[int, dict[str, str] | None, object]) -> None:
+    def __init__(self, *responses: tuple[int, dict[str, str] | None, object] | httpx.TransportError) -> None:
         self.queue = list(responses)
         self.bodies: list[bytes] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.bodies.append(request.read())
-        status, headers, body = self.queue.pop(0)
+        answer = self.queue.pop(0)
+        if isinstance(answer, httpx.TransportError):
+            raise answer
+        status, headers, body = answer
         return httpx.Response(status, json=body, headers=headers)
 
 
@@ -163,6 +166,19 @@ def test_a_server_error_policy_retries_a_5xx_with_its_fixed_delays_then_gives_up
 
     assert (response.status_code, response.json(), slept) == (500, {"error": "boom 2"}, [1.0, 3.0])
     assert provider.bodies == [b'{"q":1}'] * 3
+
+
+@pytest.mark.parametrize("post", [_post_sync, _post_async], ids=["sync", "async"])
+def test_a_transport_error_is_resent_only_when_the_policy_opts_in(post: _Post) -> None:
+    with pytest.raises(httpx.ConnectError):
+        post(_Provider(httpx.ConnectError("down"), _OK), policy=RetryPolicy(server_error_delays_s=(1.0,)))
+
+    policy = RetryPolicy(server_error_delays_s=(1.0,), retry_transport_errors=True)
+    response, slept = post(_Provider(httpx.ConnectError("down"), _OK), policy=policy)
+    assert (response.status_code, slept) == (200, [1.0])
+
+    with pytest.raises(httpx.ConnectError):  # it shares the 5xx resends, so a second failure is raised
+        post(_Provider((502, None, {}), httpx.ConnectError("down"), _OK), policy=policy)
 
 
 def test_rate_limit_and_server_error_retries_are_counted_separately() -> None:

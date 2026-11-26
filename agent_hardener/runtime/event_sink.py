@@ -20,11 +20,12 @@ import logging
 import os
 import queue
 import threading
-import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
 import httpx
+
+from agent_hardener.rate_limits import RetryPolicy, RetryTransport
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -33,7 +34,9 @@ logger = logging.getLogger(__name__)
 
 _ENVVAR = "AGENT_HARDENER_EVENT_SINK_URL"
 _MAX_QUEUED = 2000
-_RESEND_DELAY_S = 1.0
+#: One resend after a 5xx or a network error: ``sink_id`` + ``seq`` let the plugin store a duplicate once.
+#: No rate-limit wait, so a throttling plugin cannot back the queue up.
+EVENT_SINK_RETRY = RetryPolicy(rate_limit_budget_s=0.0, server_error_delays_s=(1.0,), retry_transport_errors=True)
 
 
 def make_http_event_sink() -> Callable[[str, dict[str, Any]], None] | None:
@@ -46,16 +49,14 @@ def make_http_event_sink() -> Callable[[str, dict[str, Any]], None] | None:
     sink_id = uuid.uuid4().hex
 
     def _worker() -> None:
-        client = httpx.Client(timeout=5.0)
+        client = httpx.Client(transport=RetryTransport(policy=EVENT_SINK_RETRY), timeout=5.0)
         seq = 0
         while True:
             body = events.get()
             seq += 1
             body.update(sink_id=sink_id, seq=seq)
             if not _deliver(client, url, body):
-                time.sleep(_RESEND_DELAY_S)
-                if not _deliver(client, url, body):
-                    logger.debug("event sink dropped %s event after a resend", body["event"])
+                logger.debug("event sink dropped %s event after a resend", body["event"])
 
     threading.Thread(target=_worker, daemon=True, name="agent-hardener-event-sink").start()
 
@@ -69,7 +70,7 @@ def make_http_event_sink() -> Callable[[str, dict[str, Any]], None] | None:
 
 
 def _deliver(client: httpx.Client, url: str, body: dict[str, Any]) -> bool:
-    """POST one event; False when it may not have arrived (a transport error or a 5xx), so resending is safe."""
+    """POST one event; False when it may not have arrived (a transport error or a 5xx) even after the resend."""
     try:
         return client.post(url, json=body).status_code < 500
     except httpx.HTTPError:

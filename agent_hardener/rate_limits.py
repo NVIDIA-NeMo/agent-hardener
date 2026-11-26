@@ -198,11 +198,14 @@ class RetryPolicy:
     A rate limit (a 429, or a 403/503 whose body says so) is waited out with :func:`retry_delay` backoff for
     up to ``rate_limit_budget_s`` seconds in total; ``None`` means :func:`rate_limit_max_wait`. Any other
     5xx is retried once per entry of ``server_error_delays_s``, after that many seconds. Transport errors
-    are never retried: after a timeout the server may already have acted on the request.
+    are not retried by default: after a timeout the server may already have acted on the request. A caller
+    whose requests are safe to repeat (the server drops a duplicate) sets ``retry_transport_errors``, and a
+    transport error then takes the same resends as a 5xx.
     """
 
     rate_limit_budget_s: float | None = None
     server_error_delays_s: tuple[float, ...] = ()
+    retry_transport_errors: bool = False
 
     def resolved(self) -> RetryPolicy:
         """This policy with an unset rate-limit budget read from the environment now, once."""
@@ -222,8 +225,14 @@ class RetryPolicy:
         if is_rate_limited_response(response):
             return self._rate_limit_delay(request, response, state)
         if response.status_code >= 500:
-            return self._server_error_delay(request, response, state)
+            return self._resend_delay(request, f"returned HTTP {response.status_code}", state)
         return None
+
+    def delay_after_error(self, request: httpx.Request, error: httpx.TransportError, state: RetryState) -> float | None:
+        """The wait before resending after a transport error (recorded in ``state``), or ``None`` to raise it."""
+        if not self.retry_transport_errors:
+            return None
+        return self._resend_delay(request, f"failed ({error.__class__.__name__})", state)
 
     def _rate_limit_delay(self, request: httpx.Request, response: httpx.Response, state: RetryState) -> float | None:
         budget = self._rate_limit_budget()
@@ -253,15 +262,15 @@ class RetryPolicy:
         state.rate_limit_waited += delay
         return delay
 
-    def _server_error_delay(self, request: httpx.Request, response: httpx.Response, state: RetryState) -> float | None:
+    def _resend_delay(self, request: httpx.Request, failure: str, state: RetryState) -> float | None:
         if state.server_error_retries >= len(self.server_error_delays_s):
             return None
         delay = self.server_error_delays_s[state.server_error_retries]
         state.server_error_retries += 1
         logger.warning(
-            "%s returned HTTP %s; retry %d of %d in %.0fs",
+            "%s %s; retry %d of %d in %.0fs",
             request.url.host,
-            response.status_code,
+            failure,
             state.server_error_retries,
             len(self.server_error_delays_s),
             delay,
@@ -293,7 +302,14 @@ class RetryTransport(httpx.BaseTransport):
         request.read()  # buffer the body so the same request can be sent again
         state = RetryState()
         while True:
-            response = self._transport.handle_request(request)
+            try:
+                response = self._transport.handle_request(request)
+            except httpx.TransportError as exc:
+                delay = self._policy.delay_after_error(request, exc, state)
+                if delay is None:
+                    raise
+                self._sleep(delay)
+                continue
             if not self._policy.may_retry(response):
                 return response
             try:
@@ -329,7 +345,14 @@ class AsyncRetryTransport(httpx.AsyncBaseTransport):
         await request.aread()  # buffer the body so the same request can be sent again
         state = RetryState()
         while True:
-            response = await self._transport.handle_async_request(request)
+            try:
+                response = await self._transport.handle_async_request(request)
+            except httpx.TransportError as exc:
+                delay = self._policy.delay_after_error(request, exc, state)
+                if delay is None:
+                    raise
+                await self._sleep(delay)
+                continue
             if not self._policy.may_retry(response):
                 return response
             try:
