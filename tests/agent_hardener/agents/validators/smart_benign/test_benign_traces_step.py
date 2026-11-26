@@ -88,7 +88,7 @@ def _use_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rows: list[tuple
         for tool, payload, _status in rows:
             writer.writerow([tool, payload, "benign", "", ""])
 
-    async def fake_run_all(_requests: list[Any], _cfg: Any) -> list[dict[str, Any]]:
+    async def fake_run_all(_requests: list[Any], _cfg: Any, **kwargs: Any) -> list[dict[str, Any]]:
         return [
             {
                 "index": index,

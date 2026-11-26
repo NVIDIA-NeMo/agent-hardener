@@ -64,6 +64,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     With the victim's traces (``ctx.trace_provider``) the results also say whether each hit's target
     tool actually ran (:mod:`.garak_replay.traces`); without them this is the detector-only validator.
     """
+    phase_deadline = asyncio.get_running_loop().time() + agent.timeout_seconds * 0.9
     kind = validator_kind(request, agent)
     config = build_config(request, agent)
     attack_results: list[dict[str, Any]] = []
@@ -93,22 +94,51 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         repo_path=str(config.garak_repo_path) if config.garak_repo_path else os.getenv(GARAK_REPO_PATH),
         timeout_seconds=config.timeout_seconds,
     )
+    traced = False
+    phase_expired = False
+    completed: dict[int, dict[str, Any]] = {}
+
+    async def validate(item: tuple[int, dict[str, Any]]) -> dict[str, Any]:
+        result = await _validate_hit_timed(item[0], item[1], request, config, client, worker, detector_cache)
+        completed[item[0]] = result
+        return result
+
     try:
         async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
             indexed_hits = list(enumerate(supported_hits, start=1))
-            hit_results = await gather_limited_ordered(
-                indexed_hits,
-                config.concurrency,
-                lambda item: _validate_hit_timed(item[0], item[1], request, config, client, worker, detector_cache),
-            )
-            attack_results = [cast("dict[str, Any]", result) for result in hit_results]
-            traced = window is not None and await trace_section.apply_traces(
-                attack_results,
-                supported_hits,
-                window,
-                trace_section.build_refusal_judge(agent),
-                build_args_judge(agent, "attack"),
-            )
+            # Reserve time for cancellation, report construction and adapter normalization.
+            try:
+                async with asyncio.timeout_at(phase_deadline):
+                    await gather_limited_ordered(indexed_hits, config.concurrency, validate)
+            except TimeoutError:
+                phase_expired = True
+            attack_results = [
+                completed[index]
+                if index in completed
+                else _error_result(
+                    hit_context=hit,
+                    aggregate_index=index,
+                    config=config,
+                    error="validation phase deadline expired before hit completed",
+                    prompt=parsing.extract_prompt(hit["hit"]),
+                )
+                for index, hit in indexed_hits
+            ]
+            try:
+                async with asyncio.timeout_at(phase_deadline):
+                    traced = (
+                        not phase_expired
+                        and window is not None
+                        and await trace_section.apply_traces(
+                            attack_results,
+                            supported_hits,
+                            window,
+                            trace_section.build_refusal_judge(agent),
+                            build_args_judge(agent, "attack"),
+                        )
+                    )
+            except TimeoutError:
+                phase_expired = True
             for aggregate_index, result in enumerate(attack_results, start=1):
                 findings.append(verdict.format_finding(result, aggregate_index))
     finally:
@@ -120,7 +150,7 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
     blocked_count = outcomes.count("blocked")
     not_blocked_count = outcomes.count("landed")
     error_count = outcomes.count("error")
-    ok = not_blocked_count == 0 and error_count == 0
+    ok = not phase_expired and not_blocked_count == 0 and error_count == 0
     # Only present when the trace step ran: one count per trace relabel, and how many hits had a trace.
     trace_counts = (
         {
@@ -147,6 +177,8 @@ async def run(request: AgentRunInput, agent: AgentConfig, ctx: RunContext | None
         findings=findings,
         false_negatives=false_negatives,
         metadata={
+            "phase_timed_out": phase_expired,
+            "completed_attacks": len(completed),
             "total_attacks": len(attack_results),
             "blocked_count": blocked_count,
             "not_blocked_count": not_blocked_count,
@@ -168,15 +200,25 @@ async def _validate_hit_timed(
     detector_cache: dict[AttackType, Any],
 ) -> dict[str, Any]:
     started_at = perf_counter()
-    result = await _validate_hit(
-        hit_context=hit_context,
-        aggregate_index=aggregate_index,
-        request=request,
-        config=config,
-        client=client,
-        worker=worker,
-        detector_cache=detector_cache,
-    )
+    try:
+        async with asyncio.timeout(config.timeout_seconds):
+            result = await _validate_hit(
+                hit_context=hit_context,
+                aggregate_index=aggregate_index,
+                request=request,
+                config=config,
+                client=client,
+                worker=worker,
+                detector_cache=detector_cache,
+            )
+    except TimeoutError:
+        result = _error_result(
+            hit_context=hit_context,
+            aggregate_index=aggregate_index,
+            config=config,
+            error=f"hit wall deadline expired after {config.timeout_seconds}s",
+            prompt=parsing.extract_prompt(hit_context["hit"]),
+        )
     result["duration_seconds"] = round(perf_counter() - started_at, 6)
     logger.info(
         "attack validator hit completed index=%s attack_type=%s status=%s duration_seconds=%.3f",
@@ -512,8 +554,8 @@ class PersistentGarakWorker:
     difference that made attack replay slow. The worker speaks the newline-delimited JSON protocol of
     :data:`_DETECT_WORKER`. Access is serialized by a lock (``verify`` is called from
     ``asyncio.to_thread``, so several threads reach it); a per-request timeout is enforced with
-    ``select`` on the worker's stdout, and a timeout / unexpected EOF tears the worker down so the next
-    request restarts it. A per-hit worker error still surfaces as an ``error`` verdict via
+    nonblocking pipe I/O (including full-frame receipt and writes). A timeout / unexpected EOF tears
+    the worker down so the next request restarts it. A per-hit worker error still surfaces as an ``error`` verdict via
     :func:`_validate_hit`.
     """
 
@@ -522,6 +564,8 @@ class PersistentGarakWorker:
         self._timeout_seconds = timeout_seconds
         self._proc: subprocess.Popen[str] | None = None
         self._lock = threading.Lock()
+        self._closed = threading.Event()
+        self._lifecycle_lock = threading.Lock()
 
     def verify(
         self,
@@ -537,21 +581,43 @@ class PersistentGarakWorker:
                 "repo_path": self._repo_path,
             }
         )
-        with self._lock:
-            proc = self._ensure()
+        deadline = perf_counter() + self._timeout_seconds
+        while not self._lock.acquire(timeout=min(0.05, max(0, deadline - perf_counter()))):
+            if self._closed.is_set() or perf_counter() >= deadline:
+                raise TimeoutError("garak detector lock deadline expired")
+        try:
+            if self._closed.is_set() or perf_counter() >= deadline:
+                raise TimeoutError("garak detector deadline expired while queued")
+            with self._lifecycle_lock:
+                if self._closed.is_set():
+                    raise RuntimeError("garak detector worker is closed")
+                proc = self._ensure()
             try:
-                proc.stdin.write(request + "\n")  # type: ignore[union-attr]
-                proc.stdin.flush()  # type: ignore[union-attr]
-            except (BrokenPipeError, ValueError) as exc:
-                self.close()
-                raise RuntimeError(f"garak detector worker stdin unavailable: {exc}") from exc
-            line = self._read_line(proc)
-        response = json.loads(line)
-        if not response.get("ok"):
-            raise RuntimeError(str(response.get("error") or "garak detector worker failed"))
-        if response.get("judged") is False:
-            return None
-        return bool(response["is_success"]), float(response["confidence"]), str(response["reasoning"])
+                assert proc.stdin is not None
+                os.set_blocking(proc.stdin.fileno(), False)
+                pending = (request + "\n").encode()
+                while pending:
+                    remaining = deadline - perf_counter()
+                    if remaining <= 0 or not select.select([], [proc.stdin], [], remaining)[1]:
+                        raise TimeoutError("garak detector write deadline expired")
+                    try:
+                        pending = pending[os.write(proc.stdin.fileno(), pending) :]
+                    except BlockingIOError:
+                        continue
+                line = self._read_line(proc, deadline)
+                response = json.loads(line)
+                if not isinstance(response, dict):
+                    raise ValueError("garak detector worker returned a non-object response")
+                if not response.get("ok"):
+                    raise RuntimeError(str(response.get("error") or "garak detector worker failed"))
+                if response.get("judged") is False:
+                    return None
+                return bool(response["is_success"]), float(response["confidence"]), str(response["reasoning"])
+            except (OSError, ValueError, TimeoutError, RuntimeError, KeyError, TypeError):
+                self._dispose()
+                raise
+        finally:
+            self._lock.release()
 
     def _ensure(self) -> subprocess.Popen[str]:
         if self._proc is not None and self._proc.poll() is None:
@@ -575,33 +641,54 @@ class PersistentGarakWorker:
         )
         return self._proc
 
-    def _read_line(self, proc: subprocess.Popen[str]) -> str:
-        ready, _, _ = select.select([proc.stdout], [], [], self._timeout_seconds)
-        if not ready:
-            self.close()
-            raise RuntimeError(f"garak detector worker timed out after {self._timeout_seconds}s")
-        line = proc.stdout.readline()  # type: ignore[union-attr]
-        if not line:
-            self.close()
-            raise RuntimeError("garak detector worker exited before returning a verdict")
-        return line
+    def _read_line(self, proc: subprocess.Popen[str], deadline: float | None = None) -> str:
+        deadline = deadline if deadline is not None else perf_counter() + self._timeout_seconds
+        assert proc.stdout is not None
+        os.set_blocking(proc.stdout.fileno(), False)
+        data = bytearray()
+        while b"\n" not in data:
+            remaining = deadline - perf_counter()
+            if remaining <= 0 or not select.select([proc.stdout], [], [], remaining)[0]:
+                raise TimeoutError("garak detector response deadline expired")
+            try:
+                chunk = os.read(proc.stdout.fileno(), 65536)
+            except BlockingIOError:
+                continue
+            if not chunk:
+                raise RuntimeError("garak detector worker exited before returning a verdict")
+            data.extend(chunk)
+            if len(data) > 1024 * 1024:
+                raise ValueError("garak detector response exceeds 1 MiB frame limit")
+        frame, trailing = data.split(b"\n", 1)
+        if trailing.strip():
+            raise ValueError("garak detector worker returned multiple response frames")
+        return frame.decode()
 
     def close(self) -> None:
-        proc = self._proc
-        self._proc = None
+        self._closed.set()
+        self._dispose()
+
+    def _dispose(self) -> None:
+        with self._lifecycle_lock:
+            proc = self._proc
+            self._proc = None
         if proc is None:
             return
+        # Terminate before closing pipes: a concurrent reader/writer must not hold teardown hostage.
+        try:
+            if proc.poll() is None:
+                proc.kill()
+            proc.wait(timeout=1)
+        except ProcessLookupError:
+            pass  # The child exited between poll and kill.
+        except (OSError, subprocess.TimeoutExpired):
+            logger.warning("garak detector worker teardown did not finish cleanly", exc_info=True)
         for stream in (proc.stdin, proc.stdout):
             try:
                 if stream is not None:
                     stream.close()
             except OSError:
                 pass
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
 
 
 # Private aliases kept so every in-repo caller and monkeypatch target works unchanged. Both names

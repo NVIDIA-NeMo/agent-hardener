@@ -105,3 +105,26 @@ def test_nonempty_replay_judges_with_bounded_response(monkeypatch) -> None:
     # The judge sees the response bounded to judge_input_chars (+ the truncation marker), not 10k chars.
     assert len(captured["response"]) <= 4000 + len("...<truncated>")
     assert results[0]["verdict"]["status"] == "complied"
+
+
+def test_benign_wall_timeout_and_external_cancel(monkeypatch) -> None:
+    async def hang(*args: Any, **kwargs: Any) -> ReplayResult:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    monkeypatch.setattr(runner, "replay_one", hang)
+    rows = asyncio.run(runner.run_all([_request()], _config(timeout_seconds=0.02)))
+    assert rows[0]["verdict"]["status"] == "error"
+    assert rows[0]["verdict"]["complied"] is False
+
+    async def cancel() -> None:
+        task = asyncio.create_task(runner.run_all([_request()], _config()))
+        await asyncio.sleep(0.01)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            return
+        raise AssertionError("external cancellation swallowed")
+
+    asyncio.run(cancel())
