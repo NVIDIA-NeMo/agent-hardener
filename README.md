@@ -92,59 +92,13 @@ To work on Agent Hardener itself you also need `uv`, `just` and `git`.
 
 ## Setup
 
-### Install Docker
+Follow the [setup guide](docs/setup.md) for step-by-step instructions. In summary, you need:
 
-On macOS, install [Docker Desktop](https://www.docker.com/products/docker-desktop/), or Colima:
-
-```bash
-brew install colima docker && colima start
-```
-
-On Linux, install Docker Engine and make sure your user can reach the Docker socket (`docker info` works without
-`sudo`).
-
-### Install OpenShell
-
-```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.1.4 sh
-openshell --version
-```
-
-Use the native installer, not `uv tool install openshell`: that installs the CLI without the gateway service.
-
-### Install Agent Hardener
-
-```bash
-pip install nvidia-agent-hardener
-agent-hardener setup
-```
-
-The package is `nvidia-agent-hardener`; the CLI is `agent-hardener`. `agent-hardener setup` is safe to rerun.
-It:
-
-- installs garak into its own virtual environment at `~/.agent-hardener/garak-venv`. garak is not a dependency
-  of Agent Hardener, because its dependencies conflict with Agent Hardener's.
-- points the OpenShell gateway at Docker, restarts it, and registers it as `auto-defender`.
-
-### Credentials
-
-Create a `.env` file in the directory you will run from, with the key for your model provider:
-
-```bash
-INFERENCE_API_KEY=<your provider key>
-```
-
-That is all the defaults need, with an NVIDIA Build key. For another provider, see
-[Model providers](#model-providers).
-
-### Verify the setup
-
-```bash
-openshell status --gateway auto-defender                                   # Status: Connected
-~/.agent-hardener/garak-venv/bin/python -m garak --list-probes | grep agent_breaker
-```
-
-For other platforms, upgrades and install problems, see the [full setup guide](docs/setup.md).
+- **Docker:** runs the sandbox that holds your agent. Docker Desktop, or Colima on macOS.
+- **OpenShell:** creates and controls that sandbox.
+- **NeMo Helix:** the NeMo platform that hosts Agent Hardener.
+- **Credentials:** an API key for your model provider, in a `.env` file.
+- **Agent Hardener:** the `agent-hardener` CLI, plus a one-time `agent-hardener setup`.
 
 ## Quickstart: run on the example agent
 
