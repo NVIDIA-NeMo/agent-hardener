@@ -232,10 +232,20 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         ]
         if results[-1].ok:
             results.append(self.wait_for_sandbox_ready())
-        if results[-1].ok:
-            write_revision(self._sandbox_revision_path(), self._provider_revision())
-            results.extend(self._upload_seed_files())
+        if not results[-1].ok:
+            self._discard_failed_sandbox(results)
+            return results
+        write_revision(self._sandbox_revision_path(), self._provider_revision())
+        results.extend(self._upload_seed_files())
         return results
+
+    def _discard_failed_sandbox(self, results: list[OpenShellCommandResult]) -> None:
+        """Delete a sandbox that never became ready; an orphan stays attached to the provider and blocks the next start."""
+        cleanup = self.down()
+        if not cleanup.ok and not is_sandbox_not_found(cleanup.output):
+            failed = results[-1]
+            note = f"{failed.output}\ncleanup of failed sandbox {self.config.sandbox} also failed: {cleanup.output}"
+            results[-1] = OpenShellCommandResult(ok=False, command=failed.command, output=note)
 
     def image_tag(self) -> str:
         """The local image tag the staged build context is built into."""
@@ -555,6 +565,11 @@ class OpenShellLifecycle(PollingMixin, VictimMixin, ForwardMixin):
         if not exported.ok:
             return combine_results([imported, exported], ok=False)
         current = yaml.safe_load(exported.output) or {}
+        # Already right: skip the update, which OpenShell validates against every sandbox still attached.
+        if {entry.get("name") for entry in current.get("credentials", [])} == {
+            name.lower() for name in credential_names
+        }:
+            return combine_results([imported, exported], ok=True)
         profile["resource_version"] = current.get("resource_version")
         # A reused provider can carry victim credentials inferred from its dotenv, or credentials
         # added by another run. Adding the judge must not remove their existing profile mappings.

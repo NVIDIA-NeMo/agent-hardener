@@ -697,6 +697,37 @@ def test_generic_profile_falls_back_to_update_when_already_imported(tmp_path: Pa
     assert profile["resource_version"] == 3
 
 
+def test_generic_profile_skips_update_when_exported_credentials_already_match(tmp_path: Path) -> None:
+    """An orphaned profile from an aborted start is already right; updating it can be rejected by OpenShell."""
+    exported = yaml.safe_dump(
+        {"id": "p", "resource_version": 3, "credentials": [{"name": "inference_api_key", "env_vars": ["X"]}]}
+    )
+    runner = SequenceRunner([(1, "custom provider profile 'p' already exists"), (0, exported)])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", provider="p"),
+        runner=runner,
+        log_dir=tmp_path,
+    )
+
+    assert lifecycle._ensure_generic_profile(["INFERENCE_API_KEY"]).ok is True
+    assert [command[1:3] for command in runner.commands] == [["provider", "profile"], ["provider", "profile"]]
+    assert "update" not in {command[3] for command in runner.commands}
+
+
+def test_failed_sandbox_create_deletes_the_sandbox_and_returns_the_failure(tmp_path: Path) -> None:
+    runner = SequenceRunner([(1, "image pull failed"), (1, "sandbox not found: NotFound")])
+    lifecycle = OpenShellLifecycle(
+        OpenShellConfig(gateway="gw", sandbox="sb", policy_path=tmp_path / "policy.yaml", image="img:1", cwd=tmp_path),
+        runner=runner,
+    )
+
+    results = lifecycle._create_sandbox(tmp_path / "policy.yaml")
+
+    assert [result.ok for result in results] == [False]
+    assert results[0].output == "image pull failed"
+    assert runner.commands[-1][1:3] == ["sandbox", "delete"]
+
+
 def test_adding_inherited_judge_preserves_existing_provider_profile_credentials(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
