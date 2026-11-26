@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sys
 import types
 from datetime import UTC, datetime, timedelta
@@ -184,3 +185,27 @@ def test_a_failing_provider_never_fails_the_round(tmp_path: Path) -> None:
     assert _round(_config(tmp_path), BrokenProvider())
     assert not (tmp_path / ATTACK_TRACES_FILENAME).exists()
     assert [inp.attack_trace for inp in CAPTURED] == [None]
+
+
+def test_hits_that_match_no_trace_are_counted_and_warned_about(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The victim recorded a request, but not the one the attacker sent: the match loses every hit.
+    other = _trace("other", "an unrelated request", "moved", at=10)
+    provider = FakeTraceProvider(batches=[[], [other]])
+
+    with caplog.at_level(logging.WARNING):
+        assert _round(_config(tmp_path), provider)
+
+    assert "0 of 1 attack hits matched a victim trace (1 traces fetched, 1 in the attack window)" in caplog.text
+    written = [
+        json.loads(line)
+        for line in (tmp_path / "events.jsonl").read_text().splitlines()
+        if '"artifact_written"' in line and ATTACK_TRACES_FILENAME in line
+    ]
+    assert {key: written[0][key] for key in ("count", "hits", "fetched", "in_window")} == {
+        "count": 0,
+        "hits": 1,
+        "fetched": 1,
+        "in_window": 1,
+    }

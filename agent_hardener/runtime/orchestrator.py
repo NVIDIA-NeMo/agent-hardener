@@ -46,7 +46,13 @@ from agent_hardener.swarm_tracker import (
     write_run_config,
 )
 from agent_hardener.traces import trace_clock, traces_since
-from agent_hardener.traces.attacks import ATTACK_TRACES_FILENAME, by_prompt, collect_attack_traces, dump_recording
+from agent_hardener.traces.attacks import (
+    ATTACK_TRACES_FILENAME,
+    by_prompt,
+    collect_attack_traces,
+    dump_recording,
+    record_prompt,
+)
 from agent_hardener.traces.replay_attacks import replay_attacks_for_traces
 
 if TYPE_CHECKING:
@@ -348,11 +354,26 @@ async def _collect_attack_traces(
     round.
     """
     try:
-        window = traces_since(await asyncio.to_thread(provider.get_traces), anchor)
+        fetched = await asyncio.to_thread(provider.get_traces)
+        window = traces_since(fetched, anchor)
         recorded = collect_attack_traces(attacks, window)
     except Exception:
         recorder.logger.warning("could not collect attack traces; defenders run without them", exc_info=True)
         return {}
+    # Each stage of the match is counted, so a run that ends with no traces says where they were lost.
+    counts = {
+        "hits": sum(1 for attack in attacks for record in attack.records if record_prompt(record)),
+        "fetched": len(fetched),
+        "in_window": len(window),
+    }
+    if counts["hits"] and not recorded:
+        recorder.logger.warning(
+            "0 of %(hits)d attack hits matched a victim trace (%(fetched)d traces fetched, %(in_window)d in the "
+            "attack window); trace-based defenders have nothing to work from",
+            counts,
+        )
     path = store.write_round_json(ATTACK_TRACES_FILENAME, dump_recording(recorded))
-    recorder.emit(EventType.ARTIFACT_WRITTEN, artifact=ATTACK_TRACES_FILENAME, path=str(path), count=len(recorded))
+    recorder.emit(
+        EventType.ARTIFACT_WRITTEN, artifact=ATTACK_TRACES_FILENAME, path=str(path), count=len(recorded), **counts
+    )
     return by_prompt(recorded)
