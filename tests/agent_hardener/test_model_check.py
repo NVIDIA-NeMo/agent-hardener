@@ -6,6 +6,8 @@
 from __future__ import annotations
 
 import json
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import httpx
@@ -72,6 +74,29 @@ def test_uses_sharing_a_model_endpoint_and_key_are_asked_once_under_both_labels(
     )
 
     assert labels == ["analysis and judge"]
+
+
+def test_models_are_probed_together_and_the_first_failure_in_input_order_is_raised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    both_started = threading.Barrier(2, timeout=5)
+
+    def probe(model: str, *_a: object, **_k: object) -> mc.Validation:
+        both_started.wait()  # breaks (and fails the test) if the probes run one after the other
+        if model == "second":
+            return mc.Validation(ok=False, reason="auth")
+        time.sleep(0.05)  # the first use fails last
+        return mc.Validation(ok=False, reason="timeout")
+
+    monkeypatch.setattr(mc, "probe_generation", probe)
+
+    with pytest.raises(ModelUnavailableError, match="'first'"):
+        mc.require_answers(
+            [
+                mc.ModelUse("red-team", "first", "https://x/v1", "k", "A"),
+                mc.ModelUse("judge", "second", "https://y/v1", "k", "B"),
+            ]
+        )
 
 
 def test_a_rejected_key_names_the_variable_that_holds_it(monkeypatch: pytest.MonkeyPatch) -> None:

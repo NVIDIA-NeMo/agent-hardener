@@ -15,6 +15,7 @@ public, so listing it cannot tell a good key from a bad one. Callers describe wh
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -188,11 +189,18 @@ def require_answers(uses: list[ModelUse]) -> None:
         target = (use.model, use.base_url.rstrip("/"), use.api_key)
         seen = distinct.get(target)
         distinct[target] = replace(seen, label=f"{seen.label} and {use.label}") if seen else use
-    for use in distinct.values():
-        verdict = probe_generation(use.model, use.base_url, use.api_key, timeout=use.timeout, extra_body=use.extra_body)
+    probes = list(distinct.values())
+    # Concurrent, since a slow model can take a minute; the failure reported is still the first in input order.
+    with ThreadPoolExecutor(max_workers=max(len(probes), 1)) as pool:
+        verdicts = list(pool.map(_probe, probes))
+    for use, verdict in zip(probes, verdicts, strict=True):
         raise_if_unavailable(
             use.label, use.model, use.base_url, verdict, key_env=use.key_env, timeout_setting=use.timeout_setting
         )
+
+
+def _probe(use: ModelUse) -> Validation:
+    return probe_generation(use.model, use.base_url, use.api_key, timeout=use.timeout, extra_body=use.extra_body)
 
 
 def require_inference_key() -> None:
