@@ -95,7 +95,7 @@ def test_run_replays_cached_suite(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
     artifact_dir = tmp_path / "benign_profiles" / "victim"
     _write_suite(artifact_dir, [{"tool": "bash_executor", "payload": "echo ok"}])
 
-    async def fake_run_all(requests: list[Any], cfg: Any) -> list[dict[str, Any]]:
+    async def fake_run_all(requests: list[Any], cfg: Any, **kwargs: Any) -> list[dict[str, Any]]:
         assert len(requests) == 1
         assert requests[0].tool == "bash_executor"
         return [

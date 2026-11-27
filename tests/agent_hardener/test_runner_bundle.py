@@ -5,11 +5,16 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from agent_hardener.agents.validators.smart_benign.models import GeneratedRequest
+from agent_hardener.agents.validators.smart_benign.replay_judge import runner as replay
+from agent_hardener.final_log.validation_summary import build_validation
 from agent_hardener.openshell.relay_victim import RELAY_PLUGINS_UPLOAD_DEST
 from agent_hardener.runtime import runner
 
@@ -186,3 +191,34 @@ def test_a_packaging_failure_is_logged_and_does_not_fail_the_run(
     assert result.success
     assert "could not assemble the hardened image bundle" in harness.run_log
     assert not any("hardened image bundle" in line for line in harness.lines)
+
+
+@pytest.mark.parametrize("all_hung", [False, True])
+def test_partial_validation_reaches_run_artifact(
+    build_mission: BuildMission, monkeypatch: pytest.MonkeyPatch, all_hung: bool
+) -> None:
+    # Exercise the real replay scheduler and serializer; only the external per-row work is fake.
+    async def process(index: int, request: Any, config: Any, client: Any) -> dict[str, Any]:
+        if all_hung or index == 2:
+            await asyncio.Event().wait()
+        return {"index": index, "tool": request.tool, "verdict": {"status": "complied", "confidence": 1}}
+
+    monkeypatch.setattr(replay, "_process_one", process)
+    config = SimpleNamespace(timeout_seconds=2, concurrency=2, excerpt_chars=100)
+    requests = [GeneratedRequest(tool="clock", payload="now", label="benign", rationale="safe") for _ in range(2)]
+    rows = asyncio.run(replay.run_all(requests, config, phase_timeout_seconds=0.05))
+    assert [row["verdict"]["status"] for row in rows] == (["error", "error"] if all_hung else ["complied", "error"])
+    monkeypatch.setattr(runner, "build_validation", build_validation)
+    monkeypatch.setattr(runner, "render_final_run_log", lambda *_a, **_kw: "partial run")
+    harness = build_mission(no_cleanup=True)
+    harness.reports = [
+        SimpleNamespace(
+            success=False,
+            iterations=[SimpleNamespace(validators=[SimpleNamespace(kind="benign", metadata={"results": rows})])],
+        )
+    ]
+    assert not harness.run().success
+    artifact = harness.read_artifact("validation.json")
+    assert [row["status"] for row in artifact["benign"]] == (["error", "error"] if all_hung else ["passed", "error"])
+    assert artifact["summary"]["benign_served"] == (0 if all_hung else 1)
+    assert artifact["summary"]["benign_unscored"] == (2 if all_hung else 1)

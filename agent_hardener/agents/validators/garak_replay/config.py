@@ -9,6 +9,7 @@ module is the single home for replay configuration — it never imports the vali
 
 from __future__ import annotations
 
+import math
 import os
 from dataclasses import dataclass
 from pathlib import Path
@@ -81,7 +82,7 @@ def build_config(request: AgentRunInput, agent: AgentConfig) -> ReplayConfig:
         model=str(agent.config.get("model") or "garak"),
         input_field=str(agent.config.get("input_field") or "input_message"),
         response_json_path=_optional_str(agent.config.get("response_json_path")),
-        timeout_seconds=float(agent.config.get("timeout_seconds") or agent.timeout_seconds or DEFAULT_TIMEOUT_SECONDS),
+        timeout_seconds=_hit_timeout(agent),
         confidence_cutoff=float(agent.config.get("confidence_cutoff") or DEFAULT_CONFIDENCE_CUTOFF),
         excerpt_chars=int(agent.config.get("excerpt_chars") or DEFAULT_EXCERPT_CHARS),
         redact_outputs=bool(agent.config.get("redact_outputs", True)),
@@ -102,6 +103,14 @@ def build_config(request: AgentRunInput, agent: AgentConfig) -> ReplayConfig:
         ),
         model_timeout=int(timeout) if (timeout := agent.config.get("model_timeout")) is not None else None,
     )
+
+
+def _hit_timeout(agent: AgentConfig) -> float:
+    value = agent.config.get("timeout_seconds")
+    timeout = DEFAULT_TIMEOUT_SECONDS if value is None else float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("validator timeout_seconds must be finite and positive")
+    return timeout
 
 
 def validator_kind(request: AgentRunInput, agent: AgentConfig) -> ValidatorKind:

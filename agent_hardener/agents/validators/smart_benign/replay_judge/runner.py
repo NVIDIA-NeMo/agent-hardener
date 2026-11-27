@@ -5,9 +5,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from time import perf_counter
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import httpx
 
@@ -31,6 +32,8 @@ logger = logging.getLogger(__name__)
 async def run_all(
     requests: list[GeneratedRequest],
     config: ReplayJudgeConfig,
+    *,
+    phase_timeout_seconds: float | None = None,
 ) -> list[dict[str, Any]]:
     """Replay every request and judge each in parallel (bounded by ``concurrency``).
 
@@ -43,12 +46,43 @@ async def run_all(
 
     async with httpx.AsyncClient(timeout=config.timeout_seconds) as client:
         indexed = list(enumerate(requests, start=1))
-        results = await gather_limited_ordered(
-            indexed,
-            config.concurrency,
-            lambda item: _process_one(item[0], item[1], config, client),
-        )
-    return [cast("dict[str, Any]", result) for result in results]
+        completed: dict[int, dict[str, Any]] = {}
+
+        async def process(item: tuple[int, GeneratedRequest]) -> dict[str, Any]:
+            try:
+                async with asyncio.timeout(config.timeout_seconds):
+                    result = await _process_one(item[0], item[1], config, client)
+            except TimeoutError:
+                result = timeout_result(item[0], item[1], config, "benign hit wall deadline expired")
+            completed[item[0]] = result
+            return result
+
+        try:
+            async with asyncio.timeout(phase_timeout_seconds):
+                await gather_limited_ordered(indexed, config.concurrency, process)
+        except TimeoutError:
+            pass
+    return [
+        completed[index]
+        if index in completed
+        else timeout_result(index, request, config, "benign validation phase deadline expired")
+        for index, request in indexed
+    ]
+
+
+def timeout_result(index: int, request: GeneratedRequest, config: ReplayJudgeConfig, reason: str) -> dict[str, Any]:
+    return _finalize(
+        {
+            "index": index,
+            "tool": request.tool,
+            "label": request.label,
+            "persona": request.persona,
+            "payload_excerpt": excerpt(request.payload, config.excerpt_chars),
+        },
+        _replay_failed_marker(),
+        _error_verdict(reason, config),
+        perf_counter(),
+    )
 
 
 async def _process_one(
