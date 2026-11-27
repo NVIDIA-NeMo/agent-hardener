@@ -17,10 +17,21 @@ buildable image rather than evidence.
 from __future__ import annotations
 
 import shutil
+import tomllib
 from pathlib import PurePath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
+
+from pydantic import ValidationError
 
 from agent_hardener.openshell.relay_victim import IMAGE_SHIM_PATH, SHIM_DIR
+from agent_hardener.relay_plugin.config import (
+    DEFAULT_JUDGE_API_KEY_ENV,
+    DEFAULT_JUDGE_BASE_URL,
+    JUDGE_BASE_URL_ENVS,
+    PLUGIN_KIND,
+    SAFETY_API_KEY_ENV,
+    JudgeModel,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,6 +67,39 @@ with one that drops the OpenShell proxy shim, so the agent code is exactly what 
 
 _PREBUILT_SHIM_OVERRIDE = f"COPY sitecustomize.py {IMAGE_SHIM_PATH}/sitecustomize.py\n"
 
+_JUDGE_RUNTIME = """\
+Each guarded tool call is one LLM round trip to the safety judge, so the container needs:
+
+{needs}
+
+**Without them the judge errors and every call is allowed**: the guardrail fails open, by design,
+and says so only in the log.
+"""
+
+_SAFETY_KEY_NOTE = f"""
+`{SAFETY_API_KEY_ENV}` is the name the run gave the judge's key inside the sandbox. Its value is the
+key the run was given as `{SAFETY_API_KEY_ENV}`, or as `{DEFAULT_JUDGE_API_KEY_ENV}` when that was unset.
+Setting only `{DEFAULT_JUDGE_API_KEY_ENV}` in the container is not enough.
+"""
+
+#: No base_url in plugins.toml: the judge resolves its endpoint inside the container with ``judge_endpoint()``.
+_DEFAULT_ENDPOINT = (
+    "the endpoint named by "
+    + ", else ".join(f"`{env}`" for env in JUDGE_BASE_URL_ENVS)
+    + f", else `{DEFAULT_JUDGE_BASE_URL}` (`plugins.toml` sets no `base_url`)"
+)
+
+_UNREAD_JUDGE_RUNTIME = """\
+Each guarded tool call is one LLM round trip to the safety judge, so the container needs the key
+named by `api_key_env` in `plugins.toml` and network reach to its `base_url`. **Without them the judge
+errors and every call is allowed**: the guardrail fails open, by design, and says so only in the log.
+"""
+
+_NO_JUDGE_RUNTIME = """\
+`plugins.toml` enables no guardrail component, so the image makes no safety-judge calls and needs no
+judge key.
+"""
+
 _README = """\
 # Hardened image — {agent}
 
@@ -79,11 +123,7 @@ nemo agents deploy --agent {agent} --mode docker --image {agent}-hardened:{run_i
 
 ## What it needs at runtime
 
-Each guarded tool call is one LLM round trip to the safety judge, so the container needs
-`INFERENCE_API_KEY` (or whatever `api_key_env` names in `plugins.toml`) and network reach to that
-endpoint. **Without it the judge errors and every call is allowed** — the guardrail fails open, by
-design, and says so only in the log.
-
+{runtime}
 ## The two halves of the hardening
 
 `plugins.toml` is the guardrails: which tools are guarded, and what counts as an attack. It travels
@@ -165,10 +205,55 @@ def write_hardened_bundle(
     with (destination / "Dockerfile").open("a", encoding="utf-8") as dockerfile:
         dockerfile.write(_DOCKERFILE_SUFFIX.format(destination=BUNDLE_PLUGINS_DEST))
     (destination / "README.md").write_text(
-        _README.format(agent=agent, run_id=run_id, destination=BUNDLE_PLUGINS_DEST, source=source),
+        _README.format(
+            agent=agent,
+            run_id=run_id,
+            destination=BUNDLE_PLUGINS_DEST,
+            source=source,
+            runtime=_judge_runtime(destination / "plugins.toml"),
+        ),
         encoding="utf-8",
     )
     return destination
+
+
+def _judge_runtime(plugins_toml: Path) -> str:
+    """The README's runtime requirements, read from the ``plugins.toml`` the image will carry.
+
+    Read from the file rather than recomputed from this process's environment: the judge's ``model`` table
+    is written once, when the component is created, and may have been edited since. What the container
+    reads is what the file says. Never raises: a malformed file still gets a bundle, with generic wording.
+    """
+    try:
+        document = tomllib.loads(plugins_toml.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return _UNREAD_JUDGE_RUNTIME
+    components = document.get("components")
+    entries = [
+        entry
+        for entry in (components if isinstance(components, list) else [])
+        if isinstance(entry, dict) and entry.get("kind") == PLUGIN_KIND and entry.get("enabled", True) is not False
+    ]
+    if not entries:
+        return _NO_JUDGE_RUNTIME
+    models = [model for entry in entries if (model := _judge_model(entry)) is not None]
+    if len(models) != len(entries):
+        return _UNREAD_JUDGE_RUNTIME
+    keys = list(dict.fromkeys(model.api_key_env for model in models))
+    endpoints = list(dict.fromkeys(f"`{model.base_url}`" if model.base_url else _DEFAULT_ENDPOINT for model in models))
+    needs = [f"- `{key}`, set to the judge's API key" for key in keys]
+    needs += [f"- network reach to {endpoint}" for endpoint in endpoints]
+    note = _SAFETY_KEY_NOTE if SAFETY_API_KEY_ENV in keys else ""
+    return _JUDGE_RUNTIME.format(needs="\n".join(needs)) + note
+
+
+def _judge_model(entry: dict[str, Any]) -> JudgeModel | None:
+    """The entry's judge, parsed the way the plugin parses it, so defaults match; ``None`` when invalid."""
+    config = entry.get("config")
+    try:
+        return JudgeModel.model_validate(config.get("model") if isinstance(config, dict) else None)
+    except ValidationError:
+        return None
 
 
 def _strip_sandbox_shim(sitecustomize: Path) -> None:
