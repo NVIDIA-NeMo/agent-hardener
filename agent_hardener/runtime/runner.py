@@ -524,7 +524,15 @@ class Mission:
         self._sync_atof(strict=True)
         records = load_records(atof_path) if atof_path.exists() else []
         tools = check_tool_path(records, before=self._probe_scopes)
-        self._announce(f"Tool calls reach Relay ({', '.join(tools)})", level="ok")
+        if tools:
+            self._announce(f"Tool calls reach Relay ({', '.join(tools)})", level="ok")
+        else:
+            self._announce(
+                "tool_path_unverified: Relay traced model calls but no tools were requested. "
+                "Tool mediation remains unverified; tool guardrails were not exercised. "
+                "Exercise an authorized benign tool to verify the tool path.",
+                level="warn",
+            )
         if attacks:
             self._warn_untouched_targets(attacks, {*tools, *requested_tools(records)})
 
